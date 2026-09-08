@@ -26,6 +26,12 @@ unsafe_code = "forbid"
 all = "warn"
 pedantic = "warn"
 
+# rustdoc runs outside clippy, so the doc baseline only holds if its own lints
+# are denied in the manifest: `cargo doc --workspace --no-deps` fails the build
+# on a broken intra-doc link instead of warning about it.
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+
 # Shared external dependencies are pinned here as crates adopt them so every
 # member resolves one version. None are required yet: the scaffold is
 # dependency-free, so the committed Cargo.lock currently describes only the

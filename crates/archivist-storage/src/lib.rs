@@ -25,5 +25,5 @@
 //!
 //! # Dependency boundary
 //!
-//! Depends on [`archivist-protocol`] only. Must not name or depend on any
+//! Depends on `archivist-protocol` only. Must not name or depend on any
 //! concrete backend (S3, `MinIO`, B2, ARMOR), transport, or client component.

@@ -22,8 +22,10 @@ collapse boundaries ad hoc.
   `[workspace.dependencies]` in the root manifest, and land in the committed
   lockfile.
 - Shared lint baseline in the root manifest: `missing_docs = "warn"`,
-  `unsafe_code = "forbid"`, clippy `all` and `pedantic` at `warn`. Verification
-  runs clippy with warnings denied.
+  `unsafe_code = "forbid"`, clippy `all` and `pedantic` at `warn`, and
+  `rustdoc::broken_intra_doc_links` denied (rustdoc runs outside clippy, so its
+  lints must be denied in the manifest for `cargo doc` to be a gate rather than
+  a source of warnings). Verification runs clippy with warnings denied.
 
 ## Layering
 

@@ -19,6 +19,6 @@
 //!
 //! # Dependency boundary
 //!
-//! Depends on [`archivist-protocol`] and [`archivist-adapter-sdk`] only. Must
+//! Depends on `archivist-protocol` and `archivist-adapter-sdk` only. Must
 //! not depend on the server, a concrete storage backend, or any specific
 //! harness adapter.

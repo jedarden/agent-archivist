@@ -20,5 +20,5 @@
 //!
 //! # Dependency boundary
 //!
-//! Depends on [`archivist-protocol`] only. Must not know about any specific
+//! Depends on `archivist-protocol` only. Must not know about any specific
 //! harness, transport, storage backend, or the server.
