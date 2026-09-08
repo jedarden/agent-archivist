@@ -2,8 +2,10 @@
 
 Status: decision-complete execution plan · Last updated: 2026-09-08
 
-Revision: 2026-09-08 — locked DN-1 through DN-12 from the pre-flight review;
-the former decision queue now points to the binding sections.
+Revision: 2026-09-08 — locked DN-1 through DN-12 from the pre-flight review,
+then clarified offline enumeration, backup evidence, SDK-hook scope, exact-coverage
+reconciliation, and derived-use governance during bead-graph verification; the
+former decision queue now points to the binding sections.
 
 This plan turns the [research findings](../research/transcript-archiving-findings.md)
 and [system requirements](../notes/requirements.md) into an implementation and
@@ -157,6 +159,8 @@ The following decisions are architectural constraints, not phase-level options:
 - Raw, catalog, and derived namespaces remain separate and versioned.
 - Operational telemetry never includes transcript bodies or authentication material.
 - The public project uses only synthetic fixtures and independent Git history.
+- The public project is licensed under Apache License 2.0; every distributed source
+  and binary artifact carries the required license and notice material.
 - Version 1.0 reports semantic and exact-inference coverage independently; exact
   capture is supported only for explicitly instrumented traffic.
 
@@ -270,6 +274,15 @@ objects or access control/catalog/derived prefixes. Backup and restore use a thi
 offline identity. This split maps to separate B2 application keys when one
 credential cannot express disjoint action-by-prefix policy; an optional raw reader
 is a fourth identity and is never required by the portable ingest path.
+
+Administrative control mutation uses a separate offline `ControlAdminStore` and
+credential that can put only validated, tenant-authority-signed objects below the
+tenant control prefix; it cannot read or write raw, catalog, derived, tombstone, or
+legal-hold data. The public trait accepts complete immutable control records and a
+small set of signed current-pointer records, never arbitrary keys or payload bytes.
+The S3 adapter derives each key from the validated record type, rejects overwrite of
+an incompatible immutable record, and permits a current-pointer replacement only
+when its signed epoch increases. Ingest replicas never receive this credential.
 
 Request authorization is fresh per upload attempt and valid for five minutes with at
 most five minutes of clock skew. Replays inside that window are harmless because the
@@ -535,7 +548,9 @@ uses a new storage profile.
 The production deployment's S3 profile requires multipart
 create/upload/complete/abort plus `PUT`, `HEAD`, and `GET`; the ingestion identity
 itself requires only `PUT` and multipart operations. Offline verify/restore uses
-`HEAD`/`GET`, and an optional read identity enables the preflight optimization.
+`HEAD`/`GET`, offline catalog and governance additionally require paginated
+`ListObjectsV2`, and an optional read identity enables the ingest preflight
+optimization.
 MinIO is the local reference implementation. Conditional create, native stored
 checksums, versioning, and server-side encryption are reported capabilities;
 conditional create is not required because the target B2 profile does not provide
@@ -563,6 +578,29 @@ stored_checksum: sha256 | md5 | provider_specific | unavailable
 versioning: enabled | disabled | unknown
 server_side_encryption: verified | unavailable
 ```
+
+`AuditRestoreStore` enumeration freezes an immutable `inventory-v1` before a
+rebuild, restore sample, or reference scan. Its paginator follows continuation
+tokens to exhaustion, rejects duplicate and out-of-prefix keys, records key, size,
+ETag, storage version when exposed, and observation time, then sorts by opaque key
+bytes before hashing the inventory. Consumers never assume that a portable S3 list
+is a transactionally consistent snapshot: a page error, repeated token, mutation
+detected while freezing the inventory, or conflicting version observation fails the
+operation closed. Catalog rebuild consumes one frozen inventory. Each garbage-
+collection pass freezes a separate complete inventory at least 24 hours apart and
+revalidates every candidate with `HEAD` immediately before deletion; any changed or
+unreadable candidate survives the pass. Compatibility tests inject page mutation,
+duplicate pages, token loops, and concurrent writes on every backend profile.
+
+**Because:** S3 is the durable source of truth, so deterministic rebuild and safe
+collection need an explicit exhaustive enumeration contract rather than an implied
+database index. **Rejected:** relying on one live list traversal as a snapshot;
+making `ListObjectsV2` available to ingestion; provider inventory as the only
+portable input. Provider-generated inventories may be imported only after they
+validate into the same `inventory-v1`. **Enforced by:** frozen-inventory digests,
+pagination fault tests, rebuild reproducibility, two-pass collection, and
+pre-delete revalidation. **Revisit if:** every supported backend exposes a stronger
+portable snapshot primitive; it must still materialize auditable inventory evidence.
 
 Receipts report a result for the blob, occurrence, and attestation, each exactly one
 of `created`, `already_present`, `replaced_equivalent`, or
@@ -671,6 +709,20 @@ domain copy or protected version history, and a successful quarterly sampled
 restore. Catalogs and derived indexes rebuild with
 `archivist catalog rebuild --from-occurrences` using only raw S3 occurrences,
 attestations, and blobs.
+
+Release qualification uses the reference `inventory-copy-v1` backup profile: freeze
+and sign a daily `inventory-v1`, copy every referenced raw and control object through
+an offline identity to an independently credentialed destination, record source and
+destination size, digest, ETag, and version identifiers when available, then verify
+a deterministic byte sample from the destination. Two distinct local S3 instances
+are sufficient only for the synthetic Compose demonstration; B2 and ARMOR deployment
+evidence names a destination in a separate administrative or storage failure domain.
+A deployment may instead meet its production precondition with protected version
+history, but it must freeze the same signed inventory evidence, prove recovery of a
+prior version after synthetic overwrite and deletion, and document the correlated-
+failure risk. Unknown version state never passes. The verification manifest records
+the selected profile, inventory digest, destination class, restored sample, and
+result without object paths or identifiers.
 
 Deletion is an offline administrator workflow: write an occurrence tombstone, honor
 legal holds, wait 30 days, complete two full-reference scans at least 24 hours apart,
@@ -814,10 +866,11 @@ Exit gate:
 
 Deliverables:
 
-- Define capability-aware `RawWriteStore`, `ControlReadStore`, and offline
-  `AuditRestoreStore` traits. Only the raw writer has begin/write/commit/abort
-  semantics; the server cannot obtain audit/delete methods through its ingest
-  configuration.
+- Define capability-aware `RawWriteStore`, `ControlReadStore`, offline
+  `ControlAdminStore`, and offline `AuditRestoreStore` traits. Only the raw writer
+  has begin/write/commit/abort semantics; only the control administrator can write
+  derived control-record keys; the server cannot obtain administration,
+  audit/delete, or raw-read methods through its ingest configuration.
 - Implement the portable S3 adapter with endpoint, region, path-style, TLS, and
   encryption configuration.
 - Require `PutObject`, `HeadObject`, `GetObject`, `CreateMultipartUpload`,
@@ -1144,6 +1197,36 @@ loss-detection evidence and a plan revision before cutover.
 
 ### Phase 9 — Exact inference and orchestrator correlation
 
+The version 1 SDK hook is a Rust interface shipped in this workspace, not a claim of
+compatibility with every provider SDK package. Its compatibility boundary is the
+versioned `InferenceObserver` lifecycle: an integrated caller emits logical-inference
+start, provider-attempt start, decoded request bytes, ordered decoded response events,
+attempt outcome, and logical-inference close around the actual transport boundary.
+The first-party OpenAI-compatible Rust integration and synthetic fixtures are the
+initial supported hook route. A third-party SDK name or version appears in the
+compatibility matrix only after an adapter calls that lifecycle at the same boundary
+and passes the exact-capture conformance suite; package discovery or ambient tracing
+alone never qualifies a route.
+
+Exact-coverage denominators come from a content-free expected-inference ledger. An
+instrumented orchestrator or harness writes a frozen expectation before route
+selection with `trace_id`, `inference_request_id`, session/attempt correlation,
+declared route policy, start time, and eventual bounded outcome. Reconciliation
+matches provider-attempt artifacts to that expectation. A closed expectation with
+no matching proxy or hook attempt is `unobserved`; some but not all required attempt
+events is `partial`; an integration failure is `failed`; complete matching attempts
+are `observed`. A session that emits neither expectations nor exact artifacts has an
+`unknown` exact denominator and is not counted as unobserved. Semantic capture stays
+independent in all cases.
+
+**Because:** bypass can be measured only from evidence that an inference was expected
+outside the capture path, and SDK compatibility must name an actual interception
+boundary. **Rejected:** treating every semantic turn as one provider call; inferring
+bypass from absent proxy logs; claiming all Rust, OpenAI, or provider SDK versions.
+**Enforced by:** expectation/artifact reconciliation fixtures, retry and stream tests,
+the compatibility matrix, and separate unknown/unobserved counts. **Revisit if:** a
+supported harness supplies an equivalent signed lossless provider-attempt ledger.
+
 Deliverables:
 
 - Implement artifact kinds for provider request, provider response, streaming event,
@@ -1177,6 +1260,96 @@ Exit gate:
 
 This phase does not alter the ingest data plane.
 
+Safe-consumption classification uses `risk-assessment-v1`, a versioned, additive
+multi-label result over a redacted episode. Version 1 labels are
+`prompt_injection`, `instruction_hijack`, `secret_or_credential`,
+`data_exfiltration`, `unsafe_tool_request`, `none_detected`, and `unknown`; each
+result carries bounded severity, classifier kind and version, rule-set digest,
+assessed episode digest, raw occurrence references, and assessment time, but no
+copied transcript body. `none_detected` and `unknown` are mutually exclusive with
+each other and with positive labels. Unknown, missing, failed, or stale assessment
+denies use. `none_detected` is evidence only and never authorization by itself.
+
+The initial episode producer is deterministic `redaction-v1`. It accepts only
+validated textual or structured records from supported adapter projections,
+retains allowlisted role, ordering, timing, and relationship fields, and emits RFC
+8785 JSON. Before emission it replaces pinned credential formats, authorization
+headers, private-key blocks, environment-secret assignments, and high-entropy token
+candidates with typed non-reversible markers. Absolute paths, hostnames, user names,
+email addresses, and IP addresses are replaced with tenant-scoped HMAC pseudonyms
+using a derived-pipeline key reference; removed bytes and a reversible mapping are
+never stored. Detector order, patterns, entropy parameters, structured-field
+allowlists, pseudonym format, and test corpus are part of the immutable pipeline
+version. Binary, malformed, unsupported, detector-failed, or limit-exceeding input
+produces no episode and a bounded coverage gap. The episode records input occurrence
+digests, redaction counts by bounded class, detector corpus digest, key ID, pipeline
+version, and output digest without recording removed content.
+
+The initial classifier is deterministic `rules-v1`, a checked-in ordered rule set
+over `redaction-v1` episodes with synthetic positive, negative, Unicode, obfuscation,
+and boundary fixtures for every label. It emits positive labels when a rule matches,
+`none_detected` only after all supported rules complete, and `unknown` for unsupported
+schema, truncation, ambiguous decode, rule failure, or resource-limit exhaustion.
+It is explicitly not claimed to recognize every attack. Additional model or rule
+classifiers become eligible only through a new immutable classifier version, pinned
+artifact digest, conformance corpus, threat-model update, and tenant-policy allowlist.
+Human `use-approval-v1` remains mandatory after any classifier result.
+
+Assessment freshness is evaluated at the instant of authorization against the
+current tenant policy. An assessment is stale if its episode digest no longer
+matches, its classifier kind or rule-set digest is absent from the current allowlist,
+it predates the policy's `assessment_not_before`, it is older than the policy's
+`max_assessment_age` (24 hours by default and never more than 30 days), or a newer
+valid assessment for the same episode supersedes it. The policy record and
+authorization decision carry the evaluation timestamp, so independent verifiers
+produce the same result. A policy change fails closed until affected episodes are
+reassessed; clock uncertainty outside the five-minute operational allowance also
+denies use.
+
+Human authorization is a tenant-governance-key-signed `use-approval-v1` record that
+binds tenant, episode digest, assessment digest, purpose, allowed consumer class,
+policy version, approver identity, issuance, and expiry. Approval for one purpose or
+episode cannot authorize another, and revocation is an append-only signed record.
+The default policy has no approved consumer, raw objects are never approvable, and
+an agent-facing loader must verify assessment, current policy, approval chain,
+purpose, expiry, and revocation before returning derived bytes.
+
+The current tenant policy is a tenant-governance-key-signed
+`consumption-policy-v1` immutable record plus a signed monotonic
+`control/consumption-policies/current.json` pointer. The policy binds tenant, policy
+version, authority key, issue and effective times, allowed classifier kinds and
+rule-set digests, `assessment_not_before`, `max_assessment_age`, allowed
+purpose-to-consumer-class mappings, maximum approval lifetime, and predecessor
+digest. Administrators publish a new immutable record and then advance the pointer;
+rollback publishes another higher-epoch policy rather than repointing to an older
+epoch. Readers freeze and verify pointer, record, predecessor continuity, and clock
+before evaluation. Missing, altered, expired, unsupported, or discontinuous policy
+state denies use. This governance identity is offline and cannot access raw bytes.
+
+Raw archive export uses a separate `export-approval-v1`; `use-approval-v1` can never
+authorize it. The tenant export authority signs tenant, UUIDv7 export request,
+frozen inventory digest, selected-occurrence-set digest, purpose, recipient or
+destination class, requesting operator, policy version, issue time, and expiry no
+more than 24 hours later. Revocation is append-only and signed. The offline exporter
+verifies the current authority chain, selection against the frozen inventory,
+purpose, recipient, expiry, and revocation before reading raw bytes, then writes a
+signed audit receipt binding the approval, exact exported occurrence-set digest,
+destination class, outcome, and completion time. Approval grants no reusable S3
+credential, agent-use permission, or access outside the frozen selection.
+
+**Because:** classification produces evidence while policy decides whether that
+evidence is sufficient; keeping them separate makes default denial and human
+authority enforceable, while export requires a narrowly scoped administrative path
+that cannot be confused with permission to prompt from data. **Rejected:** one
+opaque safe/unsafe bit; model output as authorization; global or indefinite
+approval; implicit assessment freshness; reusing agent-use approval for raw export;
+using raw occurrence data directly in agent context. **Enforced by:** taxonomy and
+freshness fixtures, stale/unknown/failure cases, signature and scope negative tests,
+revocation tests, export-selection/audit tests, and a default-installation test with
+no raw or derived prompt path. **Revisit if:** tenant governance adopts a stricter
+compatible taxonomy or external policy engine; imported decisions must preserve the
+signed record semantics, purpose separation, and default denial.
+
 Deliverables:
 
 - Build deterministic `archivist catalog rebuild --from-occurrences` processing from
@@ -1189,7 +1362,8 @@ Deliverables:
   30-day, two-pass mark-and-sweep process defined in Section 7.10. The two complete
   reference scans run at least 24 hours apart and delete only blobs absent from both.
 - Add export and deletion workflows with audit records.
-- Define a redacted episode schema with raw occurrence provenance.
+- Define a redacted episode schema with raw occurrence provenance and implement the
+  deterministic `redaction-v1` producer.
 - Add prompt-injection classification and human policy gates before any archive
   material can be used by an agent.
 
@@ -1460,7 +1634,8 @@ The 1.0 operational objectives are:
 | `0.5` | Operational beta | Helm/Compose/services, rotation, runbooks, fault tests |
 | `0.6` | Migration candidate | Shadow comparator, pilot evidence, restore verification |
 | `0.7` | Inference preview | Proxy/SDK hook, exact artifacts, independent coverage report |
-| `0.8+` | Hardening candidates | Governance work, catalog/rebuild, audit fixes |
+| `0.8.0` | First hardening candidate | Governance work, catalog/rebuild, independent review, release scans, and protocol/adapter/client-state fuzz gates |
+| `0.8.x` | Additional hardening candidates | Soak, compatibility, restore, documentation, and audit fixes needed before 1.0 |
 | `1.0` | Stable raw archive | Baseline requirements, exact instrumented capture, and all compatibility gates pass |
 
 No release is called production-ready solely because all crates compile. Release
