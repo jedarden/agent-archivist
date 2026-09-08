@@ -721,9 +721,10 @@ making the derived catalog a prerequisite for ingestion.
 ## 8. Delivery phases and completion criteria
 
 Each phase ends with a committed artifact and an objective exit gate. Exploratory
-code that precedes a dependency gate stays under `/home/coding/scratch` and is not
-merged. Phase code consumes the last gated contract, and a phase is complete only
-when its dependencies and its own gate pass in the same commit being evaluated.
+code that precedes a dependency gate stays in a repository-external scratch
+directory and is not merged. Phase code consumes the last gated contract, and a
+phase is complete only when its dependencies and its own gate pass in the same
+commit being evaluated.
 
 ### Phase 0 — Project foundation and decision framework
 
