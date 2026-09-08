@@ -22,6 +22,8 @@ prototype.
 
 ## Documents
 
+- [Implementation plan](docs/plan/plan.md) turns the requirements into phased
+  deliverables, verification gates, and a public-release path.
 - [Research findings](docs/research/transcript-archiving-findings.md) explains
   the observations and architectural conclusions behind the design.
 - [System requirements](docs/notes/requirements.md) defines the normative
