@@ -30,6 +30,7 @@ purpose, its phase, and its dependency boundary.
 cargo fmt --check                                  # formatting
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace                             # unit tests
+cargo doc --workspace --no-deps                    # docs; broken links deny
 python3 tools/check-crate-graph.py                 # crate purpose + cycle check
 ```
 
@@ -44,6 +45,19 @@ committed.
   the observations and architectural conclusions behind the design.
 - [System requirements](docs/notes/requirements.md) defines the normative
   behavior expected from the public implementation.
+
+## Governance
+
+- [Contributing](CONTRIBUTING.md) — development environment, verification
+  baseline, workspace rules, and how to propose changes.
+- [Security policy](SECURITY.md) — supported versions and how to report a
+  vulnerability.
+- [Support policy](SUPPORT.md) — what is supported, for how long, and how to
+  get help.
+- [Release process](RELEASE.md) — versioning, release gates, signing, and
+  distribution rules.
+- [Code of conduct](CODE_OF_CONDUCT.md) — standards for participation in the
+  project community.
 
 ## Design principles
 
