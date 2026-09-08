@@ -1,0 +1,3 @@
+# Rust build output. Cargo.lock is intentionally tracked: the workspace
+# commits its lockfile (implementation plan, Section 4).
+/target

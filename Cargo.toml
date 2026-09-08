@@ -1,0 +1,32 @@
+# Agent Archivist workspace.
+#
+# Layout, crate boundaries, and the ownership rationale are defined in
+# docs/plan/plan.md (Sections 4 and 6) and docs/notes/crate-ownership.md.
+# Crate boundaries are fixed through the first vertical slice; collapsing one
+# requires cycle or benchmark evidence and updates both documents in the same
+# commit.
+
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+authors = ["jedarden <github@jedarden.com>"]
+license = "Apache-2.0"
+repository = "https://git.ardenone.com/jedarden/agent-archivist"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+
+# Shared external dependencies are pinned here as crates adopt them so every
+# member resolves one version. None are required yet: the scaffold is
+# dependency-free, so the committed Cargo.lock currently describes only the
+# workspace members themselves.

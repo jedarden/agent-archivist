@@ -1,0 +1,30 @@
+[package]
+name = "archivist-cli"
+description = "Archivist command-line entry point: collect, serve, link, admin, and status commands"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "archivist"
+path = "src/main.rs"
+
+[dependencies]
+archivist-adapter-claude = { path = "../archivist-adapter-claude" }
+archivist-adapter-codex = { path = "../archivist-adapter-codex" }
+archivist-adapter-opencode = { path = "../archivist-adapter-opencode" }
+archivist-adapter-pi = { path = "../archivist-adapter-pi" }
+archivist-adapter-sdk = { path = "../archivist-adapter-sdk" }
+archivist-auth = { path = "../archivist-auth" }
+archivist-client-core = { path = "../archivist-client-core" }
+archivist-protocol = { path = "../archivist-protocol" }
+archivist-server = { path = "../archivist-server" }
+archivist-storage = { path = "../archivist-storage" }
+archivist-storage-s3 = { path = "../archivist-storage-s3" }
+
+[lints]
+workspace = true

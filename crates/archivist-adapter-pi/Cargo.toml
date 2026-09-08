@@ -1,0 +1,16 @@
+[package]
+name = "archivist-adapter-pi"
+description = "Pi source adapter: configured-root discovery and durable session capture"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+archivist-adapter-sdk = { path = "../archivist-adapter-sdk" }
+
+[lints]
+workspace = true

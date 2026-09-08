@@ -1,0 +1,17 @@
+[package]
+name = "archivist-client-core"
+description = "Archivist client cursors, crash-safe spool, upload scheduling, and acknowledgement state machine"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+archivist-adapter-sdk = { path = "../archivist-adapter-sdk" }
+archivist-protocol = { path = "../archivist-protocol" }
+
+[lints]
+workspace = true

@@ -1,0 +1,16 @@
+[package]
+name = "archivist-storage"
+description = "Archivist storage capability model and the raw-write, control-read, control-admin, and audit/restore store traits"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+archivist-protocol = { path = "../archivist-protocol" }
+
+[lints]
+workspace = true

@@ -1,0 +1,10 @@
+# Pinned toolchain for every workspace member.
+#
+# No pre-1.0 release promises an older minimum supported Rust version; every
+# release records the exact toolchain it was built with, and toolchain bumps
+# are reviewed changes that rerun the full conformance and compatibility suite
+# (implementation plan, Section 4).
+
+[toolchain]
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]

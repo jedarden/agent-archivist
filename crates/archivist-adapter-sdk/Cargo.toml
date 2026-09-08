@@ -1,0 +1,16 @@
+[package]
+name = "archivist-adapter-sdk"
+description = "Discovery and immutable-artifact interfaces shared by every Archivist source adapter"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+archivist-protocol = { path = "../archivist-protocol" }
+
+[lints]
+workspace = true

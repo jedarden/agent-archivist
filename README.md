@@ -15,10 +15,26 @@ storage path for a deployment, but it is an integration rather than a requiremen
 AWS S3, Backblaze B2, MinIO, Garage, and other compatible implementations should
 be usable through the same storage contract.
 
-This repository is intentionally code-free at first. It records the architecture
-before the private, deployment-specific prototype is generalized. It contains no
-transcripts, credentials, infrastructure inventory, or history copied from that
-prototype.
+This repository records the architecture before the private,
+deployment-specific prototype is generalized. It contains no transcripts,
+credentials, infrastructure inventory, or history copied from that prototype.
+
+The Rust workspace is scaffolded: twelve crates with fixed boundaries, a pinned
+toolchain, a committed lockfile, and no production behavior yet. The
+[crate ownership map](docs/notes/crate-ownership.md) states each crate's
+purpose, its phase, and its dependency boundary.
+
+## Workspace
+
+```sh
+cargo fmt --check                                  # formatting
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace                             # unit tests
+python3 tools/check-crate-graph.py                 # crate purpose + cycle check
+```
+
+Rust 1.97.1 (edition 2024) is pinned in `rust-toolchain.toml`; `Cargo.lock` is
+committed.
 
 ## Documents
 
@@ -42,8 +58,10 @@ prototype.
 
 ## Status
 
-Architecture and requirements are being established. No production-ready client
-or server is included yet.
+Architecture and requirements are established. The implementation workspace is
+scaffolded and its crate boundaries are fixed; behavior arrives through the
+phases in the [implementation plan](docs/plan/plan.md). No production-ready
+client or server is included yet.
 
 ## License
 

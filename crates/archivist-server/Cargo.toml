@@ -1,0 +1,18 @@
+[package]
+name = "archivist-server"
+description = "Stateless, horizontally scalable Archivist HTTP ingestion data plane"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+archivist-auth = { path = "../archivist-auth" }
+archivist-protocol = { path = "../archivist-protocol" }
+archivist-storage = { path = "../archivist-storage" }
+
+[lints]
+workspace = true
