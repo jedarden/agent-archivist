@@ -791,6 +791,9 @@ Deliverables:
 - Golden valid/invalid envelopes and deterministic ID/key vectors.
 - A small language-neutral conformance corpus containing expected signatures,
   digests, and object keys.
+- Versioned CLI/config reference and schemas defining command names, flags, TOML
+  keys, defaults, precedence, stdout/stderr, exit codes, and secret-reference fields
+  before client command implementation.
 - A threat model covering spoofing, replay, cross-tenant writes, digest confusion,
   decompression bombs, poisoned manifests, and metadata leakage.
 - Compatibility fixtures that prove an old reader accepts additive optional fields,
@@ -942,6 +945,11 @@ Deliverables:
   non-interactive mode a missing decision/config field returns exit code 64 with a
   stable content-free error instead of prompting; daemon and service invocations
   always use this mode.
+- Human-readable output is the TTY default; `--json` emits one versioned JSON value
+  to stdout, sends diagnostics to stderr, and never emits ANSI. ANSI is allowed only
+  on a detected TTY. No command reads a secret from an implicit prompt or stdin;
+  secret-bearing operations accept protected file/key-store references, and bulk
+  payload stdin is reserved for an explicitly documented subcommand.
 - Use XDG-native TOML and SQLite/spool locations, one OS-level mutator lock, mode
   `0700` directories and `0600` files, and the configuration precedence in Section
   7.9. Secrets are named references only. The daemon runs every 15 minutes with 10%
@@ -1250,7 +1258,39 @@ foundation → contract conformance → storage/auth → server + client → ada
 Avoid parallel implementation of competing object layouts or signing formats after
 Phase 1. Parallelize behind settled interfaces instead.
 
+### Phase sizing and cut lines
+
+Effort bands exclude pilot/soak wall time: **S** is 2–4 engineering days, **M** is
+5–8, and **L** is 9–15. They are planning bounds, not delivery promises.
+
+| Phase | Band | Expected reviewable tasks | Mandatory cut line |
+|---|---:|---:|---|
+| 0 | S | 4–6 | Workspace, policy/docs, and downstream CI are separate tasks |
+| 1 | M | 6–8 | Schema families, verifier, and threat model split by artifact |
+| 2 | M | 6–9 | Store traits, S3 adapter, and each backend profile split |
+| 3 | M | 5–7 | Client trust, admin control records, and receipt trust split |
+| 4 | L | 8–12 | Middleware, stream pipeline, commits, receipts, and health split |
+| 5 | L | 8–12 | State machine, spool, scheduler, CLI, and doctor split |
+| 6 | L | 8–12 | One task per adapter plus SDK/parity tasks |
+| 7 | M | 6–9 | Binary, OCI, Compose, Helm, service, and runbooks split |
+| 8 | M | 5–7 | Comparator, shadow rollout, restore, cutover, rollback split |
+| 9 | L | 7–10 | Proxy, SDK hook, schemas, correlation, and flush split |
+| 10 | L | 7–10 | Rebuild, inventory, governance, export, and GC split |
+| 11 | M | 6–9 | Review, scans, fuzz, soak, compatibility, and release split |
+
+No task spans more than one crate-level interface plus its tests or combines a
+schema change with an unrelated adapter/deployment change. If a phase exceeds its
+upper task bound, split it at the named cut lines; do not widen a task or skip a gate.
+
 ## 10. Testing strategy and verification gates
+
+Every gate emits a versioned `verification-manifest.json` keyed by Git commit. It
+records toolchain and dependency-lock digests, fixture seed/digest, required test and
+fuzz outcomes, benchmark environment/results, storage capability reports, SBOM and
+artifact digests, and—when applicable—content-free pilot/restore evidence. It stores
+no transcript, raw path, hostname, credential, or unbounded identifier. CI retains
+the manifest as an artifact; release manifests include and sign it. A release gate
+fails if evidence comes from a different commit or any required entry is missing.
 
 ### Unit and property tests
 
@@ -1428,21 +1468,22 @@ versions, and deduplication guarantees.
 
 ## 14. Risk register, Plan B, and mitigations
 
-| Risk | Consequence | Mitigation and proof |
-|---|---|---|
-| Harness schema changes | Silent transcript loss | Version detection, allowlists, fixtures, fail-closed unknown schema |
-| Active file rewrite | Skipped or mixed history | Tail checksum, file identity, new generation, rewrite tests |
-| Large account monopolizes backfill | Smaller/fresh sessions stale | Freshness reservation, per-source quota, starvation tests |
-| B2 lacks desired conditional semantics | Extra physical versions | Honest capability result, deterministic overwrite, lifecycle policy |
-| Server dies mid-request | Orphaned parts or partial object set | Abort lifecycle, blob/occurrence/attestation order, deterministic retry tests |
-| Link registry cache is stale | Delayed revocation | 60-second TTL, epoch checks, five-minute request window, propagation test |
-| Compression bomb | Resource exhaustion | Size/ratio/time/concurrency bounds and fuzzing |
-| Logs leak transcript content | Privacy/security incident | Typed safe fields, lint/review policy, forced-error tests |
-| Client disk fills during outage | Host disruption or loss | 2 GiB cap, 5 GiB free-space floor, 80% resume point, visible degraded state |
-| Mirrored source is relabeled | Incorrect provenance/dedup | Separate origin/uploader identity and delegation tests |
-| Raw archive reused as trusted memory | Prompt injection or secret replay | Separate access tier, redaction/trust pipeline, no default consumer |
-| Public repo inherits private material | Irreversible disclosure | Independent history, synthetic fixtures, secret/content scans |
-| Storage deletion removes shared data | Irrecoverable loss | Signed tombstones, legal holds, 30-day grace, two scans 24 hours apart, restore before enablement |
+| Risk | Likelihood | Impact | Consequence | Mitigation and proof |
+|---|---:|---:|---|---|
+| Harness schema changes | H | H | Silent transcript loss | Version detection, allowlists, fixtures, fail-closed unknown schema |
+| Active file rewrite | M | H | Skipped or mixed history | Tail checksum, file identity, new generation, rewrite tests |
+| Large account monopolizes backfill | H | M | Smaller/fresh sessions stale | Freshness reservation, per-source quota, starvation tests |
+| B2 lacks desired conditional semantics | H | L | Extra physical versions | Honest capability result, deterministic overwrite, lifecycle policy |
+| Server dies mid-request | M | M | Orphaned parts or partial object set | Abort lifecycle, blob/occurrence/attestation order, deterministic retry tests |
+| Link registry cache is stale | M | H | Delayed revocation | 60-second TTL, epoch checks, five-minute request window, propagation test |
+| Receipt trust/rotation fails | L | H | Client cannot prove acknowledgement | Tenant authority chain, 30-day rotation, seven-day overlap, retained public keys |
+| Compression bomb | M | H | Resource exhaustion | Size/ratio/time/concurrency bounds and fuzzing |
+| Logs leak transcript content | M | H | Privacy/security incident | Typed safe fields, lint/review policy, forced-error tests |
+| Client disk fills during outage | M | H | Host disruption or loss | 2 GiB cap, 5 GiB free-space floor, 80% resume point, visible degraded state |
+| Mirrored source is relabeled | L | H | Incorrect provenance/dedup | Separate occurrence/attestation identity and delegation tests |
+| Raw archive reused as trusted memory | M | H | Prompt injection or secret replay | Separate access tier, redaction/trust pipeline, no default consumer |
+| Public repo inherits private material | L | H | Irreversible disclosure | Independent history, synthetic fixtures, secret/content scans |
+| Storage deletion removes shared data | L | H | Irrecoverable loss | Signed tombstones, legal holds, 30-day grace, two scans 24 hours apart, restore before enablement |
 
 ### Plan B and operational fallback
 
