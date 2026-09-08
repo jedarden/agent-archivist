@@ -1,6 +1,6 @@
 # Agent Archivist requirements
 
-Status: proposed baseline · Last updated: 2026-09-08
+Status: accepted baseline · Last updated: 2026-09-08
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are
 to be interpreted as described by RFC 2119 and RFC 8174 when they appear in bold.
@@ -8,9 +8,9 @@ to be interpreted as described by RFC 2119 and RFC 8174 when they appear in bold
 ## 1. Scope and goals
 
 The system collects durable coding-agent session artifacts from linked clients,
-preserves exact source bytes and provenance in S3-compatible storage, and provides
-a stable foundation for later redaction, indexing, reflection, evaluation, and
-dataset generation.
+preserves exact file-source bytes or exact versioned database-projection bytes plus
+provenance in S3-compatible storage, and provides a stable foundation for later
+redaction, indexing, reflection, evaluation, and dataset generation.
 
 The first public release **MUST** include a host client, a versioned ingestion API,
 a stateless ingestion server, and an S3-compatible storage implementation.
@@ -25,7 +25,7 @@ explicitly governed consumers.
   **MUST NOT** require a local database, persistent volume, leader, sticky session,
   or single replica for logical correctness.
 - **ARCH-002** — S3-compatible object storage **MUST** be the durable source of
-  truth for accepted blobs and occurrence manifests.
+  truth for accepted blobs, occurrence manifests, and upload attestations.
 - **ARCH-003** — Any healthy ingestion replica **MUST** be able to handle any
   request or retry.
 - **ARCH-004** — Client cursors, the retry queue, and the pending upload spool
@@ -59,6 +59,9 @@ explicitly governed consumers.
   logically idempotent.
 - **ID-008** — Object keys **MUST** be derived by the server. A client **MUST NOT**
   receive arbitrary bucket write access or select an unrestricted object key.
+- **ID-009** — A client **MUST** pin a tenant authority root during linking and
+  verify receipts through a tenant-authority-signed server receipt-key record.
+  Receipt-key rotation **MUST NOT** invalidate retained receipts.
 
 ## 4. Session and artifact identity
 
@@ -91,7 +94,7 @@ explicitly governed consumers.
 - **CAP-005** — Adapters **MUST** detect source truncation or replacement and
   preserve both generations.
 - **CAP-006** — The client **MUST** persist an acknowledgement only after a durable
-  server receipt covers both the blob and its occurrence manifest.
+  server receipt covers the blob, occurrence manifest, and upload attestation.
 - **CAP-007** — Ephemeral workers **MUST** emit or flush their transcript before
   source teardown if complete coverage is claimed.
 - **CAP-008** — Exact provider request/response capture **MUST** be described as a
@@ -132,7 +135,7 @@ explicitly governed consumers.
 - **VAL-004** — The server **MUST** calculate and verify the digest of the canonical
   uncompressed payload while streaming it.
 - **VAL-005** — A digest or size mismatch **MUST NOT** leave a committed blob under
-  the claimed content address or a committed occurrence manifest.
+  the claimed content address, occurrence manifest, or upload attestation.
 - **VAL-006** — Compression **MUST** have a deterministic canonical form when its
   bytes are persisted beneath an uncompressed content address.
 - **VAL-007** — Validation failures **MUST** return stable machine-readable error
@@ -147,10 +150,11 @@ explicitly governed consumers.
   backend-native checksum of stored bytes.
 - **STO-002** — A distinct occurrence manifest **MUST** be stored for every unique
   source occurrence, even when multiple occurrences reference one blob.
-- **STO-003** — Blob and occurrence object keys **MUST** be deterministic and
-  tenant-scoped.
+- **STO-003** — Blob, occurrence, and upload-attestation object keys **MUST** be
+  deterministic and tenant-scoped.
 - **STO-004** — Replaying the same valid request **MUST** converge on the same blob
-  and occurrence keys and **MUST NOT** create duplicate logical records.
+  occurrence, and upload-attestation keys and **MUST NOT** create duplicate logical
+  records.
 - **STO-005** — Where atomic conditional create exists, the storage adapter
   **SHOULD** use it and treat “already exists” as successful deduplication after
   validating compatible object metadata.
@@ -166,29 +170,36 @@ explicitly governed consumers.
   **SHOULD** configure lifecycle expiration for redundant noncurrent versions,
   subject to retention policy.
 - **STO-010** — An occurrence manifest **MUST** include its blob digest, logical
-  session identity, source coordinates, capture timestamps, origin, uploader, and
-  schema version.
-- **STO-011** — Raw blob and occurrence namespaces **MUST** be sufficient to rebuild
-  catalogs and all derived indexes.
+  session identity, source coordinates, origin, adapter/projection version, and
+  schema version. Its canonical fields **MUST NOT** vary by uploader or upload
+  attempt.
+- **STO-011** — Raw blob, occurrence, and upload-attestation namespaces **MUST** be
+  sufficient to rebuild catalogs and all derived indexes.
 - **STO-012** — Derived artifacts **MUST** live under separate, pipeline-versioned
   prefixes and **MUST** retain references to raw occurrence IDs.
+- **STO-013** — An upload attestation **MUST** bind an occurrence ID, origin,
+  uploader, frozen request ID, capture/envelope timestamps, delegation relation, and
+  schema version. Retries of one frozen request **MUST** converge to one attestation;
+  a distinct authorized uploader/request **MUST** remain separately auditable.
 
 ## 9. Commit and receipt semantics
 
-- **RCPT-001** — A request is successful only after both the blob and occurrence
-  manifest are durably accepted by the configured storage path.
+- **RCPT-001** — A request is successful only after the blob, occurrence manifest,
+  and upload attestation are durably accepted by the configured storage path.
 - **RCPT-002** — The receipt **MUST** contain tenant, request ID, blob digest,
-  occurrence ID, derived object keys, commit timestamp, and storage outcome.
+  occurrence ID, upload-attestation ID, server-derived object keys, commit timestamp,
+  and per-object storage outcomes.
 - **RCPT-003** — Storage outcome **MUST** distinguish what the backend can actually
   establish, such as `created`, `already_present`, `replaced_equivalent`, or
   `logically_committed_unknown_physical_result`.
 - **RCPT-004** — The server **MUST NOT** claim physical deduplication when the
   backend only guarantees logical overwrite.
-- **RCPT-005** — If the blob succeeds but the occurrence write fails, the request
-  **MUST** fail without a receipt. Retrying the identical request **MUST** repair the
-  partial commit.
-- **RCPT-006** — Receipts **SHOULD** be authenticated so a client can retain them as
-  durable evidence of acceptance.
+- **RCPT-005** — If any required later write fails after an earlier blob or
+  occurrence write succeeds, the request **MUST** fail without a receipt. Retrying
+  the identical request **MUST** repair the partial commit.
+- **RCPT-006** — Receipts **MUST** be authenticated through the tenant authority so
+  a client can retain them as durable evidence of acceptance independently of the
+  current endpoint or replica.
 
 ## 10. Security, privacy, and governance
 
@@ -231,8 +242,9 @@ explicitly governed consumers.
 - **OPS-006** — Storage compatibility tests **MUST** exercise at least one reference
   S3 implementation and **SHOULD** exercise B2 plus a self-hosted implementation.
 - **OPS-007** — Tests **MUST** cover lost responses, repeated requests, concurrent
-  retries, blob-only partial commits, occurrence-only retry repair, active-file
-  growth, incomplete trailing records, truncation, replacement, and relay upload.
+  retries, blob-only and blob-plus-occurrence partial commits, attestation retry
+  repair, active-file growth, incomplete trailing records, truncation, replacement,
+  and relay upload.
 - **OPS-008** — Backup/restore or replication procedures **MUST** be documented and
   verified before production-readiness claims.
 - **OPS-009** — Object schema and protocol evolution **MUST** remain readable by at
@@ -260,14 +272,15 @@ with synthetic fixtures:
 1. Two linked clients can upload sessions with the same upstream session UUID
    without collision.
 2. The same client can retry an identical chunk through different server replicas
-   and produce one logical blob and one logical occurrence.
+   and produce one logical blob, one logical occurrence, and one upload attestation.
 3. Two distinct occurrences with identical payload bytes produce one logical blob
-   and two occurrence manifests.
+   and two occurrence manifests, each with its own upload attestation.
 4. A marathon JSONL session is archived incrementally without storing a partial
    final record, and resumes after a client crash without loss.
 5. A truncated or replaced source becomes a new generation.
-6. A relay preserves the origin client while recording itself as uploader.
-7. A blob-write/occurrence-write partial failure converges after retry.
+6. Origin and relay uploads of the same source event preserve one occurrence while
+   recording distinct uploader/request attestations.
+7. A blob/occurrence/attestation partial failure converges after retry.
 8. The B2 compatibility suite reports honest logical and physical dedup semantics.
 9. No server replica requires persistent local state, and replacement during
    retries does not change the result.

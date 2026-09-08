@@ -79,7 +79,7 @@ when the source artifact is replaced or rewound. It has sufficient uniqueness fo
 session provenance, assuming the linked client ID is persistent and independently
 generated. It is not payload deduplication.
 
-### 4. Blob identity and occurrence identity are different
+### 4. Blob, occurrence, and uploader identity are different
 
 Content-addressing answers “have these exact bytes already been stored?” It does
 not answer “where did these bytes occur?” Identical bytes can legitimately appear
@@ -91,7 +91,9 @@ The archive should store:
 - one immutable **blob** keyed by the SHA-256 digest of the canonical,
   uncompressed payload bytes; and
 - one immutable **occurrence manifest** for every distinct source occurrence,
-  pointing to that blob and carrying provenance.
+  pointing to that blob and carrying source-stable provenance; and
+- one immutable **upload attestation** for each frozen uploader/request that commits
+  an occurrence.
 
 A useful logical model is:
 
@@ -100,10 +102,14 @@ session_key = tenant / origin_client / harness / upstream_session
 blob_key    = sha256(canonical_uncompressed_payload)
 occurrence  = hash(session_key, artifact, generation, byte_or_event_range,
                    blob_key)
+attestation = hash(occurrence, uploader_client, request_id)
 ```
 
-This deduplicates storage without erasing evidence that the same content arose in
-more than one place.
+This deduplicates bytes and source occurrences without erasing evidence that the
+same content arose in more than one place or that more than one authorized relay
+submitted it. Keeping uploader/request/timing fields out of the occurrence prevents
+concurrent origin and relay writes from replacing its source provenance with a
+last-writer-wins variant.
 
 ### 5. Active sessions require chunking and a client-side acknowledgement ledger
 
@@ -136,7 +142,8 @@ Durable responsibility is divided as follows:
 | Discovery cursor, pending spool, retry schedule | Client |
 | Linked-client trust record | External identity/control plane or S3 |
 | Transcript bytes | S3 blob namespace |
-| Provenance and logical idempotency | S3 occurrence namespace |
+| Source provenance and logical idempotency | S3 occurrence namespace |
+| Uploader/request provenance | S3 upload-attestation namespace |
 | Query indexes, redacted episodes, datasets | Versioned derived S3 prefixes |
 
 Any ingestion replica can accept the next retry. A receipt is issued only after
@@ -156,7 +163,7 @@ arbitrary bucket keys or perform general S3 operations.
 ### 8. Logical idempotency is portable; physical exactly-once storage is not
 
 The server derives deterministic object keys. A retry therefore addresses the same
-logical blob and occurrence manifest.
+logical blob, occurrence manifest, and uploader/request attestation.
 
 Backends differ in their support for atomic create-if-absent operations:
 
@@ -218,9 +225,10 @@ and an auditable deletion path. Raw data must not be injected directly into anot
 agent. Redaction, trust classification, prompt-injection handling, bounded episode
 extraction, evaluation, and human policy belong in a derived-data pipeline.
 
-## Proposed protocol shape
+## Protocol shape carried into the implementation plan
 
-A versioned upload request should carry a signed envelope containing at least:
+A versioned upload request carries an immutable canonical envelope plus separate,
+fresh proof-of-possession authorization for each attempt. The envelope includes:
 
 - protocol and schema version;
 - tenant and origin client IDs;
@@ -229,8 +237,11 @@ A versioned upload request should carry a signed envelope containing at least:
 - byte or event range and ordering metadata;
 - canonical payload digest, encoding, media type, and size;
 - capture and source timestamps;
-- nonce/request ID and signature timestamp; and
+- a frozen request ID; and
 - optional trace, inference request, orchestrator attempt, and parent-session IDs.
+
+The per-attempt authorization adds the uploader key ID, authorization epoch, and
+signature timestamp without changing occurrence or attestation identity.
 
 The request flow is:
 
@@ -242,10 +253,12 @@ The request flow is:
 5. Derive all object keys server-side.
 6. Durably create or idempotently replace the blob.
 7. Durably create or idempotently replace the occurrence manifest.
-8. Return a signed or authenticated receipt only after both writes succeed.
+8. Durably create or idempotently replace the upload attestation.
+9. Return a tenant-authority-verifiable signed receipt only after all three writes
+   succeed.
 
 A failed or ambiguous response is retried with exactly the same identity. Partial
-success is repaired by the retry because both destination keys are deterministic.
+success is repaired by the retry because all destination keys are deterministic.
 
 ## Illustrative S3 layout
 
@@ -253,17 +266,18 @@ The exact escaping and sharding scheme should be versioned, but the logical spli
 is important:
 
 ```text
-tenants/<tenant>/v1/raw/blobs/sha256/<prefix>/<digest>.gz
+tenants/<tenant>/v1/raw/blobs/zstd-v1/sha256/<prefix>/<digest>.zst
 tenants/<tenant>/v1/raw/occurrences/<origin>/<harness>/<session>/<occurrence>.json
+tenants/<tenant>/v1/raw/attestations/<occurrence>/<attestation>.json
 tenants/<tenant>/v1/control/clients/<client>.json
 tenants/<tenant>/v1/catalog/checkpoints/<timestamp>.json
 tenants/<tenant>/v1/derived/episodes/<pipeline-version>/<episode>.json
 tenants/<tenant>/v1/derived/datasets/<pipeline-version>/<partition>.parquet
 ```
 
-Blob and occurrence prefixes are the ingest contract. Catalogs and derived objects
-can be rebuilt from them and should identify their producing schema and pipeline
-versions.
+Blob, occurrence, and upload-attestation prefixes are the ingest contract. Catalogs
+and derived objects can be rebuilt from them and should identify their producing
+schema and pipeline versions.
 
 ## Public-project boundary
 
