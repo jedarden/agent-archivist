@@ -178,7 +178,8 @@ oracles — so findings cite the test class plus the plan clause it enforces.
   cannot invert SHA-256 cannot make arbitrary bytes match a chosen address,
   and unverified bytes never complete. Enforced by the §10 conformance cases
   "content-length, decompressed-length, digest, and checksum mismatch", the
-  incompatible-existing-object tests (§7.4, §7.7 enforced-by lists), EC-06's
+  incompatible-existing-object tests (§7.4 enforced-by) and
+  incompatible-object tests (§7.7 enforced-by), EC-06's
   conflict behavior, and the cross-platform golden blob vectors (§7.6) that
   fix the digest's byte basis across implementations.
 
@@ -189,8 +190,9 @@ oracles — so findings cite the test class plus the plan clause it enforces.
 - **Threat.** A component verifies the wrong digest basis. The stored object
   is `zstd-v1` compressed bytes beneath an uncompressed-digest key (plan §7.5
   key shape `blobs/zstd-v1/sha256/<digest>.zst`), and the envelope carries
-  three distinguishable checksums (§7.3: canonical uncompressed SHA-256,
-  incoming representation checksum, plus sizes). A verifier that hashes the
+  several distinguishable integrity declarations (§7.3: canonical
+  uncompressed SHA-256, incoming representation checksum, and compressed and
+  uncompressed sizes). A verifier that hashes the
   stored zstd bytes and compares them to the content address, treats the
   transport checksum or the zstd frame checksum (§7.6: "content size and
   checksum enabled") as proof of canonical identity, or reports
@@ -220,7 +222,8 @@ oracles — so findings cite the test class plus the plan clause it enforces.
   being promoted to content identity. Deduplication honesty is contractual:
   `already_present` requires readable compatible metadata, and the capability
   matrix reports `stored_checksum` as observed, never converting an unknown
-  result into a stronger guarantee (§7.7; STO-005). Enforced by the
+  result into a stronger guarantee (§7.7; §10 storage-compatibility report
+  rule; STO-005). Enforced by the
   cross-platform golden blobs (§7.6 enforced-by), the digest and checksum
   mismatch conformance cases (§10), the incompatible-object tests (§7.7
   enforced-by), and the Phase 8 deterministic restore sample — required at
@@ -524,7 +527,7 @@ source-truth residual accepted
 | ID | Finding | STRIDE | Disposition | Enforcing test class | Owner of residual |
 |---|---|---|---|---|---|
 | PI-01 | False content address (declared digest/size mismatch) | T | Mitigated | digest/checksum mismatch conformance; incompatible-existing-object; golden blobs | — |
-| PI-02 | Canonical-versus-stored digest confusion | T | Mitigated | golden blobs; digest/checksum mismatch; Phase 8 restore sample | — |
+| PI-02 | Canonical-versus-stored digest confusion | T | Mitigated | golden blobs; digest/checksum mismatch; incompatible-object; Phase 8 restore sample | — |
 | PI-03 | Decompression bomb (size and ratio ceilings) | D | Mitigated | decompression fuzzing; limit-boundary; adversarial 100:1 benchmark; Phase 4 fuzz gate | — |
 | PI-04 | Resource-slot exhaustion within bounds | D | Mitigated; aggregate accepted | limit-boundary; shutdown/drain; multipart-abort lifecycle | SEC working group + tenant operator |
 | PI-05 | Chunk-boundary manipulation | T | Containment mitigated; source-truth accepted | chunk-boundary + oversized-record unit/property; adapter byte parity; poison-continuation | SEC working group (client-core/adapter owners for parity) |
