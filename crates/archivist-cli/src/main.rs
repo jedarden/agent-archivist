@@ -14,7 +14,7 @@
 //!
 //! Skeleton scaffold (Phase 0). Commands arrive across Phases 3, 5, 6, and 7;
 //! `main` deliberately does nothing yet. There is no placeholder production
-//! behavior and no `todo!()` stub pretending to work.
+//! behavior here and no stub pretending to work.
 //!
 //! # Dependency boundary
 //!
