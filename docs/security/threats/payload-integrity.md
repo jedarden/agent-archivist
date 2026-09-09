@@ -381,9 +381,11 @@ source-truth residual accepted
   uploader's assertion (the trust position PI-07 records). Containment is
   attribution plus determinism: fabricated ranges create new provenance-
   bearing objects and can never corrupt archived ones (§7.4; EC-06).
-  **Owner:** SEC working group, with the `archivist-client-core` and adapter
-  owners (Phases 5–6) for the parity oracles that keep an honest client's
-  chunks faithful.
+  **Owner:** SEC working group, with the adapter owners (Phase 6: chunk
+  boundaries and parity oracles) and `archivist-client-core` (Phase 5: spool
+  and cursor discipline, which keeps an incomplete tail local and unspooled
+  per EC-01) — together the machinery that keeps an honest client's chunks
+  faithful.
 
 ### PI-06 — Identifier poisoning of occurrence identity and derived keys
 
@@ -538,7 +540,7 @@ source-truth residual accepted
 | PI-02 | Canonical-versus-stored digest confusion | T | Mitigated | golden blobs; digest/checksum mismatch; incompatible-object; Phase 8 restore sample | — |
 | PI-03 | Decompression bomb (size and ratio ceilings) | D | Mitigated | decompression fuzzing; limit-boundary; adversarial 100:1 benchmark; Phase 4 fuzz gate | — |
 | PI-04 | Resource-slot exhaustion within bounds | D | Mitigated; aggregate accepted | limit-boundary; shutdown/drain; multipart-abort lifecycle | SEC working group + tenant operator |
-| PI-05 | Chunk-boundary manipulation | T | Containment mitigated; source-truth accepted | chunk-boundary + oversized-record unit/property; adapter byte parity; poison-continuation | SEC working group (client-core/adapter owners for parity) |
+| PI-05 | Chunk-boundary manipulation | T | Containment mitigated; source-truth accepted | chunk-boundary + oversized-record unit/property; adapter byte parity; poison-continuation | SEC working group (adapter owners for parity; client-core for spool/cursors) |
 | PI-06 | Identifier poisoning of identity and keys | T | Mitigated | golden ID/key vectors; arbitrary-Unicode properties; synthetic-ID; incompatible-existing-object | — |
 | PI-07 | Fabricated provenance in the manifest | S/R | Accepted | — (attribution via signed envelope + attestation; EC-06 containment) | SEC working group (Phase 10 for consumers) |
 | PI-08 | Poison-input queue stall / conflict overwrite loop | D/T | Mitigated | error/action matrix; poison-continuation; lost-receipt; partial-commit; §7.9 disk-pressure | — |
