@@ -196,9 +196,9 @@ oracles — so findings cite the test class plus the plan clause it enforces.
 
 - **Threat.** A component verifies the wrong digest basis. The stored object
   is `zstd-v1` compressed bytes beneath an uncompressed-digest key (plan §7.5
-  key shape `blobs/zstd-v1/sha256/<digest>.zst`), and the envelope carries
-  several distinguishable integrity declarations (§7.3: canonical
-  uncompressed SHA-256, incoming representation checksum, and compressed and
+  key shape `blobs/zstd-v1/sha256/<digest-prefix>/<digest>.zst`), and the
+  envelope carries several distinguishable integrity declarations (§7.3:
+  canonical uncompressed SHA-256, incoming representation checksum, and compressed and
   uncompressed sizes). A verifier that hashes the
   stored zstd bytes and compares them to the content address, treats the
   transport checksum or the zstd frame checksum (§7.6: "content size and
