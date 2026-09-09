@@ -120,8 +120,11 @@ tenant's control-plane actions.
 Plan §7.6 fixes the resource test classes — **cross-platform golden blobs,
 decompression fuzzing, limit-boundary tests**, and the RSS ceiling of 512 MiB
 at the default 16-request concurrency on the reference four-vCPU runner — and
-§7.4 the identity classes — **golden ID/key vectors, arbitrary-Unicode
-properties, synthetic-ID tests, and incompatible-existing-object tests**.
+§7.4 the identity classes this document cites — **golden ID/key vectors,
+arbitrary-Unicode properties, synthetic-ID tests, and
+incompatible-existing-object tests** (§7.4 also fixes cross-tenant and
+concurrent relay/origin classes; those enforce the identity-access and
+relay-delegation documents' findings, per the scope split above).
 Section 7.8 adds the **error/action matrix, poison-continuation,
 lost-receipt, and partial-commit** tests; §10's conformance list adds
 **content-length, decompressed-length, digest, and checksum mismatch** cases
@@ -149,13 +152,17 @@ oracles — so findings cite the test class plus the plan clause it enforces.
   occurrence referencing that digest reads different bytes — or to pass
   step-4 validation with declared in-bounds values while streaming
   out-of-bounds content.
-- **Attacker position.** A malicious or compromised linked client; reaching
-  the streaming stage requires passing authorization (plan §5 steps 2–3).
-  On-path substitution of a legitimate request's body or envelope is the
-  altered-request case IA-02 already covers — the whole-request content
-  digest, canonical envelope digest, and payload digests are all inside the
-  signature (plan §7.2) — so the interesting position here is the signer
-  itself lying.
+- **Attacker position.** A malicious or compromised linked client. The
+  canonical flow authenticates before streaming (plan §5 steps 2–3), and
+  §7.2's key-ID pre-authorization only widens who can reach the streaming
+  stage — the unauthenticated streaming cost PI-03 and PI-04 price — never
+  who can complete an upload: storage commits only after the complete
+  signature and payload verify (§7.2; §7.7), so a keyless sender's false
+  address can never land. On-path substitution of a legitimate request's
+  body or envelope is the altered-request case IA-02 already covers — the
+  whole-request content digest, canonical envelope digest, and payload
+  digests are all inside the signature (plan §7.2) — so the interesting
+  position here is the signer itself lying.
 - **Affected contract.** Plan §7.4 (`blob_digest =
   SHA256(canonical_uncompressed_bytes)`; `integrity_conflict` on incompatible
   existing objects); §5 server data-flow steps 4–6; §7.7 ("completes only
@@ -292,7 +299,8 @@ residual accepted
   the multipart-abandonment variants (abandoned parts stream under §7.2's
   pre-authorization, before a complete signature can exist); a linked client
   for the slot-and-duration variants.
-- **Affected contract.** Plan §5 step 1 (headers, envelope, body size,
+- **Affected contract.** Plan §5 step 1 (headers, envelope, body size —
+  the transport-body bound VAL-003 names as the compressed-size limit —
   duration, and process concurrency bounded before payload-scale
   allocation); §7.6 limits (15-minute duration, 16 in-flight per process,
   four per client, 60 new requests/minute/client/replica with burst 8);
