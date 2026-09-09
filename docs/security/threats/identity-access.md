@@ -3,9 +3,11 @@
 Status: one of four domain documents feeding the Phase 1 threat model · Last
 updated: 2026-09-09
 
-Authority: the [implementation plan](../../plan/plan.md) — Section 5
+Authority: the [implementation plan](../../plan/plan.md) — primarily Section 5
 ("Control-plane boundary"), Section 7.2 ("Wire request and authentication"),
-Section 7.3 ("Envelope fields") — and the normative
+and Section 7.3 ("Envelope fields"), with the plan's §7.11 edge-case catalog
+(`EC-*`), other contract sections, and phase exit gates cited where a claim
+depends on them — and the normative
 [requirements](../../notes/requirements.md) (`ID-*`, `VAL-*`, `SEC-*`,
 `STO-*`). This document interprets those contracts; it introduces no new
 contract. The four domain documents under `docs/security/threats/` are
@@ -67,11 +69,13 @@ each finding can name what it attacks:
 
 Where a finding records an accepted risk, the acceptance is of a bound the
 plan already states (for example the 60-second revocation propagation bound);
-it is not a new tolerance. Accepted risks are named for the plan's own
-ownership vocabulary: the `SEC` verification owner (plan §16) for the threat
-model itself, the `archivist-auth` (Phase 3) and `archivist-server` (Phase 4)
-crate owners for their enforcing components, and the tenant operator for
-control-plane actions.
+it is not a new tolerance. Accepted-risk owners are drawn from existing
+vocabulary: the `SEC` verification owner (plan §16 traceability table) for
+the threat model itself; the `archivist-auth` and `archivist-server` crate
+owners for their enforcing components (owning phases 3 and 4 per the
+[crate ownership map](../../notes/crate-ownership.md)); and the operator who
+performs a tenant's control-plane actions — linking, revocation, rotation
+(plan §5; EC-12) — called the *tenant operator* throughout this document.
 
 ### Enforcing test classes
 
@@ -134,10 +138,10 @@ findings cite the test class plus the plan clause it enforces.
   attacker has (or has observed) genuinely valid signed bytes.
 - **Affected contract.** Plan §7.2 (the signature covers method, route,
   content type, whole-request content digest, canonical envelope digest, and
-  payload digests; multipart framing is fixed); plan §7.3 (the envelope is
-  immutable and canonical — RFC 8785, no floats, 64 KiB cap); requirement
-  ID-004 (the proof binds tenant, metadata, payload digest, request ID, and
-  timestamp).
+  payload digests; the envelope is canonical RFC 8785 JSON with no floats and
+  a 64 KiB cap, and the multipart framing is fixed); plan §7.3 (the spooled
+  envelope is immutable); requirement ID-004 (the proof binds tenant,
+  metadata, payload digest, request ID, and timestamp).
 - **Mitigation and enforcing tests.** Every alteration surface named above is
   inside the signed material, so any change breaks verification; byte
   substitution in the payload breaks the whole-request content digest and the
