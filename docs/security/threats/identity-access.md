@@ -257,19 +257,27 @@ design; residual amplification accepted
 - **Attacker position.** A linked client (strongest realistic position on
   this path: holds a genuine key and trust record for its own tenant), or an
   unlinked attacker as in IA-01 attempting variant (b) blindly.
-- **Affected contract.** Plan §5 ("Tenant authorization before object-key
-  construction or storage calls" is a required control, plan §11; SEC-003);
-  plan §7.4 (session/artifact identities are domain-separated over
-  length-prefixed tenant and origin-client fields; identifier syntax and
-  bounds; tenant IDs are issuer-created UUIDv4); plan §7.5 (object keys are
-  server-derived and tenant-scoped; all key segments are validated opaque IDs
-  or hashes); requirements ID-008 (clients never select object keys), VAL-002
-  (identifier syntax/length and tenant authorization validated before
-  commit), STO-003 (keys deterministic and tenant-scoped).
-- **Mitigation and enforcing tests.** Authorization is bound to the tenant in
-  the signed trust record and verified before object-key construction
-  (SEC-003); a tenant-A authorization over a tenant-B envelope is an altered
-  request (IA-02) and fails signature or tenant verification. Key derivation
+- **Affected contract.** Plan §11 required control "Tenant authorization
+  before object-key construction or storage calls" (SEC-003: tenant
+  authorization must be enforced before deriving or writing any tenant-scoped
+  key), made concrete by §5's server data flow — step 3 verifies the
+  signature and the declared tenant before step 7 commits anything; plan §3
+  fixed decision "Object keys are tenant-scoped and derived by the server"
+  with §7.5 (tenant-scoped key shapes; all key segments are validated opaque
+  IDs or hashes) and §7.7 ("The server derives every target key"); plan §7.4
+  (session/artifact identities are domain-separated over length-prefixed
+  tenant and origin-client fields; identifier syntax and bounds; tenant IDs
+  are issuer-created UUIDv4); requirements ID-008 (clients never select object
+  keys), VAL-002 (identifier syntax/length and tenant authorization validated
+  before commit), STO-003 (keys deterministic and tenant-scoped).
+- **Mitigation and enforcing tests.** The linked-client trust record is
+  tenant-authority-signed and tenant-addressed
+  (`tenants/<tenant>/v1/control/clients/<client>.json`, plan §7.5), and server
+  data-flow step 3 verifies the signature *and* the declared tenant before
+  any commit (plan §5; SEC-003). A tenant-A authorization over a tenant-B
+  envelope is therefore an altered request (IA-02) — the canonical envelope
+  digest the signature covers includes the tenant field (plan §7.2, §7.3) —
+  and fails signature or tenant verification. Key derivation
   uses domain-separated, length-prefixed fields, so identifier content cannot
   cross the tenant boundary or forge another tenant's deterministic keys
   (plan §7.4). Enforced by the **cross-tenant** test class (plan §5; §7.4
@@ -289,8 +297,8 @@ record mitigated; authority-key compromise accepted
 - **Threat.** (a) An attacker plants or rewrites a linked-client,
   revocation, or pointer record in the control prefix to authorize a key of
   their choosing, or rolls a pointer back to a pre-revocation epoch.
-  (b) The tenant authority signing key itself is compromised, which minting
-  trust records at will.
+  (b) The tenant authority signing key itself is compromised, letting its
+  holder mint valid trust records at will.
 - **Attacker position.** (a) Anyone with write access to the control prefix
   — a compromised `ControlAdminStore` credential, a mis-scoped storage
   identity, or a storage-backend compromise. (b) The tenant operator's
@@ -309,13 +317,17 @@ record mitigated; authority-key compromise accepted
   plane without letting a compromised raw-data credential authorize itself").
   Enforced by the **altered** and **stale**-epoch test classes applied to
   control records (plan §5 enforced-by list; Phase 3 exit gate
-  "stale-epoch … fail closed") and Phase 2's incompatible-object tests.
+  "stale-epoch … fail closed"), plus the incompatible-object tests of the
+  §7.7 storage contract (its enforced-by list), which cover the admin-store
+  adapter's rejection of an incompatible immutable record.
 - **Accepted risk (b).** The tenant authority key is the root of trust for
   client identity on this path; its compromise defeats record verification
-  for that tenant. The plan accepts this shape explicitly — its revisit
-  clause contemplates replacement only if "an external identity provider can
-  preserve the same offline verification and origin/uploader delegation
-  semantics" (plan §5). **Owner:** tenant operator, with the
+  for that tenant. The plan locks this shape — the linked-client registry
+  decision is resolved in Section 5 (plan §15, locked-decision index item 3)
+  — and its revisit clause contemplates replacement only if "an external
+  identity provider can preserve the same offline verification and
+  origin/uploader delegation semantics" (plan §5). **Owner:** tenant
+  operator, with the
   `archivist-auth` owner (Phase 3) for the verification path. Recovery is the
   Phase 7 runbooks for linking, revocation, and key rotation.
 
