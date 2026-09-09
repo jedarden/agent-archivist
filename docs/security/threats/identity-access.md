@@ -231,7 +231,7 @@ design; residual amplification accepted
 - **Note for implementation.** Within the plan's stated bound, the skew
   allowance should be applied to the window's endpoints, not stacked on both
   sides of it; this document records the composition question for the Phase 11
-  independent threat-model review (plan §11 Phase 11) without adding a new
+  independent threat-model review (plan §8, Phase 11) without adding a new
   requirement here.
 
 ### IA-06 — Cross-tenant write (tenant impersonation or identifier escape)
