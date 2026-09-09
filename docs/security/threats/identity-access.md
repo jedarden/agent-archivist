@@ -353,7 +353,8 @@ record mitigated; authority-key compromise accepted
   authorization epochs (Phase 3) prevent a revoked client from presenting a
   pre-revocation epoch.
   Enforced by the **revoked** test class (plan §5; Phase 3 exit gate; EC-12)
-  and the 60-second propagation test.
+  and the 60-second propagation test (plan §14 risk register, "Link registry
+  cache is stale"; §12 operational objectives).
 - **Residual (accepted).** Uploads accepted in the ≤60-second window, and
   requests already past verification (IA-11), remain in the archive. This is
   the plan's stated bound, not a new tolerance: the archive keeps complete
@@ -384,8 +385,11 @@ Mitigated
   removes readiness and returns retryable 503 with no storage writes; the
   client sees the §7.8 registry-failure row — retry, no receipt — and keeps
   its spool. There is no open fallback to accept. Enforced by the
-  **registry-outage** test class (plan §5; EC-09) and Phase 4's readiness
-  tests.
+  **registry-outage** test class (plan §5; EC-09); the serving-path backstop
+  is Phase 4's readiness contract, which requires a successful signed
+  control-record read for each tenant within the last 60 seconds and stops
+  advertising readiness immediately when that evidence expires (plan §8,
+  Phase 4).
 
 ### IA-10 — Key-rotation overlap abuse
 
@@ -404,7 +408,8 @@ stranding mitigated
   24 hours, and retries authorize the frozen envelope with the current key");
   Phase 3 (overlapping verification and monotonic authorization epochs; exit
   gates "rotation does not strand already spooled requests inside the
-  documented overlap" and "stale-epoch … fail closed"); EC-12.
+  documented overlap" and "stale-epoch … fail closed"); plan §7.8 (401/403
+  row: "Pause uploads; require link/rotation action"); EC-12.
 - **Accepted risk (a).** The 24-hour overlap is the plan's deliberate price
   for not stranding spooled work, so a compromised old key verifies for up to
   24 hours unless acted on. Rotation is the normal-key-hygiene path;
@@ -439,10 +444,11 @@ Accepted risk, flagged for independent review
   commit; this document records the consequence under the existing contract
   rather than adding a re-check requirement. Consequence is bounded: the
   in-flight request is limited by the 15-minute deadline and the per-request
-  size bounds, everything it commits carries full deterministic provenance
-  (blob, occurrence, and attestation keyed to the uploader and request ID,
-  plan §7.4–7.5), and the receipt's recorded authorization key/epoch lets the
-  operator attribute the accepted material after the fact. **Owner:**
+  size bounds, everything it commits is deterministic and provenance-bearing
+  — the blob by canonical digest, the occurrence by session/artifact/range
+  identity, and the upload attestation keyed to the uploader and request ID
+  (plan §7.4–7.5) — and the receipt's recorded authorization key/epoch lets
+  the operator attribute the accepted material after the fact. **Owner:**
   `archivist-server` owner (Phase 4), accepted by the SEC working group
   (plan §16); revisit at the Phase 11 independent threat-model review.
 
