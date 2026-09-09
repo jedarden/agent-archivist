@@ -71,7 +71,8 @@ Where a finding records an accepted risk, the acceptance is of a bound the
 plan already states (for example the 60-second revocation propagation bound);
 it is not a new tolerance. Accepted-risk owners are drawn from existing
 vocabulary: the `SEC` verification owner (plan §16 traceability table) for
-the threat model itself; the `archivist-auth` and `archivist-server` crate
+the threat model itself, shortened to *SEC working group* in the findings and
+register below; the `archivist-auth` and `archivist-server` crate
 owners for their enforcing components (owning phases 3 and 4 per the
 [crate ownership map](../../notes/crate-ownership.md)); and the operator who
 performs a tenant's control-plane actions — linking, revocation, rotation
