@@ -212,10 +212,13 @@ design; residual amplification accepted
 
 - **Threat.** The plan fixes a five-minute validity window and an at-most
   five-minute clock-skew allowance (plan §5) but does not fix their
-  composition. A deployment that applies the full skew allowance at both ends
-  of the window accepts an authorization for up to roughly twice the nominal
-  window when client and server clocks disagree maximally in the attacker's
-  favor — widening IA-03's replay horizon proportionally.
+  composition. A deployment that stacks the full skew allowance on the
+  window's late edge accepts an authorization for up to ten minutes past its
+  timestamp — twice the nominal five-minute horizon — when client and server
+  clocks disagree maximally in the attacker's favor; adding the allowance at
+  both edges stretches the total acceptance span to roughly three times the
+  nominal window. Either composition widens IA-03's replay horizon
+  proportionally.
 - **Attacker position.** On-path capture (as IA-03) plus the ability to
   observe or influence clock disagreement — typically just knowledge that the
   linked client's clock drifts, since the client supplies the signed
@@ -229,8 +232,9 @@ design; residual amplification accepted
   IA-03: replay is logically idempotent (IA-04 still rejects anything past
   the composed horizon), fresh authorizations from a revoked client are cut
   off by the 60-second revocation propagation bound (IA-08), and a client
-  whose clock is badly wrong fails its own clock-sanity check
-  (`archivist doctor --json`, plan Phase 5) before harming the window.
+  whose clock is badly wrong is diagnosed by its own clock-sanity health
+  check (`doctor --json`, Phase 5 deliverable and exit gate) rather than
+  silently stretching the window.
   **Owner:** SEC working group (plan §16).
 - **Note for implementation.** Within the plan's stated bound, the skew
   allowance should be applied to the window's endpoints, not stacked on both
