@@ -1,3 +1,6 @@
 # Rust build output. Cargo.lock is intentionally tracked: the workspace
 # commits its lockfile (implementation plan, Section 4).
 /target
+
+# NEEDLE per-dispatch snapshot — machine-local, never committed.
+.needle-predispatch-sha
