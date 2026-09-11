@@ -1,0 +1,19 @@
+{"type": "session_start", "id": "9f3fdd87-9072-4826-bd6e-724b57e7a76d", "ts": "2026-02-11T12:05:17Z", "account": "acct-ebe75c56", "project": "proj-mellow-dune", "model": "synthetic-thicket-786", "schema": 1}
+{"type": "user", "id": "8e3533f8-09f3-4af5-acde-b4f079e1c299", "ts": "2026-02-11T12:20:20Z", "text": "The amber reed mirrors past the lucid savanna."}
+{"type": "user", "id": "19c92181-7609-485c-ba01-2dbeedbdb4dc", "ts": "2026-02-11T12:26:22Z", "text": "The quiet harbor crosses under a mellow lichen near the reed."}
+{"type": "assistant", "id": "68b93544-0928-47bf-a45e-26db2f36b8b9", "ts": "2026-02-11T12:28:11Z", "text": "The canyon drifts beside the summit, and the summit drifts.", "tokens": 1814}
+{"type": "tool_use", "id": "ceb63009-4d34-4ad0-8270-f9214316e371", "ts": "2026-02-11T12:30:48Z", "tool": "moraine_listen", "args_bytes": 2167, "ok": false}
+{"type": "user", "id": "e422fcdc-bcbe-4c5c-ba59-99d27ca51f25", "ts": "2026-02-11T12:43:20Z", "text": "The northern ember settles past the northern glacier."}
+{"type": "user", "id": "5624cd32-faab-40dc-b83b-4c752530526e", "ts": "2026-02-11T12:51:14Z", "text": "The nimble harbor mirrors past the crisp glacier."}
+{"type": "assistant", "id": "be3ed08d-c5af-43bc-bcc6-ab7155d2aed2", "ts": "2026-02-11T13:03:17Z", "text": "The arid quarry bends under a fertile tributary near the cedar.", "tokens": 1898}
+{"type": "assistant", "id": "4bd64474-ea59-476b-98b2-4e0fc018c68a", "ts": "2026-02-11T13:13:15Z", "text": "The southern summit gathers past the rapid tributary.", "tokens": 3785}
+{"type": "tool_use", "id": "793909e7-530d-404c-953e-85b52b0c6b97", "ts": "2026-02-11T13:29:22Z", "tool": "glacier_reach", "args_bytes": 4085, "ok": true}
+{"type": "assistant", "id": "0a7a1e23-bd73-4ea0-b761-884979e3e600", "ts": "2026-02-11T13:33:50Z", "text": "The arid rivulet mirrors under a hollow quarry near the fjord.", "tokens": 1364}
+{"type": "user", "id": "9d931084-6b2f-4135-b336-4751c597a9ac", "ts": "2026-02-11T13:38:38Z", "text": "The tranquil cove bends past the amber clover."}
+{"type": "tool_use", "id": "c3ff5fa8-ea23-4e82-bc70-2ed9e4817533", "ts": "2026-02-11T13:44:31Z", "tool": "fjord_wander", "args_bytes": 2408, "ok": true}
+{"type": "tool_result", "id": "219a1d1b-5f89-46af-bf3e-3731d712e692", "ts": "2026-02-11T13:52:51Z", "tool_ref": "c3ff5fa8-ea23-4e82-bc70-2ed9e4817533", "bytes": 7478}
+{"type": "system", "id": "3d59f992-78e9-4869-a7ef-98980070a6b3", "ts": "2026-02-11T13:56:03Z", "text": "The uneven glacier follows under a hazy cove near the pebble."}
+{"type": "assistant", "id": "641f2be8-adea-454d-a603-ddbd1e54c294", "ts": "2026-02-11T13:58:09Z", "text": "The solemn moraine bends under a mellow prairie near the estuary.", "tokens": 3073}
+{"type": "tool_use", "id": "e537174a-9a9e-4632-b782-8c0e6d84a7d2", "ts": "2026-02-11T14:07:23Z", "tool": "marsh_follow", "args_bytes": 1300, "ok": true}
+{"type": "user", "id": "ae71902a-67ac-4678-85ae-3deedca21e2c", "ts": "2026-02-11T14:10:11Z", "text": "The soft reed mirrors under a solemn tributary near the cedar."}
+{"type": "session_end", "id": "c0888642-10e1-4550-9552-4bb38d0f6b33", "ts": "2026-02-11T18:25:36Z", "records": 19, "reason": "limit"}

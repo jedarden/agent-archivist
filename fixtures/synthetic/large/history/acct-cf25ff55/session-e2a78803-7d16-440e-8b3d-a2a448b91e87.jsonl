@@ -1,0 +1,17 @@
+{"type": "session_start", "id": "e2a78803-7d16-440e-8b3d-a2a448b91e87", "ts": "2026-02-18T11:45:35Z", "account": "acct-cf25ff55", "project": "proj-vast-summit", "model": "synthetic-wheat-481", "schema": 1}
+{"type": "assistant", "id": "aa26cfd4-38a6-4db5-98ab-beb70aae124e", "ts": "2026-02-18T11:47:17Z", "text": "The solemn canal listens under a arid canal near the cove.", "tokens": 1381}
+{"type": "assistant", "id": "06da2ba5-8bae-483e-8549-06c874003239", "ts": "2026-02-18T12:04:32Z", "text": "The violet rivulet mirrors past the hazy boulder.", "tokens": 1201}
+{"type": "user", "id": "a94493bf-c982-49a6-8001-5387bb9c1056", "ts": "2026-02-18T12:11:25Z", "text": "The southern canyon returns past the gentle willow."}
+{"type": "user", "id": "98de7774-72fe-4988-b89f-ca03f5b9d08b", "ts": "2026-02-18T12:29:00Z", "text": "The estuary reaches beside the kite, and the reed listens."}
+{"type": "assistant", "id": "aef97e49-c14b-4c2c-9106-5f58d71e11ae", "ts": "2026-02-18T12:42:13Z", "text": "The meadow listens beside the canal, and the thicket wanders.", "tokens": 1579}
+{"type": "user", "id": "5b487a31-d3ff-4238-abb4-7989d5032b00", "ts": "2026-02-18T12:50:15Z", "text": "The hazy lantern mirrors under a rustic boulder near the harbor."}
+{"type": "user", "id": "405e352b-7933-400b-8629-6e872e8cd1d1", "ts": "2026-02-18T12:51:41Z", "text": "The canyon wanders beside the orchard, and the boulder wanders."}
+{"type": "tool_use", "id": "058580fe-dc94-4f4c-88a2-aeedbed8abf2", "ts": "2026-02-18T12:55:45Z", "tool": "savanna_follow", "args_bytes": 176, "ok": false}
+{"type": "user", "id": "44c3f6a6-2424-44ce-a922-8aaf564f2ccb", "ts": "2026-02-18T13:13:51Z", "text": "The soft orchard bends past the arid savanna."}
+{"type": "user", "id": "7c22316a-6317-4e9d-891d-728e7c1ed1d9", "ts": "2026-02-18T13:33:37Z", "text": "The nimble kite crosses past the lucid clover."}
+{"type": "assistant", "id": "0879f2f4-192d-4a4c-9017-253b65ac91cd", "ts": "2026-02-18T13:46:06Z", "text": "The soft ember circles past the uneven estuary.", "tokens": 2351}
+{"type": "user", "id": "4cfa9325-03ad-4c72-8765-a5b8b6504598", "ts": "2026-02-18T13:57:36Z", "text": "The nimble marsh mirrors under a soft lantern near the cove."}
+{"type": "user", "id": "196f9681-d1dd-4230-b94d-879d7d3a82fd", "ts": "2026-02-18T14:13:22Z", "text": "The quiet warbler circles under a gentle willow near the prairie."}
+{"type": "user", "id": "e79dec31-6004-48f4-9d69-6a5cc284b518", "ts": "2026-02-18T14:14:58Z", "text": "The driftwood listens beside the canyon, and the marsh circles."}
+{"type": "assistant", "id": "64315f25-bf60-4ee2-b9c6-ddcae8e1de59", "ts": "2026-02-18T14:21:28Z", "text": "The reed mirrors beside the marsh, and the summit crosses.", "tokens": 457}
+{"type": "session_end", "id": "7aa61631-12a2-43be-8dff-3d4284da4fc6", "ts": "2026-02-18T17:25:52Z", "records": 17, "reason": "limit"}

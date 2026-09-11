@@ -1,0 +1,20 @@
+{"type": "session_start", "id": "428685d5-f27a-4b68-b919-b46084bdf890", "ts": "2026-04-25T09:02:34Z", "account": "acct-1440ba87", "project": "proj-rustic-marsh", "model": "synthetic-meadow-347", "schema": 1}
+{"type": "user", "id": "cbbfb7da-d987-4362-8bfc-446f1ba23eb6", "ts": "2026-04-25T09:11:23Z", "text": "The rivulet returns beside the atoll, and the willow drifts."}
+{"type": "user", "id": "0f459404-61e3-4704-87c5-a99bc14125cb", "ts": "2026-04-25T09:20:12Z", "text": "The crisp kite reaches under a quiet meadow near the tributary."}
+{"type": "user", "id": "afaf54ee-5daf-4122-886a-cf396a9d0ce8", "ts": "2026-04-25T09:22:23Z", "text": "The orchard wanders beside the boulder, and the estuary mirrors."}
+{"type": "user", "id": "f63ac602-0020-4064-a5a2-be8adb1310e6", "ts": "2026-04-25T09:30:54Z", "text": "The tributary follows beside the kite, and the harbor crosses."}
+{"type": "compaction", "id": "6948a92a-194d-4de0-9ae5-eac5b428409a", "ts": "2026-04-27T09:02:34Z", "prior_records": 5}
+{"type": "system", "id": "13d0edcc-b315-468b-beca-a42e25b6744b", "ts": "2026-04-27T09:02:57Z", "text": "The rustic canyon settles under a sturdy heron near the willow."}
+{"type": "assistant", "id": "8cac55c7-ce38-47e8-b14f-f9a29b9dfe54", "ts": "2026-04-27T09:10:36Z", "text": "The beacon settles beside the boulder, and the lichen returns.", "tokens": 319}
+{"type": "user", "id": "c5d6bad0-b21a-44fe-bb7e-5b02144388b9", "ts": "2026-04-27T09:19:17Z", "text": "The pale summit crosses under a hazy ember near the clover."}
+{"type": "compaction", "id": "6586e0ca-e714-4354-b2e7-fb29fe654c11", "ts": "2026-05-04T09:02:34Z", "prior_records": 9}
+{"type": "user", "id": "dc939c42-7ef1-4978-82dd-f4e30f7b21ac", "ts": "2026-05-04T09:07:42Z", "text": "The savanna bends beside the pebble, and the summit bends."}
+{"type": "tool_use", "id": "720be9bc-6a8b-4a2c-9634-86918d9c01cc", "ts": "2026-05-04T09:15:52Z", "tool": "warbler_cross", "args_bytes": 80, "ok": true}
+{"type": "user", "id": "77089078-42ba-4460-ad5b-832229188418", "ts": "2026-05-04T09:21:05Z", "text": "The violet prairie drifts past the sturdy prairie."}
+{"type": "tool_use", "id": "4be7d920-82ee-4781-a383-6cf457612955", "ts": "2026-05-04T09:24:36Z", "tool": "summit_return", "args_bytes": 2954, "ok": true}
+{"type": "user", "id": "4b20a430-de40-40ff-9f66-f9d80c53f584", "ts": "2026-05-04T09:24:47Z", "text": "The northern dune circles past the lucid canyon."}
+{"type": "user", "id": "8c81cc8f-ba08-447e-81d5-6b3d17a02cfd", "ts": "2026-05-04T09:29:26Z", "text": "The fertile dune follows under a solemn willow near the thicket."}
+{"type": "user", "id": "9e54b29e-bfb5-466d-af18-5a1994747668", "ts": "2026-05-04T09:36:55Z", "text": "The prairie bends beside the beacon, and the estuary reaches."}
+{"type": "user", "id": "cae3ab6b-7090-48be-ac3b-8c3f0b0815ee", "ts": "2026-05-04T09:37:53Z", "text": "The sturdy tributary wanders under a solemn orchard near the quarry."}
+{"type": "tool_use", "id": "67d6ded1-be52-4a00-a885-1e52c8171283", "ts": "2026-05-04T09:38:02Z", "tool": "ember_mirror", "args_bytes": 3673, "ok": true}
+{"type": "session_end", "id": "7460838a-7a0e-4795-a139-84511ca1a86d", "ts": "2026-05-04T11:02:34Z", "records": 19, "reason": "end"}

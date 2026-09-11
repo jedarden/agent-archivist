@@ -33,8 +33,10 @@ scripts/definition-of-done.sh --all
 ```
 
 It covers formatting, Clippy with warnings denied, unit tests, rustdoc, the
-crate purpose/cycle check, the dependency license gate, a redacted secret scan
-of the working tree and the git history, and a `cargo audit` dependency audit.
+crate purpose/cycle check, the dependency license gate, byte-exact
+regeneration and a content scan of the synthetic fixture corpus, a redacted
+secret scan of the working tree and the git history, and a `cargo audit`
+dependency audit.
 The fast subset (`--fast`) is what the automation gate runs per change. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for the lane layout and prerequisites.
 
@@ -53,6 +55,11 @@ committed.
   error namespace, bounded safe-message rules, retryability, HTTP and process
   exit mapping, correlation, and stream behavior, backed by the
   machine-checked registry in `tools/error-codes.toml`.
+- [Synthetic fixtures](docs/notes/fixtures.md) define the deterministic,
+  seeded generator behind the `fixtures/synthetic/` corpus — normal,
+  malformed, rewritten, and large synthetic sessions — its byte-exact
+  regeneration gate, and the closed-vocabulary content scan that keeps
+  private material out.
 
 ## Governance
 

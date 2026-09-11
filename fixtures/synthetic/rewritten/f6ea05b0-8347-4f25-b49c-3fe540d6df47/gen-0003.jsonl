@@ -1,0 +1,16 @@
+{"type": "session_start", "id": "f6ea05b0-8347-4f25-b49c-3fe540d6df47", "ts": "2026-02-04T07:26:01Z", "account": "acct-f704365a", "project": "proj-rustic-falcon", "model": "synthetic-estuary-596", "schema": 1}
+{"type": "assistant", "id": "ba426532-a465-46a9-bcdb-520f0ed60e5c", "ts": "2026-02-04T07:29:21Z", "text": "The dune wanders beside the estuary, and the meadow bends.", "tokens": 3392}
+{"type": "system", "id": "13c41f21-2283-44b9-aabb-0ddd053f7df3", "ts": "2026-02-04T07:32:31Z", "text": "The thicket settles beside the atoll, and the canal follows."}
+{"type": "system", "id": "24ee54a5-0eb8-45dd-b965-169e7c2eaa0d", "ts": "2026-02-04T07:38:25Z", "text": "The savanna gathers beside the reed, and the lichen reaches."}
+{"type": "user", "id": "dd2ee50d-30d6-45ff-af05-34bb686424b1", "ts": "2026-02-04T07:42:56Z", "text": "The slender driftwood returns past the gentle falcon."}
+{"type": "compaction", "id": "a1e6ac34-16e1-4452-8751-e34239316077", "ts": "2026-02-07T07:26:01Z", "prior_records": 5}
+{"type": "assistant", "id": "36319697-a86b-43fb-a127-9169bf54bc92", "ts": "2026-02-07T07:28:40Z", "text": "The mellow reed reaches under a solemn lantern near the driftwood.", "tokens": 3890}
+{"type": "user", "id": "e7ec3c66-d4f8-403f-bc94-3b1cc93b510d", "ts": "2026-02-07T07:37:30Z", "text": "The glacier listens beside the ember, and the marsh returns."}
+{"type": "user", "id": "89c608ae-946f-4aa9-92c3-d8e91193ae1a", "ts": "2026-02-07T07:37:48Z", "text": "The mellow lichen follows under a tranquil reed near the reed."}
+{"type": "user", "id": "230d2835-ac1c-404b-ae0d-8ad8c1ae7490", "ts": "2026-02-07T07:42:36Z", "text": "The rapid atoll circles under a mellow reed near the reed."}
+{"type": "user", "id": "d4862011-71b7-4ae5-b848-46741dd9a464", "ts": "2026-02-07T07:47:05Z", "text": "The uneven kite bends under a amber harbor near the reed."}
+{"type": "assistant", "id": "0062fe28-4af0-4edb-9fce-c0f8bd24fa42", "ts": "2026-02-07T07:57:02Z", "text": "The tributary wanders beside the summit, and the beacon bends.", "tokens": 1391}
+{"type": "assistant", "id": "7427a5d8-99c1-4c80-8bcd-47216f56fe93", "ts": "2026-02-07T08:03:03Z", "text": "The fjord follows beside the lichen, and the estuary crosses.", "tokens": 3755}
+{"type": "tool_use", "id": "e92df0a9-013b-4b6a-87a4-20944260be44", "ts": "2026-02-07T08:05:24Z", "tool": "wheat_follow", "args_bytes": 1634, "ok": true}
+{"type": "user", "id": "6ea7e906-2cdc-4de2-949b-0ec37a938a39", "ts": "2026-02-07T08:08:30Z", "text": "The marsh circles beside the marsh, and the wheat drifts."}
+{"type": "session_end", "id": "40fa7d57-2dab-44e4-91e8-87c6fe388cde", "ts": "2026-02-07T09:26:01Z", "records": 15, "reason": "interrupt"}

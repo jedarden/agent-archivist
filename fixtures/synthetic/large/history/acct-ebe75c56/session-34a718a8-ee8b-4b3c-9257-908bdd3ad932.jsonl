@@ -1,0 +1,9 @@
+{"type": "session_start", "id": "34a718a8-ee8b-4b3c-9257-908bdd3ad932", "ts": "2026-03-04T19:52:27Z", "account": "acct-ebe75c56", "project": "proj-southern-quarry", "model": "synthetic-pebble-281", "schema": 1}
+{"type": "assistant", "id": "686178f4-d409-4ff1-a563-f97c96e34c0d", "ts": "2026-03-04T20:01:05Z", "text": "The northern summit mirrors under a coastal heron near the savanna.", "tokens": 88}
+{"type": "tool_use", "id": "dc74ceb1-7b1d-4f76-b2cf-9a87d470ddc0", "ts": "2026-03-04T20:05:20Z", "tool": "summit_mirror", "args_bytes": 999, "ok": true}
+{"type": "tool_use", "id": "d5ab25ba-54b1-441b-bacd-ac96eb829f75", "ts": "2026-03-04T20:22:19Z", "tool": "atoll_listen", "args_bytes": 1264, "ok": true}
+{"type": "assistant", "id": "cfd84998-665a-49bc-ad93-d06b12c3ff54", "ts": "2026-03-04T20:24:25Z", "text": "The amber willow mirrors past the mellow atoll.", "tokens": 3553}
+{"type": "user", "id": "840dc2e4-e1e5-4a52-aa8e-e085f6866d6a", "ts": "2026-03-04T20:29:00Z", "text": "The warbler circles beside the savanna, and the beacon follows."}
+{"type": "user", "id": "a545e442-fb2b-4ade-80f6-ad8714f7f4a2", "ts": "2026-03-04T20:32:35Z", "text": "The marsh settles beside the harbor, and the willow follows."}
+{"type": "user", "id": "025e98d4-4501-41ac-aa86-8036aaaa1097", "ts": "2026-03-04T20:33:06Z", "text": "The rustic dune settles past the crisp prairie."}
+{"type": "session_end", "id": "2c2af37a-194b-4fde-9be2-43ffcdf7ace5", "ts": "2026-03-04T22:52:36Z", "records": 9, "reason": "end"}

@@ -1,0 +1,23 @@
+{"type": "session_start", "id": "d96378e4-72a4-41d7-a0f8-97e5add4d5b1", "ts": "2026-04-23T03:47:34Z", "account": "acct-12d8cd6a", "project": "proj-violet-wheat", "model": "synthetic-ember-520", "schema": 1}
+{"type": "assistant", "id": "053ab215-022e-4eab-ac55-e25ff8ae49dd", "ts": "2026-04-23T03:53:54Z", "text": "The meadow follows beside the meadow, and the quarry mirrors.", "tokens": 1718}
+{"type": "user", "id": "2e3e1a1d-45fb-4c40-81ff-a321ab59d380", "ts": "2026-04-23T04:07:47Z", "text": "The sturdy warbler listens under a vast glacier near the pebble."}
+{"type": "user", "id": "00aa3a14-f37f-4a58-b0f8-305dd247f275", "ts": "2026-04-23T04:22:53Z", "text": "The vast atoll listens under a slender canal near the reed."}
+{"type": "system", "id": "ec3e3643-f605-49fd-83b4-c2acdda09f9b", "ts": "2026-04-23T04:26:49Z", "text": "The slender orchard bends past the nimble lichen."}
+{"type": "user", "id": "519e1c26-44b4-4719-b486-2d7ad8b80209", "ts": "2026-04-23T04:38:43Z", "text": "The rapid dune wanders under a northern beacon near the estuary."}
+{"type": "tool_use", "id": "05cdb3ed-46c6-4870-8adf-22f3fc4672a1", "ts": "2026-04-23T04:41:31Z", "tool": "boulder_reach", "args_bytes": 2966, "ok": true}
+{"type": "user", "id": "55f2f9e0-2175-4267-8ec1-9360e54a4bd4", "ts": "2026-04-23T04:42:45Z", "text": "The reed returns beside the prairie, and the driftwood crosses."}
+{"type": "user", "id": "0466ff96-bb84-4e43-b8e4-b9aad936a1a2", "ts": "2026-04-23T04:57:20Z", "text": "The boulder circles beside the orchard, and the fjord reaches."}
+{"type": "user", "id": "38efa82b-90bb-42df-b09e-b0406df65df0", "ts": "2026-04-23T05:16:57Z", "text": "The tributary mirrors beside the summit, and the quarry wanders."}
+{"type": "assistant", "id": "ca92b888-42b5-4aa5-bf4a-074317004512", "ts": "2026-04-23T05:22:05Z", "text": "The pebble crosses beside the beacon, and the harbor mirrors.", "tokens": 3339}
+{"type": "assistant", "id": "61e6d2e1-295e-4955-a4fc-662657b68f2d", "ts": "2026-04-23T05:37:06Z", "text": "The prairie mirrors beside the tributary, and the orchard crosses.", "tokens": 3536}
+{"type": "user", "id": "dbe19daa-b0e1-4cfa-8ec0-1b4457cfd133", "ts": "2026-04-23T05:50:25Z", "text": "The hollow marsh mirrors past the tranquil fjord."}
+{"type": "assistant", "id": "47b62228-5ef8-47fb-a28b-afc38918b0cc", "ts": "2026-04-23T05:59:14Z", "text": "The violet cove wanders past the pale glacier.", "tokens": 3943}
+{"type": "user", "id": "0f7af308-a915-4c0a-90e4-d204eb4a3f23", "ts": "2026-04-23T06:06:37Z", "text": "The southern harbor wanders under a solemn clover near the lantern."}
+{"type": "user", "id": "933f38b2-d2f9-4855-aac0-91cec9a8671d", "ts": "2026-04-23T06:14:05Z", "text": "The crisp wheat mirrors past the coastal pebble."}
+{"type": "user", "id": "c651ff74-9a4d-46b7-b8e8-90b610a277bf", "ts": "2026-04-23T06:16:03Z", "text": "The pebble reaches beside the dune, and the tributary circles."}
+{"type": "tool_result", "id": "0e256a24-02da-4ce2-9821-fd32a7bee640", "ts": "2026-04-23T06:26:25Z", "tool_ref": "05cdb3ed-46c6-4870-8adf-22f3fc4672a1", "bytes": 6618}
+{"type": "system", "id": "06da55fa-02ce-46ac-8d63-d8d1a2a2834b", "ts": "2026-04-23T06:42:02Z", "text": "The nimble orchard circles past the fertile dune."}
+{"type": "assistant", "id": "97e5cabf-3172-4300-b0db-b7eb7b5ed2b9", "ts": "2026-04-23T07:00:55Z", "text": "The solemn glacier settles under a mellow reed near the heron.", "tokens": 3924}
+{"type": "user", "id": "e59452a3-21a1-4524-8a31-34bf7cc13b3e", "ts": "2026-04-23T07:15:53Z", "text": "The mellow boulder returns past the vast kite."}
+{"type": "assistant", "id": "0bd31d7d-65ed-4bd4-a28f-a6fb58096c91", "ts": "2026-04-23T07:21:31Z", "text": "The soft harbor drifts past the twin heron.", "tokens": 878}
+{"type": "session_end", "id": "9524bf39-34a9-4f60-85ed-b951d256bcc3", "ts": "2026-04-23T11:27:57Z", "records": 23, "reason": "end"}

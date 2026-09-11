@@ -1,0 +1,16 @@
+{"type": "session_start", "id": "be3198b3-26f3-4bc4-89ea-1f468a5f153d", "ts": "2026-02-26T06:42:59Z", "account": "acct-b101dc98", "project": "proj-fertile-summit", "model": "synthetic-rivulet-565", "schema": 1}
+{"type": "tool_use", "id": "9a36cfe2-ccdb-4819-8646-18a3b772477d", "ts": "2026-02-26T06:50:40Z", "tool": "quarry_settle", "args_bytes": 1659, "ok": true}
+{"type": "user", "id": "1aa25d70-16fa-4268-bb63-9618521aa763", "ts": "2026-02-26T07:10:07Z", "text": "The soft atoll mirrors under a rapid cedar near the pebble."}
+{"type": "tool_use", "id": "7386640f-d27d-4ad1-acdb-ff8127d6234c", "ts": "2026-02-26T07:16:20Z", "tool": "marsh_cross", "args_bytes": 762, "ok": true}
+{"type": "user", "id": "7818a18e-2606-4079-85d1-c3db776604a8", "ts": "2026-02-26T07:34:05Z", "text": "The estuary gathers beside the glacier, and the tributary mirrors."}
+{"type": "user", "id": "6f3dd5e8-ebad-4f62-94de-bb64b97813e7", "ts": "2026-02-26T07:45:23Z", "text": "The mellow moraine drifts past the hollow thicket."}
+{"type": "tool_result", "id": "6b32e482-0b4d-40fc-8e9b-a65101585f3d", "ts": "2026-02-26T08:00:53Z", "tool_ref": "7386640f-d27d-4ad1-acdb-ff8127d6234c", "bytes": 1175}
+{"type": "tool_use", "id": "34b44899-c0a0-48db-a9f5-c549b12920ea", "ts": "2026-02-26T08:01:11Z", "tool": "summit_settle", "args_bytes": 1391, "ok": true}
+{"type": "assistant", "id": "bf3ee8f8-50d2-4751-9fb7-c49a2ec4dad0", "ts": "2026-02-26T08:13:42Z", "text": "The amber driftwood returns past the lucid heron.", "tokens": 3897}
+{"type": "tool_result", "id": "1190e19d-4cd1-4bde-8e9d-d8b673c0e179", "ts": "2026-02-26T08:19:50Z", "tool_ref": "34b44899-c0a0-48db-a9f5-c549b12920ea", "bytes": 4466}
+{"type": "assistant", "id": "cfc1bf56-ed7c-413e-b057-a687912e443f", "ts": "2026-02-26T08:29:18Z", "text": "The slender warbler gathers past the nimble quarry.", "tokens": 1471}
+{"type": "user", "id": "05dedbb2-3efc-42a8-b76a-0e90c44598d9", "ts": "2026-02-26T08:49:05Z", "text": "The reed listens beside the harbor, and the savanna crosses."}
+{"type": "tool_use", "id": "08f23e94-83df-467f-86c5-9844bbe5d333", "ts": "2026-02-26T08:55:12Z", "tool": "canyon_mirror", "args_bytes": 483, "ok": true}
+{"type": "user", "id": "9a569fef-221a-4c82-8a77-67c50e5b455c", "ts": "2026-02-26T09:09:11Z", "text": "The soft canyon listens past the fertile wheat."}
+{"type": "tool_use", "id": "1b89fc71-4ba8-44ca-9130-3ca732f242fa", "ts": "2026-02-26T09:14:12Z", "tool": "canal_reach", "args_bytes": 50, "ok": true}
+{"type": "session_end", "id": "ae7289b1-cfba-42fb-973f-8fddccb4f423", "ts": "2026-02-26T12:03:15Z", "records": 16, "reason": "limit"}

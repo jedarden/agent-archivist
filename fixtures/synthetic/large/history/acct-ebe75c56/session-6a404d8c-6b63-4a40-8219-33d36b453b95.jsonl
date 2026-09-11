@@ -1,0 +1,23 @@
+{"type": "session_start", "id": "6a404d8c-6b63-4a40-8219-33d36b453b95", "ts": "2026-01-16T19:47:11Z", "account": "acct-ebe75c56", "project": "proj-hazy-tributary", "model": "synthetic-marsh-543", "schema": 1}
+{"type": "user", "id": "30e01ab7-01f9-4219-99b1-879fb6295e3a", "ts": "2026-01-16T19:57:09Z", "text": "The nimble atoll listens under a nimble moraine near the quarry."}
+{"type": "assistant", "id": "058d696c-6a57-477e-94d9-272125c345ff", "ts": "2026-01-16T19:57:53Z", "text": "The fertile glacier follows past the nimble harbor.", "tokens": 3710}
+{"type": "user", "id": "87b5e544-20be-4959-b17b-0a6de0e0911b", "ts": "2026-01-16T19:58:21Z", "text": "The solemn beacon follows under a tranquil fjord near the orchard."}
+{"type": "user", "id": "94c00ee0-3f35-4df4-ae69-41b913f8ff4a", "ts": "2026-01-16T20:06:04Z", "text": "The rapid lichen returns under a vast savanna near the thicket."}
+{"type": "tool_use", "id": "3165ab31-f3e3-4368-b112-4bb5e6ad12c7", "ts": "2026-01-16T20:23:31Z", "tool": "willow_follow", "args_bytes": 1181, "ok": true}
+{"type": "user", "id": "ae9fc366-279d-4ef7-bb2d-8c6a762e4341", "ts": "2026-01-16T20:24:18Z", "text": "The warbler reaches beside the atoll, and the boulder bends."}
+{"type": "tool_use", "id": "68e93cc2-5dd9-453d-80bf-58d377d7aaa1", "ts": "2026-01-16T20:24:33Z", "tool": "glacier_settle", "args_bytes": 2515, "ok": true}
+{"type": "assistant", "id": "33911405-31b8-4d7c-9200-acb364c40d0e", "ts": "2026-01-16T20:38:36Z", "text": "The summit mirrors beside the willow, and the meadow gathers.", "tokens": 1056}
+{"type": "user", "id": "55c122c6-eb69-4a73-a385-6c62397cce27", "ts": "2026-01-16T20:57:38Z", "text": "The beacon crosses beside the heron, and the prairie returns."}
+{"type": "user", "id": "8b9c269b-893f-4664-b633-419e25e4f7c4", "ts": "2026-01-16T21:11:39Z", "text": "The fjord crosses beside the pebble, and the boulder crosses."}
+{"type": "assistant", "id": "c7a2ef20-7dea-4f35-b6e4-4b474a78327c", "ts": "2026-01-16T21:25:49Z", "text": "The lucid falcon mirrors under a southern rivulet near the atoll.", "tokens": 1074}
+{"type": "assistant", "id": "2d6d5f10-d7c9-4597-a539-9ed008f34353", "ts": "2026-01-16T21:34:21Z", "text": "The lantern settles beside the willow, and the thicket wanders.", "tokens": 1825}
+{"type": "tool_use", "id": "df974765-f045-4387-a494-ea62e93f38e4", "ts": "2026-01-16T21:50:22Z", "tool": "glacier_listen", "args_bytes": 28, "ok": true}
+{"type": "assistant", "id": "8384b59a-ffd3-433a-a3c5-050d9cea7e8b", "ts": "2026-01-16T22:09:50Z", "text": "The solemn beacon wanders under a crisp lantern near the summit.", "tokens": 2845}
+{"type": "tool_use", "id": "4994b287-6eeb-46e6-a772-27d36f348dff", "ts": "2026-01-16T22:28:42Z", "tool": "ember_listen", "args_bytes": 2348, "ok": true}
+{"type": "user", "id": "331dbf4e-7016-48c8-8652-8259ab5ae76c", "ts": "2026-01-16T22:32:34Z", "text": "The sturdy ember circles under a southern falcon near the meadow."}
+{"type": "assistant", "id": "b2d16afb-aa04-4ef6-a8c2-01730ff47005", "ts": "2026-01-16T22:36:48Z", "text": "The pale cedar crosses under a violet quarry near the reed.", "tokens": 3493}
+{"type": "user", "id": "6ca601c8-cd67-4106-b698-ee24ee17af85", "ts": "2026-01-16T22:46:16Z", "text": "The uneven meadow gathers past the arid canyon."}
+{"type": "user", "id": "8700736f-c882-493e-ac48-6ed60241a900", "ts": "2026-01-16T22:54:14Z", "text": "The violet canal returns under a vast lantern near the cedar."}
+{"type": "assistant", "id": "c8a03d61-8533-419e-9422-8da47dca674f", "ts": "2026-01-16T23:01:23Z", "text": "The pebble settles beside the orchard, and the savanna settles.", "tokens": 162}
+{"type": "assistant", "id": "f6c6d8ca-5725-4ad9-a952-766c809c8240", "ts": "2026-01-16T23:12:19Z", "text": "The summit returns beside the tributary, and the dune crosses.", "tokens": 3301}
+{"type": "session_end", "id": "c0706276-e81d-446f-aa78-33feaffc5f74", "ts": "2026-01-17T03:27:34Z", "records": 23, "reason": "end"}

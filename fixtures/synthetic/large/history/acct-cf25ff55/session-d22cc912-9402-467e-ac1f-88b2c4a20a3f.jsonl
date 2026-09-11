@@ -1,0 +1,20 @@
+{"type": "session_start", "id": "d22cc912-9402-467e-ac1f-88b2c4a20a3f", "ts": "2026-03-20T05:18:04Z", "account": "acct-cf25ff55", "project": "proj-slender-dune", "model": "synthetic-marsh-260", "schema": 1}
+{"type": "user", "id": "543945a3-65d9-43af-b62d-d7aef3efca43", "ts": "2026-03-20T05:25:14Z", "text": "The canyon drifts beside the marsh, and the meadow crosses."}
+{"type": "assistant", "id": "cf427059-2e2e-481d-aa98-a344fd22330c", "ts": "2026-03-20T05:27:17Z", "text": "The crisp driftwood bends past the rapid lichen.", "tokens": 2418}
+{"type": "tool_use", "id": "c05d76f4-b896-4617-858f-2b544773d922", "ts": "2026-03-20T05:32:52Z", "tool": "quarry_wander", "args_bytes": 833, "ok": true}
+{"type": "assistant", "id": "6ebb23c4-bfea-44df-9d98-f9990d64e18c", "ts": "2026-03-20T05:35:11Z", "text": "The fertile canyon gathers under a amber driftwood near the wheat.", "tokens": 131}
+{"type": "user", "id": "8e5fa324-2b6f-44df-8b82-bb977cc85717", "ts": "2026-03-20T05:37:51Z", "text": "The thicket circles beside the meadow, and the wheat settles."}
+{"type": "user", "id": "ed1db8db-a6aa-44d1-a1f4-1c5b44398b37", "ts": "2026-03-20T05:43:06Z", "text": "The vast savanna mirrors under a lucid rivulet near the thicket."}
+{"type": "user", "id": "438655a9-b328-4257-bac9-80b4d93c2133", "ts": "2026-03-20T05:59:55Z", "text": "The violet dune follows past the coastal lantern."}
+{"type": "user", "id": "6ffd223f-c985-40c1-a1d1-4ffd09588032", "ts": "2026-03-20T06:09:13Z", "text": "The thicket drifts beside the tributary, and the orchard settles."}
+{"type": "assistant", "id": "f6e89611-bdab-4451-95d7-56117f8cbef4", "ts": "2026-03-20T06:26:37Z", "text": "The solemn lichen circles past the lucid canal.", "tokens": 3814}
+{"type": "assistant", "id": "0dcb8039-6489-4ffb-b6c7-bff74137a7c0", "ts": "2026-03-20T06:45:03Z", "text": "The arid meadow mirrors under a pale prairie near the driftwood.", "tokens": 1581}
+{"type": "user", "id": "11cc2025-9d51-415e-9c13-6f0876ff7850", "ts": "2026-03-20T06:53:30Z", "text": "The crisp quarry settles under a southern moraine near the reed."}
+{"type": "assistant", "id": "7bd11a19-0c97-4f2e-9cd1-18d93c117755", "ts": "2026-03-20T07:13:01Z", "text": "The gentle canal crosses under a solemn willow near the harbor.", "tokens": 3650}
+{"type": "user", "id": "cdb13637-fe46-4d3a-9aa5-88966222509b", "ts": "2026-03-20T07:19:02Z", "text": "The canal bends beside the canyon, and the falcon reaches."}
+{"type": "tool_use", "id": "81f8af57-e984-4acf-b8aa-d3a46f2fe1c6", "ts": "2026-03-20T07:29:32Z", "tool": "orchard_follow", "args_bytes": 151, "ok": true}
+{"type": "assistant", "id": "9d38ae09-2378-41d1-845a-dac297d7bd94", "ts": "2026-03-20T07:35:59Z", "text": "The twin heron listens under a lucid moraine near the fjord.", "tokens": 1019}
+{"type": "user", "id": "94becd16-9abb-46c9-8713-744524c00f06", "ts": "2026-03-20T07:53:09Z", "text": "The uneven lantern crosses past the solemn driftwood."}
+{"type": "tool_result", "id": "69fd4847-922d-47b1-b8e6-786c66f313e3", "ts": "2026-03-20T07:59:29Z", "tool_ref": "81f8af57-e984-4acf-b8aa-d3a46f2fe1c6", "bytes": 6937}
+{"type": "assistant", "id": "2f90be84-e11c-4495-8c19-01e1d1cde351", "ts": "2026-03-20T08:16:15Z", "text": "The reed reaches beside the dune, and the estuary circles.", "tokens": 2459}
+{"type": "session_end", "id": "11d23ce6-36ea-42bc-a276-07246167eb0e", "ts": "2026-03-20T11:58:24Z", "records": 20, "reason": "interrupt"}

@@ -1,0 +1,19 @@
+{"type": "session_start", "id": "db709a28-5ebb-40f2-abf7-c297996aa253", "ts": "2026-03-08T16:24:14Z", "account": "acct-b101dc98", "project": "proj-lucid-heron", "model": "synthetic-ember-563", "schema": 1}
+{"type": "user", "id": "1659c20d-759a-444c-b5d6-8af7ceba36ee", "ts": "2026-03-08T16:41:06Z", "text": "The hazy savanna mirrors past the rapid boulder."}
+{"type": "assistant", "id": "c7fc51d0-0826-4261-a698-8820efb6a71f", "ts": "2026-03-08T16:53:07Z", "text": "The reed listens beside the atoll, and the tributary drifts.", "tokens": 451}
+{"type": "assistant", "id": "a245f87c-4cf3-458c-abae-cc0baa948d5a", "ts": "2026-03-08T16:53:42Z", "text": "The meadow drifts beside the savanna, and the thicket settles.", "tokens": 180}
+{"type": "user", "id": "1c97013b-25ed-490a-a4f1-5e1b28c878fa", "ts": "2026-03-08T16:58:23Z", "text": "The lucid marsh follows under a lucid prairie near the canyon."}
+{"type": "user", "id": "d1e42a06-217d-45eb-b4dc-bf04ffdc14a9", "ts": "2026-03-08T16:59:16Z", "text": "The slender atoll reaches past the amber kite."}
+{"type": "user", "id": "b90ea8ea-3861-4aea-b6f7-4b632e46a679", "ts": "2026-03-08T17:08:47Z", "text": "The crisp lichen settles under a vast glacier near the clover."}
+{"type": "assistant", "id": "1835559f-e019-4553-9b02-74eb8128e15e", "ts": "2026-03-08T17:11:16Z", "text": "The sturdy thicket returns past the southern driftwood.", "tokens": 1981}
+{"type": "assistant", "id": "c59e289d-b580-4471-9f08-316b8e518089", "ts": "2026-03-08T17:13:05Z", "text": "The beacon reaches beside the meadow, and the heron reaches.", "tokens": 2300}
+{"type": "user", "id": "38073450-655a-45f9-b5d9-7c765e20e541", "ts": "2026-03-08T17:32:07Z", "text": "The hazy reed crosses past the gentle atoll."}
+{"type": "assistant", "id": "5b29d489-8ed8-401b-b8b9-6ef7465cfaaa", "ts": "2026-03-08T17:36:23Z", "text": "The crisp falcon reaches under a gentle harbor near the canyon.", "tokens": 2630}
+{"type": "tool_use", "id": "424bc9b5-41c6-412e-8922-439f881be0f7", "ts": "2026-03-08T17:54:32Z", "tool": "heron_circle", "args_bytes": 778, "ok": true}
+{"type": "assistant", "id": "818fe15f-0fc5-4a16-8c99-e2e406f1ee20", "ts": "2026-03-08T18:06:20Z", "text": "The arid driftwood bends past the crisp driftwood.", "tokens": 642}
+{"type": "user", "id": "43a5f1a5-c78a-4eef-8f9f-1cb88636066d", "ts": "2026-03-08T18:09:25Z", "text": "The slender moraine bends under a sturdy lichen near the prairie."}
+{"type": "tool_use", "id": "66991f14-1bdc-40ea-9f39-a1fff3bec07c", "ts": "2026-03-08T18:13:56Z", "tool": "lantern_drift", "args_bytes": 1717, "ok": true}
+{"type": "tool_use", "id": "005d44a8-c75c-4589-a8cc-d06fe5800a3c", "ts": "2026-03-08T18:23:25Z", "tool": "heron_return", "args_bytes": 847, "ok": false}
+{"type": "user", "id": "10c1596c-dc58-4b97-a1eb-76c004085d96", "ts": "2026-03-08T18:27:26Z", "text": "The summit crosses beside the pebble, and the lichen drifts."}
+{"type": "assistant", "id": "243239cb-07b7-4a23-9b60-5bc716cb9b34", "ts": "2026-03-08T18:40:37Z", "text": "The pale quarry crosses past the tranquil glacier.", "tokens": 2088}
+{"type": "session_end", "id": "3cb9b723-8870-4fbd-9d92-b4aa9ada2562", "ts": "2026-03-08T22:44:33Z", "records": 19, "reason": "end"}

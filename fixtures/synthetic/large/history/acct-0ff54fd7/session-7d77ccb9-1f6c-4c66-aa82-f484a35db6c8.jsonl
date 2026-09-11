@@ -1,0 +1,20 @@
+{"type": "session_start", "id": "7d77ccb9-1f6c-4c66-aa82-f484a35db6c8", "ts": "2026-02-12T13:11:14Z", "account": "acct-0ff54fd7", "project": "proj-solemn-atoll", "model": "synthetic-orchard-342", "schema": 1}
+{"type": "tool_use", "id": "8e12673a-64a5-4e32-9eb9-28c5494f59f3", "ts": "2026-02-12T13:11:15Z", "tool": "orchard_drift", "args_bytes": 2605, "ok": true}
+{"type": "user", "id": "0adffa8f-ac77-4a49-ae73-e3c9db909ef9", "ts": "2026-02-12T13:14:15Z", "text": "The ember wanders beside the falcon, and the pebble wanders."}
+{"type": "tool_use", "id": "b98500cf-de46-44ff-b337-158da10be5b4", "ts": "2026-02-12T13:33:12Z", "tool": "thicket_gather", "args_bytes": 3786, "ok": true}
+{"type": "tool_result", "id": "268de2a0-612a-4bd3-918a-673b5ff5b8b3", "ts": "2026-02-12T13:47:17Z", "tool_ref": "b98500cf-de46-44ff-b337-158da10be5b4", "bytes": 11414}
+{"type": "system", "id": "83f8ad84-b383-455b-839f-dee3330564aa", "ts": "2026-02-12T13:49:07Z", "text": "The violet rivulet follows under a fertile driftwood near the harbor."}
+{"type": "tool_use", "id": "ea344e6c-4a0c-425d-8826-9a5f69a47b72", "ts": "2026-02-12T14:05:37Z", "tool": "cedar_drift", "args_bytes": 1337, "ok": false}
+{"type": "tool_use", "id": "49e28cd3-3db7-44cb-be58-a5ad9b91b6b1", "ts": "2026-02-12T14:17:44Z", "tool": "falcon_bend", "args_bytes": 52, "ok": true}
+{"type": "tool_result", "id": "1e7d0b3e-7141-4bc7-ab34-4b66afc55bfd", "ts": "2026-02-12T14:36:31Z", "tool_ref": "49e28cd3-3db7-44cb-be58-a5ad9b91b6b1", "bytes": 10627}
+{"type": "system", "id": "226e91fb-4e28-4106-b7b2-3c30a4e6938d", "ts": "2026-02-12T14:51:38Z", "text": "The uneven canyon mirrors past the rustic harbor."}
+{"type": "user", "id": "b1a7a1b3-fadd-4b23-966d-d3dff8b770a1", "ts": "2026-02-12T15:07:37Z", "text": "The wheat listens beside the boulder, and the moraine listens."}
+{"type": "tool_use", "id": "f849a3fa-2ebf-4f77-a295-edae0defe720", "ts": "2026-02-12T15:21:34Z", "tool": "tributary_cross", "args_bytes": 3583, "ok": true}
+{"type": "assistant", "id": "4fd8e435-565b-4384-b08c-d2ee690097de", "ts": "2026-02-12T15:34:41Z", "text": "The rivulet bends beside the summit, and the falcon circles.", "tokens": 3255}
+{"type": "assistant", "id": "eeb2c496-3cba-4111-8f13-b17bdf5bbea0", "ts": "2026-02-12T15:53:28Z", "text": "The sturdy tributary reaches under a northern cedar near the beacon.", "tokens": 1067}
+{"type": "assistant", "id": "d79abd78-c3a4-4e99-a224-71db1c2977da", "ts": "2026-02-12T16:06:36Z", "text": "The fjord reaches beside the marsh, and the falcon returns.", "tokens": 2093}
+{"type": "tool_result", "id": "04da9fec-a230-4d53-8c3c-e9b56291a66d", "ts": "2026-02-12T16:07:53Z", "tool_ref": "f849a3fa-2ebf-4f77-a295-edae0defe720", "bytes": 1218}
+{"type": "assistant", "id": "a95f88a3-01b3-4dff-b97e-0b8c920b7600", "ts": "2026-02-12T16:12:08Z", "text": "The cove listens beside the quarry, and the warbler settles.", "tokens": 1717}
+{"type": "user", "id": "00511687-31ac-49da-b195-57e669304471", "ts": "2026-02-12T16:19:27Z", "text": "The arid heron listens past the sturdy willow."}
+{"type": "assistant", "id": "c9dea43e-89f2-4974-96ee-2a02dc9c3c3b", "ts": "2026-02-12T16:20:41Z", "text": "The lucid summit returns past the vast savanna.", "tokens": 2426}
+{"type": "session_end", "id": "a92cbf86-a742-4c96-947f-01a6832e3d6d", "ts": "2026-02-12T19:51:34Z", "records": 20, "reason": "limit"}

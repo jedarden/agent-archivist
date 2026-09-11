@@ -1,0 +1,17 @@
+{"type": "session_start", "id": "405a2722-cd9e-4459-a6c2-a776026c7a40", "ts": "2026-03-26T03:14:36Z", "account": "acct-ebe75c56", "project": "proj-amber-savanna", "model": "synthetic-warbler-896", "schema": 1}
+{"type": "user", "id": "aafa4507-6ced-4460-b9cc-23fe1c36eaed", "ts": "2026-03-26T03:14:47Z", "text": "The warbler gathers beside the fjord, and the falcon reaches."}
+{"type": "user", "id": "e735a84f-a18b-4b89-ae12-2e361b6215ba", "ts": "2026-03-26T03:24:37Z", "text": "The mellow canyon crosses under a fertile quarry near the summit."}
+{"type": "user", "id": "c7c26d99-665c-49e9-8818-5e3284869d22", "ts": "2026-03-26T03:25:20Z", "text": "The fjord bends beside the thicket, and the pebble wanders."}
+{"type": "user", "id": "40690a4b-98ed-4f17-bb1a-66a4849f8259", "ts": "2026-03-26T03:27:08Z", "text": "The hazy orchard crosses past the vast estuary."}
+{"type": "tool_use", "id": "69bb169c-1a49-4665-9405-0ab905c82c9e", "ts": "2026-03-26T03:44:59Z", "tool": "lantern_listen", "args_bytes": 3496, "ok": true}
+{"type": "user", "id": "925354c4-3813-4c98-9e99-2bfd922a84d1", "ts": "2026-03-26T03:48:05Z", "text": "The coastal beacon gathers under a rustic cedar near the kite."}
+{"type": "user", "id": "0b79bea7-54fb-4bca-873d-693b35b97944", "ts": "2026-03-26T03:53:50Z", "text": "The lucid savanna wanders past the crisp warbler."}
+{"type": "tool_result", "id": "f3609d32-0779-416a-a15b-e09522e50ba1", "ts": "2026-03-26T03:59:07Z", "tool_ref": "69bb169c-1a49-4665-9405-0ab905c82c9e", "bytes": 9690}
+{"type": "assistant", "id": "0c6880d6-3e7a-4168-9631-ad765de84390", "ts": "2026-03-26T04:15:05Z", "text": "The slender reed follows past the northern wheat.", "tokens": 3842}
+{"type": "assistant", "id": "da0d08f4-8786-4b33-a7ef-8da6f13d5b39", "ts": "2026-03-26T04:20:52Z", "text": "The violet canal mirrors under a violet warbler near the wheat.", "tokens": 327}
+{"type": "system", "id": "f447d565-a855-4784-904b-811459022e70", "ts": "2026-03-26T04:24:23Z", "text": "The vast fjord mirrors under a amber estuary near the kite."}
+{"type": "system", "id": "8d9529a0-a5b1-42d9-8851-51f003eb091c", "ts": "2026-03-26T04:24:58Z", "text": "The pale heron drifts under a uneven harbor near the savanna."}
+{"type": "user", "id": "cddb6804-aee5-4c27-af4e-95e73088adbd", "ts": "2026-03-26T04:30:14Z", "text": "The pale harbor mirrors under a crisp driftwood near the falcon."}
+{"type": "tool_use", "id": "67b87ce9-c37d-4119-8841-07c4d1124a0f", "ts": "2026-03-26T04:39:06Z", "tool": "savanna_return", "args_bytes": 3686, "ok": true}
+{"type": "user", "id": "01e375d6-a7d8-49fe-8c67-63d3588a0ab0", "ts": "2026-03-26T04:57:50Z", "text": "The pale pebble mirrors under a quiet warbler near the beacon."}
+{"type": "session_end", "id": "2bde5035-b4fe-4f85-8fb2-1a96a2abc570", "ts": "2026-03-26T08:54:53Z", "records": 17, "reason": "limit"}

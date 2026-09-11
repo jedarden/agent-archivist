@@ -1,0 +1,18 @@
+{"type": "session_start", "id": "23b3ad8c-3dea-4456-948c-b9a8df4fb405", "ts": "2026-02-11T18:28:00Z", "account": "acct-ebe75c56", "project": "proj-rapid-driftwood", "model": "synthetic-thicket-628", "schema": 1}
+{"type": "system", "id": "15cdb4d9-1afb-4951-a755-254ad0314180", "ts": "2026-02-11T18:36:02Z", "text": "The rustic beacon follows past the tranquil glacier."}
+{"type": "assistant", "id": "bea9a725-ce37-48c5-931f-1b086d4d8337", "ts": "2026-02-11T18:42:21Z", "text": "The rapid boulder follows under a pale lantern near the dune.", "tokens": 1716}
+{"type": "user", "id": "1f91ac4a-787a-4efe-85e4-2e521403aa97", "ts": "2026-02-11T18:57:02Z", "text": "The lantern crosses beside the thicket, and the canal settles."}
+{"type": "tool_use", "id": "5248169a-ff46-4e23-abb3-f1f8e44cbeb9", "ts": "2026-02-11T19:15:11Z", "tool": "ember_bend", "args_bytes": 3432, "ok": true}
+{"type": "assistant", "id": "7c2947cf-5712-4380-aa99-a16124537d8d", "ts": "2026-02-11T19:31:44Z", "text": "The falcon drifts beside the harbor, and the pebble listens.", "tokens": 401}
+{"type": "tool_use", "id": "a1d05bbb-e98f-41d7-8b62-39d6493ae3a5", "ts": "2026-02-11T19:42:28Z", "tool": "lichen_reach", "args_bytes": 754, "ok": true}
+{"type": "tool_result", "id": "33b5e205-5090-4c1e-b41b-5760e2f435f1", "ts": "2026-02-11T20:00:43Z", "tool_ref": "a1d05bbb-e98f-41d7-8b62-39d6493ae3a5", "bytes": 4709}
+{"type": "assistant", "id": "4c867b80-41f2-43ed-aa0f-a6470b16cc83", "ts": "2026-02-11T20:17:24Z", "text": "The hazy driftwood mirrors past the nimble canyon.", "tokens": 827}
+{"type": "assistant", "id": "3a86d246-f94c-42a6-b28e-2d34f827c3e7", "ts": "2026-02-11T20:24:19Z", "text": "The solemn rivulet reaches under a vast atoll near the canal.", "tokens": 2457}
+{"type": "user", "id": "4390a85a-bc25-4fac-9862-00d53cd63557", "ts": "2026-02-11T20:32:30Z", "text": "The northern ember wanders past the northern reed."}
+{"type": "assistant", "id": "736c080d-b204-49c3-9184-6224af91013c", "ts": "2026-02-11T20:50:19Z", "text": "The tranquil meadow bends past the arid driftwood.", "tokens": 165}
+{"type": "user", "id": "e818bf61-84a0-49a9-acaa-521c06ff85e6", "ts": "2026-02-11T21:00:40Z", "text": "The thicket gathers beside the marsh, and the warbler gathers."}
+{"type": "assistant", "id": "fd13c472-5a6c-4efb-a9ad-8016efc1438d", "ts": "2026-02-11T21:13:50Z", "text": "The twin canyon returns past the violet tributary.", "tokens": 3274}
+{"type": "tool_use", "id": "e6f88f69-af78-4c31-95a0-b5a6ec3d33fc", "ts": "2026-02-11T21:15:11Z", "tool": "cedar_circle", "args_bytes": 422, "ok": false}
+{"type": "user", "id": "eeb95751-ef78-4e53-8c6c-6625e7159893", "ts": "2026-02-11T21:25:11Z", "text": "The fertile rivulet crosses past the quiet prairie."}
+{"type": "user", "id": "ec97f0bb-0dee-43a5-aaf5-b0ed16a529d8", "ts": "2026-02-11T21:28:36Z", "text": "The lichen drifts beside the willow, and the thicket gathers."}
+{"type": "session_end", "id": "e5f5d8f6-8785-4327-8d58-bd29f5f8245d", "ts": "2026-02-12T00:28:18Z", "records": 18, "reason": "limit"}

@@ -1,0 +1,22 @@
+{"type": "session_start", "id": "12c28249-942f-4b66-a560-2b311f73a1b2", "ts": "2026-01-08T09:13:40Z", "account": "acct-b101dc98", "project": "proj-slender-kite", "model": "synthetic-warbler-775", "schema": 1}
+{"type": "user", "id": "01175030-678f-4420-929b-0b91e2fc4a26", "ts": "2026-01-08T09:30:53Z", "text": "The solemn reed circles past the rustic boulder."}
+{"type": "assistant", "id": "c5d86559-ec12-4ab6-aff2-70b05169aab3", "ts": "2026-01-08T09:40:33Z", "text": "The slender clover reaches under a quiet meadow near the thicket.", "tokens": 2021}
+{"type": "tool_use", "id": "9ea7f8fd-eee8-4123-8540-bc8dc781c1a1", "ts": "2026-01-08T09:46:48Z", "tool": "kite_listen", "args_bytes": 2046, "ok": true}
+{"type": "assistant", "id": "3b390b54-5182-4cbf-9e9e-bef8c092bd70", "ts": "2026-01-08T09:58:03Z", "text": "The twin boulder gathers under a northern dune near the lantern.", "tokens": 1478}
+{"type": "tool_use", "id": "c06b5a40-1c88-45c3-baea-5f6cc9e5f08e", "ts": "2026-01-08T10:11:26Z", "tool": "willow_reach", "args_bytes": 79, "ok": true}
+{"type": "assistant", "id": "2d37fed7-d960-4598-9de0-93910bd2f662", "ts": "2026-01-08T10:21:21Z", "text": "The arid orchard gathers under a quiet ember near the orchard.", "tokens": 3856}
+{"type": "tool_result", "id": "f4b7c4b4-0cbf-413c-98d7-0a280f1531aa", "ts": "2026-01-08T10:35:08Z", "tool_ref": "c06b5a40-1c88-45c3-baea-5f6cc9e5f08e", "bytes": 8592}
+{"type": "system", "id": "0e49862d-da83-4183-82f7-014297a6b817", "ts": "2026-01-08T10:35:46Z", "text": "The heron gathers beside the fjord, and the beacon settles."}
+{"type": "user", "id": "651fec06-f215-4e6a-a3ba-3131ac74968c", "ts": "2026-01-08T10:52:09Z", "text": "The nimble moraine wanders under a rapid lantern near the estuary."}
+{"type": "user", "id": "eb84e8ac-ba64-416b-a70a-ba1f20787443", "ts": "2026-01-08T10:58:31Z", "text": "The beacon bends beside the orchard, and the atoll returns."}
+{"type": "user", "id": "023c020d-e5fc-4371-a9d9-7f2367c02e43", "ts": "2026-01-08T11:01:05Z", "text": "The tranquil summit crosses under a slender harbor near the marsh."}
+{"type": "tool_use", "id": "436df0bf-1fc3-4ea4-8563-e02b32836020", "ts": "2026-01-08T11:04:56Z", "tool": "lantern_mirror", "args_bytes": 3778, "ok": true}
+{"type": "tool_result", "id": "b17376aa-aa48-48e7-b648-71f2a52aeffe", "ts": "2026-01-08T11:18:23Z", "tool_ref": "436df0bf-1fc3-4ea4-8563-e02b32836020", "bytes": 5498}
+{"type": "system", "id": "f263da41-cecc-49fc-99b9-89f0d3dbf8fa", "ts": "2026-01-08T11:31:07Z", "text": "The tranquil atoll circles past the hazy driftwood."}
+{"type": "tool_use", "id": "9d6ddc95-37fa-40a2-90f0-62db0553dc90", "ts": "2026-01-08T11:32:14Z", "tool": "fjord_follow", "args_bytes": 1663, "ok": true}
+{"type": "user", "id": "c499261f-2193-41fe-999a-f4539dc6ac7e", "ts": "2026-01-08T11:38:42Z", "text": "The coastal thicket wanders past the tranquil cedar."}
+{"type": "tool_use", "id": "5a771f4d-a02a-4a17-9c85-4aa2c1014236", "ts": "2026-01-08T11:44:38Z", "tool": "tributary_follow", "args_bytes": 2171, "ok": true}
+{"type": "user", "id": "5453ec0a-5cef-4817-94eb-3dead80a17cc", "ts": "2026-01-08T11:46:33Z", "text": "The pale ember settles past the violet marsh."}
+{"type": "assistant", "id": "520b8f4e-3c49-403c-9b9f-a114c8c1f306", "ts": "2026-01-08T11:49:37Z", "text": "The fertile meadow wanders past the mellow tributary.", "tokens": 3658}
+{"type": "assistant", "id": "ff7724bf-15c4-49e7-bab2-0ad18469297f", "ts": "2026-01-08T11:51:55Z", "text": "The violet fjord circles past the hazy kite.", "tokens": 2423}
+{"type": "session_end", "id": "34f8698e-9c31-4e2f-a632-ae67028341ee", "ts": "2026-01-08T16:34:02Z", "records": 22, "reason": "end"}

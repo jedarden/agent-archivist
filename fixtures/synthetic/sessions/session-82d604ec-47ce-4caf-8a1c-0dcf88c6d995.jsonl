@@ -1,0 +1,30 @@
+{"type": "session_start", "id": "82d604ec-47ce-4caf-8a1c-0dcf88c6d995", "ts": "2026-01-19T20:52:28Z", "account": "acct-4ccbc6ba", "project": "proj-slender-cedar", "model": "synthetic-moraine-355", "schema": 1}
+{"type": "assistant", "id": "768b99de-75a2-4d48-974e-4e5b75a423b3", "ts": "2026-01-19T20:57:18Z", "text": "The pale canyon crosses past the fertile lichen.", "tokens": 3108}
+{"type": "system", "id": "653214d0-dc3f-4d90-a9eb-ec9d37d711f8", "ts": "2026-01-19T20:58:37Z", "text": "The canyon reaches beside the moraine, and the warbler reaches."}
+{"type": "tool_use", "id": "75661e50-b6b1-4c0e-a4da-990f8f2abbe7", "ts": "2026-01-19T21:09:02Z", "tool": "cedar_cross", "args_bytes": 718, "ok": true}
+{"type": "assistant", "id": "89decf85-82de-4bd5-8b64-f1bce1ff2572", "ts": "2026-01-19T21:18:22Z", "text": "The northern estuary reaches under a fertile lantern near the cove.", "tokens": 1756}
+{"type": "user", "id": "82f20dcd-cffc-451b-82d4-dce16ae9eda9", "ts": "2026-01-19T21:21:50Z", "text": "The soft rivulet crosses under a quiet quarry near the marsh."}
+{"type": "tool_result", "id": "ca315da3-1509-4960-8881-9f8262206402", "ts": "2026-01-19T21:22:11Z", "tool_ref": "75661e50-b6b1-4c0e-a4da-990f8f2abbe7", "bytes": 8769}
+{"type": "assistant", "id": "4128aaba-deef-4a9c-843f-5adab8087d5d", "ts": "2026-01-19T21:24:14Z", "text": "The solemn lantern reaches under a hollow meadow near the driftwood.", "tokens": 1087}
+{"type": "user", "id": "7d2f40f1-1723-4741-8682-ae1df258306c", "ts": "2026-01-19T21:24:57Z", "text": "The beacon settles beside the moraine, and the kite circles."}
+{"type": "user", "id": "6787a999-60bb-44c9-8b2a-a49e50db3963", "ts": "2026-01-19T21:25:06Z", "text": "The hazy savanna settles under a twin boulder near the thicket."}
+{"type": "user", "id": "71206c24-066a-4ea2-95b4-233a7dc51442", "ts": "2026-01-19T21:25:48Z", "text": "The arid heron returns under a tranquil moraine near the boulder."}
+{"type": "system", "id": "e3e69afa-726e-442e-9e97-67cd1865d845", "ts": "2026-01-19T21:38:55Z", "text": "The tranquil cedar crosses under a rapid quarry near the lantern."}
+{"type": "user", "id": "17846d89-9a34-4c58-9dc5-cbfaa4f5607b", "ts": "2026-01-19T21:46:05Z", "text": "The northern fjord follows under a lucid atoll near the canyon."}
+{"type": "assistant", "id": "811e01cc-bd3c-4281-8cb1-55e55d9a936d", "ts": "2026-01-19T21:51:56Z", "text": "The mellow moraine mirrors under a quiet lichen near the pebble.", "tokens": 2817}
+{"type": "assistant", "id": "8863e2e7-3c17-4c0b-a2cf-f53e88aca9e2", "ts": "2026-01-19T21:52:41Z", "text": "The boulder returns beside the estuary, and the estuary wanders.", "tokens": 2745}
+{"type": "assistant", "id": "6b9bccee-def4-41fe-b0ee-d38f2c9fd5fc", "ts": "2026-01-19T21:58:06Z", "text": "The rivulet listens beside the canal, and the warbler crosses.", "tokens": 1056}
+{"type": "user", "id": "c5610afa-f0e2-435d-bf1e-9fd60634dab7", "ts": "2026-01-19T22:04:09Z", "text": "The sturdy boulder circles under a solemn moraine near the orchard."}
+{"type": "user", "id": "772014ff-b57a-4081-965c-630d3e0edd3a", "ts": "2026-01-19T22:15:43Z", "text": "The crisp lichen returns past the rapid kite."}
+{"type": "assistant", "id": "41ee5d34-a89d-4a3d-b840-6721f9485e2d", "ts": "2026-01-19T22:26:44Z", "text": "The rustic canal returns under a uneven falcon near the ember.", "tokens": 1692}
+{"type": "user", "id": "da110967-2301-4a4e-9272-7ae5e1810a0d", "ts": "2026-01-19T22:41:15Z", "text": "The solemn reed bends past the violet dune."}
+{"type": "user", "id": "2eca8f0d-9cce-4594-98b2-48e896c2d2fb", "ts": "2026-01-19T22:43:04Z", "text": "The arid fjord bends past the twin boulder."}
+{"type": "user", "id": "e437245b-be71-4dee-ab04-b5a32e6bda24", "ts": "2026-01-19T22:51:45Z", "text": "The tributary mirrors beside the beacon, and the lantern settles."}
+{"type": "user", "id": "cf5d312c-183e-4ad4-8537-1ef9a54d0fdc", "ts": "2026-01-19T22:52:01Z", "text": "The cedar crosses beside the estuary, and the glacier wanders."}
+{"type": "assistant", "id": "21205dab-abce-43d5-9abd-81ed19c6b6a9", "ts": "2026-01-19T23:03:10Z", "text": "The rapid prairie bends past the crisp rivulet.", "tokens": 3860}
+{"type": "user", "id": "0a55eb9d-6221-472e-b0ba-629579c210ea", "ts": "2026-01-19T23:13:33Z", "text": "The gentle atoll circles past the twin driftwood."}
+{"type": "assistant", "id": "86703579-6252-4e2d-8131-fb4dd1286a5a", "ts": "2026-01-19T23:24:51Z", "text": "The rustic falcon reaches past the rapid driftwood.", "tokens": 3505}
+{"type": "tool_use", "id": "6addaf01-01d2-4b3c-9e89-a3f47f2e6a64", "ts": "2026-01-19T23:36:17Z", "tool": "moraine_return", "args_bytes": 3545, "ok": true}
+{"type": "user", "id": "bef01aa2-608d-4f16-a109-84cc8348a5b4", "ts": "2026-01-19T23:46:41Z", "text": "The lantern drifts beside the ember, and the savanna mirrors."}
+{"type": "tool_use", "id": "72e59c2d-5256-4a70-bc73-91671fca7fdb", "ts": "2026-01-19T23:49:50Z", "tool": "pebble_cross", "args_bytes": 2494, "ok": true}
+{"type": "session_end", "id": "6d9c1a09-ff7a-403b-8ef3-e7f9a04bdaf7", "ts": "2026-01-20T04:22:58Z", "records": 30, "reason": "limit"}

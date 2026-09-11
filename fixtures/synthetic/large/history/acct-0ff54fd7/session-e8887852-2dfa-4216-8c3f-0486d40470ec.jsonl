@@ -1,0 +1,19 @@
+{"type": "session_start", "id": "e8887852-2dfa-4216-8c3f-0486d40470ec", "ts": "2026-04-22T23:20:02Z", "account": "acct-0ff54fd7", "project": "proj-solemn-atoll", "model": "synthetic-clover-929", "schema": 1}
+{"type": "assistant", "id": "729334d4-83ab-44b4-aa18-12a841cbdf51", "ts": "2026-04-22T23:38:42Z", "text": "The mellow canal gathers past the northern summit.", "tokens": 3762}
+{"type": "system", "id": "421d0144-1d66-433f-86c3-bf20c2490b87", "ts": "2026-04-22T23:57:10Z", "text": "The twin rivulet circles under a coastal kite near the cedar."}
+{"type": "user", "id": "641504dc-114e-4218-b467-a946f7a96899", "ts": "2026-04-22T23:59:37Z", "text": "The quiet savanna listens past the hollow moraine."}
+{"type": "tool_use", "id": "a1dfef02-4555-4055-b6c7-c83c322e139e", "ts": "2026-04-23T00:16:43Z", "tool": "pebble_listen", "args_bytes": 4075, "ok": true}
+{"type": "tool_use", "id": "5385a1ee-d590-4844-8f15-3d6631647460", "ts": "2026-04-23T00:21:38Z", "tool": "cove_reach", "args_bytes": 2695, "ok": true}
+{"type": "tool_use", "id": "2d147ffd-3d5f-4829-bb18-3a0198b38e01", "ts": "2026-04-23T00:39:28Z", "tool": "cove_cross", "args_bytes": 143, "ok": false}
+{"type": "assistant", "id": "9d2aa88d-8aad-4427-8995-09e35a1ba3cb", "ts": "2026-04-23T00:48:01Z", "text": "The falcon drifts beside the harbor, and the kite follows.", "tokens": 348}
+{"type": "tool_use", "id": "108f9915-a9c8-4dc1-9cd8-18b38fad472c", "ts": "2026-04-23T01:02:59Z", "tool": "moraine_mirror", "args_bytes": 2502, "ok": true}
+{"type": "user", "id": "2fb30d47-554e-465f-8a91-0ba9e51904b1", "ts": "2026-04-23T01:05:00Z", "text": "The driftwood listens beside the driftwood, and the orchard mirrors."}
+{"type": "assistant", "id": "f1fedca8-c416-42ae-b12b-a12c0feb2cb8", "ts": "2026-04-23T01:05:22Z", "text": "The soft prairie drifts under a rapid warbler near the cedar.", "tokens": 748}
+{"type": "assistant", "id": "3745dcc7-3c95-4d16-b0c0-cda05cbff52f", "ts": "2026-04-23T01:09:46Z", "text": "The cove listens beside the cove, and the wheat reaches.", "tokens": 875}
+{"type": "user", "id": "4825a2d0-98ca-4636-881e-e13b0dba030b", "ts": "2026-04-23T01:09:56Z", "text": "The uneven willow follows under a rapid clover near the boulder."}
+{"type": "user", "id": "d0d9fdac-928c-4efe-ad37-448d94337f1a", "ts": "2026-04-23T01:29:48Z", "text": "The fertile summit follows under a quiet moraine near the canyon."}
+{"type": "assistant", "id": "ff354b65-66f8-49f6-989b-7612f353f6d1", "ts": "2026-04-23T01:42:12Z", "text": "The heron follows beside the falcon, and the cove drifts.", "tokens": 775}
+{"type": "assistant", "id": "2ad3eb5e-18a2-4248-900c-6d55186b8fd8", "ts": "2026-04-23T01:50:35Z", "text": "The mellow cove mirrors under a twin wheat near the heron.", "tokens": 2552}
+{"type": "user", "id": "a8076fa6-d355-4f13-959b-5bf3ddf57cb2", "ts": "2026-04-23T01:58:32Z", "text": "The sturdy kite mirrors past the violet pebble."}
+{"type": "user", "id": "44067306-4924-42ba-a8e4-a783a8447c02", "ts": "2026-04-23T02:11:34Z", "text": "The northern savanna returns past the uneven cove."}
+{"type": "session_end", "id": "f327f907-5266-4891-ab65-cb80c06c49d4", "ts": "2026-04-23T05:40:21Z", "records": 19, "reason": "interrupt"}

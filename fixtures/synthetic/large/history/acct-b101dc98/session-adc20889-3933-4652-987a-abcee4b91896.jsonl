@@ -1,0 +1,9 @@
+{"type": "session_start", "id": "adc20889-3933-4652-987a-abcee4b91896", "ts": "2026-01-20T17:07:24Z", "account": "acct-b101dc98", "project": "proj-mellow-savanna", "model": "synthetic-falcon-971", "schema": 1}
+{"type": "assistant", "id": "4921a9d1-d653-4e57-b32e-5d709b00087b", "ts": "2026-01-20T17:17:14Z", "text": "The vast tributary crosses under a southern canal near the glacier.", "tokens": 1389}
+{"type": "tool_use", "id": "65023d83-3873-4b15-a5e8-d3df7ffcfe2b", "ts": "2026-01-20T17:21:00Z", "tool": "tributary_listen", "args_bytes": 268, "ok": true}
+{"type": "tool_result", "id": "9ebc9481-a06e-4d30-9464-b9fdbec2a6cc", "ts": "2026-01-20T17:38:00Z", "tool_ref": "65023d83-3873-4b15-a5e8-d3df7ffcfe2b", "bytes": 5624}
+{"type": "tool_use", "id": "2a503774-45b3-49ef-b4bf-2096b22a9fb4", "ts": "2026-01-20T17:45:20Z", "tool": "estuary_return", "args_bytes": 2287, "ok": true}
+{"type": "user", "id": "3bf5bb3c-7090-4d3b-aef9-b2cbe1eec2f8", "ts": "2026-01-20T18:04:47Z", "text": "The coastal meadow bends past the slender beacon."}
+{"type": "assistant", "id": "bbd9906c-f838-4581-ae21-3f8f0334a23d", "ts": "2026-01-20T18:13:07Z", "text": "The lucid orchard wanders past the violet atoll.", "tokens": 3036}
+{"type": "assistant", "id": "0155a81f-2238-4ad5-95af-ff1ce82655ab", "ts": "2026-01-20T18:25:36Z", "text": "The glacier reaches beside the fjord, and the dune settles.", "tokens": 3973}
+{"type": "session_end", "id": "433b3c8e-ecdf-4012-a293-b53a5ec2903f", "ts": "2026-01-20T20:07:33Z", "records": 9, "reason": "limit"}

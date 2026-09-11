@@ -1,0 +1,16 @@
+{"type": "session_start", "id": "1b797768-d249-4d89-8824-7de9eed3e9ba", "ts": "2026-04-25T19:10:14Z", "account": "acct-0ff54fd7", "project": "proj-uneven-orchard", "model": "synthetic-lantern-753", "schema": 1}
+{"type": "assistant", "id": "f7acde84-9706-4025-a395-1d5ef3c41690", "ts": "2026-04-25T19:11:42Z", "text": "The pale beacon returns past the uneven tributary.", "tokens": 1139}
+{"type": "tool_use", "id": "7839db0d-0e6e-446d-9b35-4f93339a9236", "ts": "2026-04-25T19:22:56Z", "tool": "warbler_reach", "args_bytes": 2372, "ok": true}
+{"type": "tool_use", "id": "886db402-6c04-4f29-93e3-ce50b9d4ba10", "ts": "2026-04-25T19:27:15Z", "tool": "cove_wander", "args_bytes": 1804, "ok": true}
+{"type": "tool_result", "id": "cfc66e2c-4e49-4027-b0e0-453fadcefd67", "ts": "2026-04-25T19:28:00Z", "tool_ref": "886db402-6c04-4f29-93e3-ce50b9d4ba10", "bytes": 824}
+{"type": "user", "id": "2fd7ac76-63bb-44bf-81d6-9e53a3dd60e0", "ts": "2026-04-25T19:33:08Z", "text": "The tranquil tributary circles under a soft dune near the cove."}
+{"type": "user", "id": "0e44a721-f403-4e4a-8b29-7b743139fe7a", "ts": "2026-04-25T19:35:57Z", "text": "The kite bends beside the cove, and the harbor circles."}
+{"type": "tool_use", "id": "67e9ff12-76f0-4f67-b1e1-51f03a452b55", "ts": "2026-04-25T19:47:40Z", "tool": "canyon_mirror", "args_bytes": 1785, "ok": false}
+{"type": "assistant", "id": "263fee83-6cb6-44c5-8dd4-a9487d41ba9d", "ts": "2026-04-25T19:49:00Z", "text": "The slender glacier returns under a coastal marsh near the cedar.", "tokens": 2835}
+{"type": "assistant", "id": "4c9c4641-a694-4ba1-9ada-bc583e2a8838", "ts": "2026-04-25T19:50:25Z", "text": "The uneven lichen follows past the tranquil fjord.", "tokens": 2654}
+{"type": "user", "id": "1d531c47-dbb9-4c5b-90ec-3841ba0f42d9", "ts": "2026-04-25T19:51:19Z", "text": "The estuary crosses beside the moraine, and the thicket bends."}
+{"type": "user", "id": "467f247e-00b8-4278-8648-7f71cfa67ef8", "ts": "2026-04-25T19:52:20Z", "text": "The uneven harbor drifts under a uneven pebble near the beacon."}
+{"type": "user", "id": "0f5cb10b-e381-4857-938a-69a662afeaca", "ts": "2026-04-25T20:05:01Z", "text": "The violet savanna wanders under a quiet wheat near the pebble."}
+{"type": "tool_use", "id": "7eb294fd-4869-4381-9810-7c8b42bb85ad", "ts": "2026-04-25T20:19:03Z", "tool": "falcon_wander", "args_bytes": 2997, "ok": false}
+{"type": "tool_result", "id": "8fc722f3-6573-429c-a22a-1c0c04abb98f", "ts": "2026-04-25T20:24:39Z", "tool_ref": "7eb294fd-4869-4381-9810-7c8b42bb85ad", "bytes": 2675}
+{"type": "session_end", "id": "b2a47252-828e-4a08-868b-59fa5f893e4f", "ts": "2026-04-26T00:30:30Z", "records": 16, "reason": "end"}

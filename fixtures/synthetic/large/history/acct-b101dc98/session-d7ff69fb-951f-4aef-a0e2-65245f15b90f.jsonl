@@ -1,0 +1,18 @@
+{"type": "session_start", "id": "d7ff69fb-951f-4aef-a0e2-65245f15b90f", "ts": "2026-01-11T10:14:53Z", "account": "acct-b101dc98", "project": "proj-pale-cedar", "model": "synthetic-canal-698", "schema": 1}
+{"type": "system", "id": "61640e2e-5174-4ead-af10-e905105fe3fb", "ts": "2026-01-11T10:28:23Z", "text": "The mellow heron reaches under a twin dune near the lichen."}
+{"type": "assistant", "id": "fec60ceb-d0be-48a6-8ed8-3d57ca21ba29", "ts": "2026-01-11T10:30:41Z", "text": "The soft ember crosses under a lucid rivulet near the quarry.", "tokens": 2271}
+{"type": "user", "id": "0d6bea46-66e1-4293-bc8c-e0fd218ea4f9", "ts": "2026-01-11T10:42:10Z", "text": "The arid reed crosses under a quiet canal near the beacon."}
+{"type": "assistant", "id": "ff704b9e-1b0d-4ba1-9b6e-a76ae1f34f54", "ts": "2026-01-11T10:47:12Z", "text": "The rapid ember settles under a solemn clover near the canal.", "tokens": 3391}
+{"type": "user", "id": "f0b34317-a577-4226-881b-22179c9a3e1d", "ts": "2026-01-11T11:06:59Z", "text": "The solemn tributary wanders under a arid meadow near the thicket."}
+{"type": "user", "id": "9935414c-3f19-4bd6-b897-b4cf4f0e7605", "ts": "2026-01-11T11:21:38Z", "text": "The slender thicket wanders past the sturdy heron."}
+{"type": "tool_use", "id": "b86bb2bc-e948-4899-a4bd-6352a825d5bd", "ts": "2026-01-11T11:24:46Z", "tool": "moraine_follow", "args_bytes": 1757, "ok": false}
+{"type": "assistant", "id": "dfd53786-492d-4d7d-bf07-1fd1b281f21d", "ts": "2026-01-11T11:40:07Z", "text": "The marsh follows beside the tributary, and the thicket reaches.", "tokens": 1420}
+{"type": "user", "id": "a614bac2-9559-4d67-ad5d-c1afebbc2e2b", "ts": "2026-01-11T11:49:00Z", "text": "The fertile estuary bends under a quiet willow near the orchard."}
+{"type": "assistant", "id": "25dbe433-1861-45fc-b5eb-9835a97dd723", "ts": "2026-01-11T11:58:27Z", "text": "The northern falcon gathers under a uneven tributary near the marsh.", "tokens": 469}
+{"type": "tool_use", "id": "2bec30fd-4622-4097-a5da-d0697705e03f", "ts": "2026-01-11T12:04:30Z", "tool": "harbor_mirror", "args_bytes": 1614, "ok": true}
+{"type": "assistant", "id": "aeaf7970-1104-4b48-b0ef-0b35a7c2f96b", "ts": "2026-01-11T12:15:10Z", "text": "The slender lantern returns under a crisp beacon near the willow.", "tokens": 3013}
+{"type": "assistant", "id": "31d96194-a9a6-4eec-a72b-66e8181d3c38", "ts": "2026-01-11T12:32:43Z", "text": "The nimble warbler reaches past the vast canyon.", "tokens": 196}
+{"type": "user", "id": "c2b6fe53-5fb0-4e35-bdfe-bc688ea210e0", "ts": "2026-01-11T12:43:50Z", "text": "The soft willow listens past the crisp lichen."}
+{"type": "user", "id": "094f8758-4cec-4103-9ea5-713af43457ac", "ts": "2026-01-11T12:48:25Z", "text": "The nimble lantern drifts under a vast atoll near the canal."}
+{"type": "assistant", "id": "1b8fad60-3e4f-48b1-8595-ae6fce00c2ac", "ts": "2026-01-11T12:53:18Z", "text": "The beacon wanders beside the willow, and the boulder reaches.", "tokens": 1477}
+{"type": "session_end", "id": "1348aa6d-5bd5-426c-b619-7b4fb90c31f1", "ts": "2026-01-11T16:15:11Z", "records": 18, "reason": "end"}

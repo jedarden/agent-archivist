@@ -1,0 +1,21 @@
+{"type": "session_start", "id": "db0296d9-256e-4b2d-b6fe-807a8d4dbcd8", "ts": "2026-03-22T05:49:26Z", "account": "acct-ebe75c56", "project": "proj-pale-driftwood", "model": "synthetic-canal-896", "schema": 1}
+{"type": "tool_use", "id": "81b160c5-8920-42d0-8f51-0b3b7d7b3664", "ts": "2026-03-22T06:02:16Z", "tool": "boulder_settle", "args_bytes": 1223, "ok": true}
+{"type": "assistant", "id": "40b761b9-8575-42ef-8b71-1087953dc3a9", "ts": "2026-03-22T06:07:03Z", "text": "The lucid reed mirrors under a arid savanna near the meadow.", "tokens": 3355}
+{"type": "assistant", "id": "00520381-b9f1-423e-a356-3c6bb3cd357f", "ts": "2026-03-22T06:25:44Z", "text": "The canal gathers beside the ember, and the falcon drifts.", "tokens": 2175}
+{"type": "user", "id": "c4b1a068-075d-4cdf-ac69-748862c6e78f", "ts": "2026-03-22T06:37:55Z", "text": "The hazy rivulet settles past the soft glacier."}
+{"type": "assistant", "id": "fdc5545e-40a8-4a05-b7c3-86f0406e8946", "ts": "2026-03-22T06:43:52Z", "text": "The lichen mirrors beside the moraine, and the cedar drifts.", "tokens": 1534}
+{"type": "user", "id": "78161334-a9e8-4330-9977-4ffe47c63160", "ts": "2026-03-22T06:49:21Z", "text": "The quiet pebble wanders past the northern meadow."}
+{"type": "tool_result", "id": "c99dd439-0fb7-4faa-b09d-0ddbf84bb8a7", "ts": "2026-03-22T07:00:15Z", "tool_ref": "81b160c5-8920-42d0-8f51-0b3b7d7b3664", "bytes": 9003}
+{"type": "assistant", "id": "deeacbde-06f1-43d3-8dbf-79878480e312", "ts": "2026-03-22T07:05:10Z", "text": "The soft quarry reaches under a rustic canal near the meadow.", "tokens": 2735}
+{"type": "tool_use", "id": "50257124-0533-4c6c-9b99-3395906ba467", "ts": "2026-03-22T07:10:39Z", "tool": "summit_drift", "args_bytes": 759, "ok": true}
+{"type": "assistant", "id": "bb554365-0696-48e8-be64-bebcb6be6c3d", "ts": "2026-03-22T07:28:39Z", "text": "The warbler settles beside the marsh, and the beacon drifts.", "tokens": 471}
+{"type": "tool_use", "id": "1c0137ce-85cb-4755-9b33-33533494b939", "ts": "2026-03-22T07:38:37Z", "tool": "moraine_wander", "args_bytes": 1289, "ok": true}
+{"type": "assistant", "id": "a1c0b8b6-21bf-48dc-abbc-3570cabee633", "ts": "2026-03-22T07:41:12Z", "text": "The violet clover crosses past the crisp fjord.", "tokens": 1904}
+{"type": "user", "id": "f8acfb29-9630-4e7d-8c64-b3df3bac1df1", "ts": "2026-03-22T07:42:38Z", "text": "The prairie wanders beside the lantern, and the lantern circles."}
+{"type": "user", "id": "6eab0ede-94f5-4898-b4fb-52c6db5b99f4", "ts": "2026-03-22T08:01:12Z", "text": "The pale prairie wanders past the fertile lantern."}
+{"type": "assistant", "id": "740e7b29-7dae-418d-bb71-e38825ad3060", "ts": "2026-03-22T08:13:55Z", "text": "The lucid quarry wanders under a mellow kite near the warbler.", "tokens": 395}
+{"type": "user", "id": "a0e0c953-8bec-4312-8ba0-37656d6216e0", "ts": "2026-03-22T08:27:54Z", "text": "The willow listens beside the marsh, and the savanna returns."}
+{"type": "user", "id": "e5159516-8138-42b3-a33a-0ff4296a61f4", "ts": "2026-03-22T08:28:34Z", "text": "The coastal canyon follows under a fertile rivulet near the summit."}
+{"type": "assistant", "id": "53434236-9754-43da-9fc5-a03bd91d7efb", "ts": "2026-03-22T08:42:26Z", "text": "The vast wheat drifts past the crisp canyon.", "tokens": 1392}
+{"type": "user", "id": "d4adb433-69ea-423b-8247-1b11afd7b979", "ts": "2026-03-22T08:44:22Z", "text": "The arid summit circles past the hazy tributary."}
+{"type": "session_end", "id": "af1f621a-0aa7-4f2b-b4ac-330294ef1b45", "ts": "2026-03-22T12:49:47Z", "records": 21, "reason": "limit"}

@@ -1,0 +1,15 @@
+{"type": "session_start", "id": "f6ea05b0-8347-4f25-b49c-3fe540d6df47", "ts": "2026-02-04T07:26:01Z", "account": "acct-f704365a", "project": "proj-rustic-falcon", "model": "synthetic-estuary-596", "schema": 1}
+{"type": "assistant", "id": "ba426532-a465-46a9-bcdb-520f0ed60e5c", "ts": "2026-02-04T07:29:21Z", "text": "The dune wanders beside the estuary, and the meadow bends.", "tokens": 3392}
+{"type": "system", "id": "13c41f21-2283-44b9-aabb-0ddd053f7df3", "ts": "2026-02-04T07:32:31Z", "text": "The thicket settles beside the atoll, and the canal follows."}
+{"type": "system", "id": "24ee54a5-0eb8-45dd-b965-169e7c2eaa0d", "ts": "2026-02-04T07:38:25Z", "text": "The savanna gathers beside the reed, and the lichen reaches."}
+{"type": "user", "id": "dd2ee50d-30d6-45ff-af05-34bb686424b1", "ts": "2026-02-04T07:42:56Z", "text": "The slender driftwood returns past the gentle falcon."}
+{"type": "system", "id": "bbc433e9-a1ba-44b1-949b-08e8dc1a114c", "ts": "2026-02-04T07:43:58Z", "text": "The southern savanna settles past the sturdy rivulet."}
+{"type": "compaction", "id": "9b8fedab-da60-446b-9c3f-4330fc1321a6", "ts": "2026-02-08T07:26:01Z", "prior_records": 6}
+{"type": "tool_use", "id": "bc92fcb0-d5d4-4243-aad1-dba2ecc6b098", "ts": "2026-02-08T07:34:51Z", "tool": "summit_reach", "args_bytes": 3835, "ok": true}
+{"type": "tool_use", "id": "0be68d1c-d192-403e-a1d9-42cc5aef4a86", "ts": "2026-02-08T07:41:21Z", "tool": "dune_listen", "args_bytes": 3850, "ok": false}
+{"type": "user", "id": "ef0436eb-f8c1-4b43-ba84-39e59171cacf", "ts": "2026-02-08T07:45:04Z", "text": "The hollow driftwood gathers under a arid lichen near the willow."}
+{"type": "user", "id": "24b300f5-77c3-4c7b-bba3-a2209eb344de", "ts": "2026-02-08T07:51:19Z", "text": "The sturdy boulder settles past the pale kite."}
+{"type": "assistant", "id": "6266c2b8-9a5d-4848-83e1-beaf1e58bacf", "ts": "2026-02-08T07:58:57Z", "text": "The southern glacier bends past the twin canyon.", "tokens": 3833}
+{"type": "user", "id": "58d18598-5563-4a3c-897d-82e629c25a2a", "ts": "2026-02-08T08:05:58Z", "text": "The nimble prairie mirrors past the coastal lantern."}
+{"type": "assistant", "id": "84e5e35c-6d4b-4af9-9152-37e115c00ab3", "ts": "2026-02-08T08:10:49Z", "text": "The gentle boulder returns under a hollow harbor near the harbor.", "tokens": 1360}
+{"type": "session_end", "id": "aca714ab-8eeb-498a-ae64-876c95c5f4e6", "ts": "2026-02-08T09:26:01Z", "records": 14, "reason": "interrupt"}

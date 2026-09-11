@@ -1,0 +1,20 @@
+{"type": "session_start", "id": "4e484404-c222-44e2-8ca0-f78713594d70", "ts": "2026-02-16T11:36:02Z", "account": "acct-12d8cd6a", "project": "proj-slender-prairie", "model": "synthetic-beacon-525", "schema": 1}
+{"type": "user", "id": "35074f1c-d11d-439d-9629-f67ab9c1b26f", "ts": "2026-02-16T11:50:56Z", "text": "The gentle cedar returns under a hollow cedar near the wheat."}
+{"type": "assistant", "id": "17c9eec3-ec4a-435b-9263-9b573ff3baf0", "ts": "2026-02-16T12:07:39Z", "text": "The heron reaches beside the driftwood, and the driftwood reaches.", "tokens": 614}
+{"type": "user", "id": "b97b599c-ebb0-450d-a220-75ee6822ed69", "ts": "2026-02-16T12:17:34Z", "text": "The tributary mirrors beside the thicket, and the tributary wanders."}
+{"type": "user", "id": "b4154f73-3cba-4e22-9dda-0c5bf1510bae", "ts": "2026-02-16T12:23:57Z", "text": "The lucid willow listens past the lucid summit."}
+{"type": "user", "id": "0bd19fbe-1442-4cac-9671-8c5fd07912b1", "ts": "2026-02-16T12:36:36Z", "text": "The atoll drifts beside the quarry, and the quarry drifts."}
+{"type": "assistant", "id": "3ac7762f-4988-4153-800c-47b56ff40498", "ts": "2026-02-16T12:48:58Z", "text": "The beacon drifts beside the kite, and the estuary drifts.", "tokens": 1969}
+{"type": "assistant", "id": "454326ea-2a17-4a53-9b28-ae24221cb0fc", "ts": "2026-02-16T12:55:21Z", "text": "The quiet fjord drifts past the coastal quarry.", "tokens": 3310}
+{"type": "user", "id": "99347959-f982-45eb-be53-a2718aa4c07c", "ts": "2026-02-16T13:05:55Z", "text": "The sturdy falcon gathers past the southern kite."}
+{"type": "user", "id": "72aa0b3e-e130-440e-99ac-43d135513d8a", "ts": "2026-02-16T13:11:52Z", "text": "The lucid rivulet mirrors past the northern reed."}
+{"type": "system", "id": "39925448-d2ea-41e0-8b0e-ca8610a2437d", "ts": "2026-02-16T13:14:57Z", "text": "The fertile pebble reaches past the arid dune."}
+{"type": "user", "id": "5a47c223-3c7d-48ce-92a6-7a76ab967b28", "ts": "2026-02-16T13:15:21Z", "text": "The canal drifts beside the rivulet, and the canal reaches."}
+{"type": "tool_use", "id": "78aaf6bb-9290-441a-9144-3148ef403d45", "ts": "2026-02-16T13:31:09Z", "tool": "warbler_bend", "args_bytes": 596, "ok": true}
+{"type": "user", "id": "3ca87e45-d72a-4cec-bed2-a2a86eb811cf", "ts": "2026-02-16T13:33:10Z", "text": "The tranquil clover wanders past the twin rivulet."}
+{"type": "user", "id": "6b100469-6134-45cd-8208-04a15c998833", "ts": "2026-02-16T13:44:45Z", "text": "The southern wheat drifts past the uneven tributary."}
+{"type": "tool_result", "id": "8ed1a3c6-6fcd-49cf-8706-7619e272a9be", "ts": "2026-02-16T13:54:11Z", "tool_ref": "78aaf6bb-9290-441a-9144-3148ef403d45", "bytes": 9993}
+{"type": "assistant", "id": "2568a251-5eb7-473a-825b-5b96edb42ea1", "ts": "2026-02-16T14:00:40Z", "text": "The arid prairie circles past the sturdy pebble.", "tokens": 3493}
+{"type": "user", "id": "3ab8ded3-faf2-4991-9187-74ed05d6fed8", "ts": "2026-02-16T14:08:22Z", "text": "The pebble mirrors beside the prairie, and the kite mirrors."}
+{"type": "assistant", "id": "3dab553f-b9b1-455c-b699-70ee72220975", "ts": "2026-02-16T14:20:59Z", "text": "The sturdy summit crosses under a rapid cove near the fjord.", "tokens": 1100}
+{"type": "session_end", "id": "f3c1dd82-bda7-4165-8d98-c91200296e4b", "ts": "2026-02-16T18:16:22Z", "records": 20, "reason": "limit"}

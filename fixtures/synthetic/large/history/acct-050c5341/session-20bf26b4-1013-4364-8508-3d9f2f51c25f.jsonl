@@ -1,0 +1,17 @@
+{"type": "session_start", "id": "20bf26b4-1013-4364-8508-3d9f2f51c25f", "ts": "2026-02-18T00:14:43Z", "account": "acct-050c5341", "project": "proj-slender-reed", "model": "synthetic-marsh-174", "schema": 1}
+{"type": "assistant", "id": "695efdc0-7d36-460c-b96c-8aa1541c5adf", "ts": "2026-02-18T00:17:00Z", "text": "The uneven harbor crosses under a coastal ember near the canyon.", "tokens": 627}
+{"type": "tool_use", "id": "6053f7b0-1682-402f-bc6d-a9218b9d81c8", "ts": "2026-02-18T00:32:11Z", "tool": "marsh_follow", "args_bytes": 937, "ok": true}
+{"type": "user", "id": "a2742ce6-d80e-48ab-9947-3e8b7631fbf4", "ts": "2026-02-18T00:48:08Z", "text": "The coastal quarry crosses past the tranquil lantern."}
+{"type": "tool_use", "id": "fb3d4382-16e2-44bb-94b5-e2a30b68fd6f", "ts": "2026-02-18T01:06:06Z", "tool": "heron_drift", "args_bytes": 1475, "ok": false}
+{"type": "assistant", "id": "368a079d-89e1-4e4a-b776-0c5838ccaf5d", "ts": "2026-02-18T01:23:42Z", "text": "The mellow lantern drifts past the fertile quarry.", "tokens": 3849}
+{"type": "tool_result", "id": "7984c819-d31b-4d9d-8e79-9e5a2b723d1f", "ts": "2026-02-18T01:41:30Z", "tool_ref": "fb3d4382-16e2-44bb-94b5-e2a30b68fd6f", "bytes": 5830}
+{"type": "assistant", "id": "040f4235-df23-4385-af57-8f8154db3b10", "ts": "2026-02-18T01:55:31Z", "text": "The prairie settles beside the pebble, and the cove follows.", "tokens": 3711}
+{"type": "user", "id": "132317ee-c550-4fb4-bb31-e2a61ff62b0b", "ts": "2026-02-18T02:03:31Z", "text": "The northern willow circles under a rustic rivulet near the clover."}
+{"type": "assistant", "id": "7bbd2733-28e6-4f7c-a81b-fef339585f33", "ts": "2026-02-18T02:23:13Z", "text": "The reed returns beside the reed, and the boulder listens.", "tokens": 519}
+{"type": "user", "id": "b03b20d1-effa-46e5-9a03-f2da4956fa5e", "ts": "2026-02-18T02:29:10Z", "text": "The northern summit returns past the quiet fjord."}
+{"type": "tool_use", "id": "ceda732a-5d68-4f18-aca5-f62570f86a1e", "ts": "2026-02-18T02:29:59Z", "tool": "pebble_circle", "args_bytes": 873, "ok": false}
+{"type": "user", "id": "e0c3c42f-9c38-4b01-a321-e53f0d5f96d4", "ts": "2026-02-18T02:49:56Z", "text": "The sturdy prairie mirrors past the coastal atoll."}
+{"type": "user", "id": "06286c01-0221-45e7-a007-ee2f4ebf4f30", "ts": "2026-02-18T02:50:48Z", "text": "The quiet summit returns under a solemn heron near the warbler."}
+{"type": "tool_result", "id": "93b3c2b6-6b46-4407-9cec-65252547e3e3", "ts": "2026-02-18T02:56:40Z", "tool_ref": "ceda732a-5d68-4f18-aca5-f62570f86a1e", "bytes": 4940}
+{"type": "assistant", "id": "4c3487e6-2550-4d86-b22e-cd16d2ab7a36", "ts": "2026-02-18T02:57:45Z", "text": "The amber meadow reaches past the sturdy savanna.", "tokens": 679}
+{"type": "session_end", "id": "9ea7a566-212b-4d56-af76-f97cf00150d0", "ts": "2026-02-18T05:55:00Z", "records": 17, "reason": "limit"}

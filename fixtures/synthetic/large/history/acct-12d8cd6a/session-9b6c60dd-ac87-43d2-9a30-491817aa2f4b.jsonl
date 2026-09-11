@@ -1,0 +1,21 @@
+{"type": "session_start", "id": "9b6c60dd-ac87-43d2-9a30-491817aa2f4b", "ts": "2026-02-02T07:30:43Z", "account": "acct-12d8cd6a", "project": "proj-hollow-clover", "model": "synthetic-reed-466", "schema": 1}
+{"type": "tool_use", "id": "a07d2712-b640-405d-a5b4-a1da6a6b4f33", "ts": "2026-02-02T07:33:31Z", "tool": "warbler_drift", "args_bytes": 3281, "ok": false}
+{"type": "tool_use", "id": "96074cfb-67f9-4181-8f73-93a7e1b66dd0", "ts": "2026-02-02T07:48:15Z", "tool": "kite_circle", "args_bytes": 28, "ok": true}
+{"type": "tool_use", "id": "93b3b11b-bf58-4c5a-81af-403fa3127185", "ts": "2026-02-02T08:06:48Z", "tool": "meadow_cross", "args_bytes": 291, "ok": true}
+{"type": "assistant", "id": "f9e3c222-1b64-44da-8efb-5a66d76c51ca", "ts": "2026-02-02T08:17:24Z", "text": "The sturdy summit wanders under a hollow tributary near the summit.", "tokens": 1005}
+{"type": "user", "id": "2332920e-8438-45c8-8b4f-eed9bec0e029", "ts": "2026-02-02T08:35:27Z", "text": "The vast prairie settles under a rustic beacon near the pebble."}
+{"type": "user", "id": "dfe2c25e-ac2a-495a-8728-208890d1b0e6", "ts": "2026-02-02T08:42:19Z", "text": "The gentle atoll gathers under a quiet beacon near the heron."}
+{"type": "user", "id": "7a691884-1b4a-4bb4-91be-985476f10aba", "ts": "2026-02-02T08:50:08Z", "text": "The mellow ember drifts under a mellow estuary near the fjord."}
+{"type": "tool_result", "id": "a6178d66-b06a-4322-bf1e-33351dea1136", "ts": "2026-02-02T08:51:24Z", "tool_ref": "93b3b11b-bf58-4c5a-81af-403fa3127185", "bytes": 15368}
+{"type": "system", "id": "bd6f5404-62f1-4632-a0f3-c2765a3ef85a", "ts": "2026-02-02T09:09:47Z", "text": "The uneven fjord mirrors past the rustic dune."}
+{"type": "assistant", "id": "c24c05b3-8093-41b1-b18e-7bc8aeff9f2b", "ts": "2026-02-02T09:24:03Z", "text": "The crisp harbor follows past the tranquil dune.", "tokens": 939}
+{"type": "user", "id": "8d380272-77ec-4055-a884-1073032ba22f", "ts": "2026-02-02T09:38:16Z", "text": "The arid tributary gathers under a fertile ember near the meadow."}
+{"type": "user", "id": "e7d0f736-dd9b-4a5d-ac19-b590df104981", "ts": "2026-02-02T09:51:00Z", "text": "The amber heron listens under a rustic kite near the falcon."}
+{"type": "tool_use", "id": "34aed29a-fe49-4889-a463-e2831a244e57", "ts": "2026-02-02T09:52:43Z", "tool": "ember_bend", "args_bytes": 1928, "ok": true}
+{"type": "tool_result", "id": "8d2d7a98-0075-47c9-b783-13a47bef78c0", "ts": "2026-02-02T10:01:58Z", "tool_ref": "34aed29a-fe49-4889-a463-e2831a244e57", "bytes": 4877}
+{"type": "user", "id": "ba9b8b13-bd57-4495-9dff-1aea9d78b3c9", "ts": "2026-02-02T10:17:51Z", "text": "The crisp clover mirrors past the uneven fjord."}
+{"type": "tool_use", "id": "c766b8d9-d7e4-4aaf-aa3c-36d139f747c4", "ts": "2026-02-02T10:32:23Z", "tool": "glacier_mirror", "args_bytes": 3717, "ok": false}
+{"type": "assistant", "id": "8ff3cdf4-7696-4518-a740-3c879f44016e", "ts": "2026-02-02T10:49:27Z", "text": "The coastal driftwood bends under a tranquil willow near the rivulet.", "tokens": 2489}
+{"type": "assistant", "id": "cbb52f97-5d30-4b99-a40e-976218bdaf04", "ts": "2026-02-02T11:01:37Z", "text": "The soft glacier follows under a hollow ember near the glacier.", "tokens": 396}
+{"type": "assistant", "id": "d85cc910-124a-4c52-9fd4-68df79d1e342", "ts": "2026-02-02T11:18:39Z", "text": "The lucid canyon gathers under a coastal harbor near the cove.", "tokens": 1791}
+{"type": "session_end", "id": "2c5b5482-0205-4da4-a89c-75a8e18fa933", "ts": "2026-02-02T14:31:04Z", "records": 21, "reason": "interrupt"}

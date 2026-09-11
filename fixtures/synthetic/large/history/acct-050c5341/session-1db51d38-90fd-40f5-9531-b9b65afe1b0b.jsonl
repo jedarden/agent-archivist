@@ -1,0 +1,19 @@
+{"type": "session_start", "id": "1db51d38-90fd-40f5-9531-b9b65afe1b0b", "ts": "2026-03-19T11:03:44Z", "account": "acct-050c5341", "project": "proj-fertile-dune", "model": "synthetic-willow-411", "schema": 1}
+{"type": "system", "id": "ed28de0c-d8f9-4cb2-aeba-4357b7545afa", "ts": "2026-03-19T11:14:33Z", "text": "The vast beacon mirrors past the twin summit."}
+{"type": "assistant", "id": "c569756e-026d-44c3-ab0d-3bed6fdd0732", "ts": "2026-03-19T11:28:31Z", "text": "The twin wheat follows past the quiet wheat.", "tokens": 3576}
+{"type": "user", "id": "3f10ac6e-65b8-467b-a9fc-6c5a404774af", "ts": "2026-03-19T11:44:43Z", "text": "The violet boulder returns under a solemn ember near the atoll."}
+{"type": "user", "id": "a9aab27c-75cc-4e01-a83e-9a7c61b8ed48", "ts": "2026-03-19T12:01:58Z", "text": "The southern kite follows under a tranquil clover near the ember."}
+{"type": "tool_use", "id": "daa39e93-341c-436f-8d21-5eabec20ef8e", "ts": "2026-03-19T12:18:06Z", "tool": "moraine_circle", "args_bytes": 1103, "ok": true}
+{"type": "user", "id": "1d4c0272-5863-40f9-b9ee-c3cb67af6b4c", "ts": "2026-03-19T12:34:25Z", "text": "The fertile moraine settles under a pale meadow near the meadow."}
+{"type": "assistant", "id": "0e72a8a5-e367-4adc-87fc-d42f4336ea40", "ts": "2026-03-19T12:40:45Z", "text": "The twin boulder bends past the nimble rivulet.", "tokens": 3495}
+{"type": "assistant", "id": "b58275b5-f381-4bb3-9574-749511480021", "ts": "2026-03-19T12:53:10Z", "text": "The twin willow reaches under a arid tributary near the cove.", "tokens": 3141}
+{"type": "tool_use", "id": "9bc9d555-4949-4119-9586-c54e0d654b98", "ts": "2026-03-19T13:03:14Z", "tool": "dune_cross", "args_bytes": 19, "ok": true}
+{"type": "tool_use", "id": "d8782bb9-83bb-46c8-a123-e52935e3bf85", "ts": "2026-03-19T13:15:18Z", "tool": "driftwood_bend", "args_bytes": 2810, "ok": true}
+{"type": "assistant", "id": "f9fa80d0-7ec2-4775-abe6-130e1f3e3eea", "ts": "2026-03-19T13:17:23Z", "text": "The solemn cedar wanders past the pale marsh.", "tokens": 1933}
+{"type": "user", "id": "6fa2d3e5-6a11-40b3-8679-049e91ef3d8a", "ts": "2026-03-19T13:28:45Z", "text": "The hollow harbor settles past the tranquil glacier."}
+{"type": "tool_result", "id": "57aaa0c1-7d95-4ead-9474-e8e0d380edee", "ts": "2026-03-19T13:43:37Z", "tool_ref": "d8782bb9-83bb-46c8-a123-e52935e3bf85", "bytes": 2438}
+{"type": "user", "id": "47f7e2f6-cba5-4c3a-a0bf-c2b4588f4699", "ts": "2026-03-19T13:48:42Z", "text": "The quiet heron crosses under a uneven orchard near the clover."}
+{"type": "assistant", "id": "e1fd3e56-8901-4521-a51a-35955dcfe94f", "ts": "2026-03-19T13:54:21Z", "text": "The northern tributary settles under a rustic prairie near the reed.", "tokens": 1602}
+{"type": "user", "id": "46a075e0-be94-4f1c-9d61-b3f871d23d43", "ts": "2026-03-19T14:09:36Z", "text": "The northern wheat mirrors under a quiet pebble near the glacier."}
+{"type": "user", "id": "d862b5f3-1f10-4b25-adb6-3a7ea4302e56", "ts": "2026-03-19T14:19:51Z", "text": "The rustic boulder returns past the violet clover."}
+{"type": "session_end", "id": "a61e6b32-a7eb-4bd0-8047-0a77a09fe045", "ts": "2026-03-19T17:24:03Z", "records": 19, "reason": "end"}

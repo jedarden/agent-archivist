@@ -1,0 +1,10 @@
+{"type": "session_start", "id": "404725ee-e8d1-4132-bb57-cf6c695ca5f7", "ts": "2026-03-09T11:01:09Z", "account": "acct-cf25ff55", "project": "proj-soft-fjord", "model": "synthetic-kite-182", "schema": 1}
+{"type": "assistant", "id": "3df8f0cf-bbf5-4722-b3d4-23816d850cc0", "ts": "2026-03-09T11:13:50Z", "text": "The lucid driftwood settles under a southern kite near the canal.", "tokens": 3710}
+{"type": "user", "id": "681d97e1-d7e4-4584-a142-ef4710fbc0c3", "ts": "2026-03-09T11:14:44Z", "text": "The thicket listens beside the tributary, and the pebble reaches."}
+{"type": "assistant", "id": "e97668d3-d537-49d3-9261-de6f4771fd60", "ts": "2026-03-09T11:26:01Z", "text": "The crisp rivulet bends under a pale willow near the clover.", "tokens": 406}
+{"type": "assistant", "id": "dd5acc50-8146-48af-84bd-8307b0d6cb49", "ts": "2026-03-09T11:32:33Z", "text": "The estuary circles beside the atoll, and the canyon follows.", "tokens": 2397}
+{"type": "user", "id": "23e2ad67-ba32-44a7-b25b-f2a0a55049a2", "ts": "2026-03-09T11:40:46Z", "text": "The pale harbor mirrors past the amber cedar."}
+{"type": "tool_use", "id": "c1bcebca-792b-4f49-b498-2df29d745b01", "ts": "2026-03-09T11:57:55Z", "tool": "orchard_return", "args_bytes": 1190, "ok": true}
+{"type": "user", "id": "672e4bb4-f61c-4c51-b305-65b03dc60562", "ts": "2026-03-09T12:12:56Z", "text": "The thicket settles beside the cedar, and the canyon returns."}
+{"type": "user", "id": "04549a44-53ab-499a-a932-9545af0befe3", "ts": "2026-03-09T12:17:32Z", "text": "The hollow dune listens under a lucid summit near the glacier."}
+{"type": "session_end", "id": "261f4e63-f765-4098-896c-f7a58d360d09", "ts": "2026-03-09T14:21:19Z", "records": 10, "reason": "limit"}

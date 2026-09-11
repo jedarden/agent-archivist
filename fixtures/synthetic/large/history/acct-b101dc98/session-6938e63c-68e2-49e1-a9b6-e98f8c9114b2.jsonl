@@ -1,0 +1,23 @@
+{"type": "session_start", "id": "6938e63c-68e2-49e1-a9b6-e98f8c9114b2", "ts": "2026-04-25T01:09:02Z", "account": "acct-b101dc98", "project": "proj-violet-dune", "model": "synthetic-reed-664", "schema": 1}
+{"type": "user", "id": "9ff486ed-8102-4aec-aeca-183dd64bffda", "ts": "2026-04-25T01:14:15Z", "text": "The southern dune gathers past the violet glacier."}
+{"type": "assistant", "id": "405d0767-27cf-45b3-8e04-b74028fa3919", "ts": "2026-04-25T01:17:49Z", "text": "The fjord returns beside the glacier, and the lichen circles.", "tokens": 2104}
+{"type": "tool_use", "id": "2801a378-437d-436e-8a00-5c2db52d23d0", "ts": "2026-04-25T01:23:40Z", "tool": "canyon_listen", "args_bytes": 815, "ok": true}
+{"type": "assistant", "id": "c78442d7-a147-43c3-9aed-74b9398c6570", "ts": "2026-04-25T01:27:00Z", "text": "The marsh listens beside the driftwood, and the thicket listens.", "tokens": 2793}
+{"type": "user", "id": "48b52ac3-c7e0-4abc-a4db-93ebaa40e98e", "ts": "2026-04-25T01:42:39Z", "text": "The sturdy prairie settles past the twin lantern."}
+{"type": "tool_use", "id": "69c2cfd0-0950-4fa8-bf63-0fd198d5550f", "ts": "2026-04-25T01:59:33Z", "tool": "falcon_wander", "args_bytes": 551, "ok": true}
+{"type": "assistant", "id": "eb6d70c3-fea3-4e3f-b6d5-0c5382064b56", "ts": "2026-04-25T02:02:44Z", "text": "The vast beacon follows under a coastal tributary near the thicket.", "tokens": 2770}
+{"type": "tool_use", "id": "f9442fff-4d40-46f8-a39c-6014af987292", "ts": "2026-04-25T02:16:34Z", "tool": "meadow_circle", "args_bytes": 439, "ok": true}
+{"type": "user", "id": "39f2316a-aafe-402e-b131-e836759fb5f2", "ts": "2026-04-25T02:35:47Z", "text": "The coastal pebble listens past the twin quarry."}
+{"type": "user", "id": "31036ffc-151e-48f7-98a5-82476a4e35a5", "ts": "2026-04-25T02:40:18Z", "text": "The southern fjord mirrors under a solemn atoll near the meadow."}
+{"type": "tool_result", "id": "6084792d-759b-4b40-ad40-f8056a5e90e3", "ts": "2026-04-25T02:46:26Z", "tool_ref": "f9442fff-4d40-46f8-a39c-6014af987292", "bytes": 8126}
+{"type": "user", "id": "7a21054a-7e5a-4fa4-8504-27234a752a06", "ts": "2026-04-25T03:01:04Z", "text": "The pebble returns beside the moraine, and the cove returns."}
+{"type": "assistant", "id": "57a3e9c4-5d82-401e-a140-5661481699f9", "ts": "2026-04-25T03:12:19Z", "text": "The gentle heron bends under a crisp dune near the canyon.", "tokens": 3356}
+{"type": "assistant", "id": "8bb54dd4-088b-41fe-a5f5-96106457cfee", "ts": "2026-04-25T03:14:47Z", "text": "The arid harbor listens under a tranquil heron near the canal.", "tokens": 1245}
+{"type": "assistant", "id": "8bcd825a-7d0e-443f-8f42-a684565919fe", "ts": "2026-04-25T03:29:48Z", "text": "The cove bends beside the beacon, and the pebble follows.", "tokens": 2108}
+{"type": "assistant", "id": "e32961c4-1fb3-41d7-98d1-56efc0d4d516", "ts": "2026-04-25T03:30:02Z", "text": "The pale harbor circles past the lucid pebble.", "tokens": 1832}
+{"type": "assistant", "id": "a09736c2-2d60-4903-99e5-434da52b09a5", "ts": "2026-04-25T03:43:02Z", "text": "The vast lichen bends under a amber atoll near the rivulet.", "tokens": 1508}
+{"type": "user", "id": "bae47d51-5576-4710-b7be-6364cad91928", "ts": "2026-04-25T03:57:05Z", "text": "The fertile dune reaches under a rapid fjord near the summit."}
+{"type": "tool_use", "id": "22094b04-484c-4b43-aead-cb8741fb5172", "ts": "2026-04-25T03:59:19Z", "tool": "dune_reach", "args_bytes": 2292, "ok": true}
+{"type": "assistant", "id": "48a0fa4b-a912-4a8b-b339-22cae3147aff", "ts": "2026-04-25T04:14:35Z", "text": "The driftwood follows beside the lantern, and the warbler drifts.", "tokens": 1122}
+{"type": "assistant", "id": "39cada4a-bb01-4925-a9a6-a1391a219126", "ts": "2026-04-25T04:25:51Z", "text": "The tranquil heron bends past the vast cove.", "tokens": 2357}
+{"type": "session_end", "id": "093c42a9-ecb2-4503-aa27-22511587b59a", "ts": "2026-04-25T08:49:25Z", "records": 23, "reason": "end"}

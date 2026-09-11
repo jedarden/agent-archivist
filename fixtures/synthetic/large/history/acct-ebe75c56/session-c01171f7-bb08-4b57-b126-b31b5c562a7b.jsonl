@@ -1,0 +1,20 @@
+{"type": "session_start", "id": "c01171f7-bb08-4b57-b126-b31b5c562a7b", "ts": "2026-02-05T02:23:51Z", "account": "acct-ebe75c56", "project": "proj-vast-wheat", "model": "synthetic-warbler-374", "schema": 1}
+{"type": "user", "id": "18b814d3-a9fd-478b-af0f-5ef9e336d884", "ts": "2026-02-05T02:31:27Z", "text": "The rapid tributary drifts past the soft lantern."}
+{"type": "assistant", "id": "649ee5db-bdc3-48a5-a3f2-a31200b12a3d", "ts": "2026-02-05T02:47:26Z", "text": "The orchard mirrors beside the falcon, and the glacier returns.", "tokens": 1059}
+{"type": "user", "id": "2c9d5005-60ef-45bc-b4e4-13bfd20010f2", "ts": "2026-02-05T03:02:32Z", "text": "The nimble ember settles past the rapid prairie."}
+{"type": "assistant", "id": "4620bcca-a629-4022-9c4b-8ae531ad0c81", "ts": "2026-02-05T03:07:54Z", "text": "The estuary returns beside the cove, and the reed crosses.", "tokens": 2749}
+{"type": "tool_use", "id": "ba7ce55d-2792-40c9-9df3-d25d662aabbb", "ts": "2026-02-05T03:12:55Z", "tool": "pebble_circle", "args_bytes": 2180, "ok": true}
+{"type": "user", "id": "1d47aac7-bd64-4622-b8ab-aedb4dcaa4e1", "ts": "2026-02-05T03:13:43Z", "text": "The cove gathers beside the clover, and the fjord circles."}
+{"type": "user", "id": "d30a9149-4a4d-4483-ad92-cc7e7f3554bb", "ts": "2026-02-05T03:17:33Z", "text": "The tributary listens beside the falcon, and the clover reaches."}
+{"type": "user", "id": "f27cc291-41bc-427b-ae38-9f83dea60b5f", "ts": "2026-02-05T03:24:16Z", "text": "The crisp savanna reaches under a hollow lichen near the fjord."}
+{"type": "user", "id": "2e8787b4-6ed6-4e79-a3f7-afcc913fd56b", "ts": "2026-02-05T03:37:14Z", "text": "The violet fjord mirrors past the violet willow."}
+{"type": "assistant", "id": "b70641eb-1eb7-47ce-9f7a-3c3c610e1cc7", "ts": "2026-02-05T03:54:50Z", "text": "The nimble fjord circles under a fertile warbler near the prairie.", "tokens": 498}
+{"type": "tool_use", "id": "c150c473-10c4-4eda-a8be-c0afdfdb4cad", "ts": "2026-02-05T04:07:20Z", "tool": "lantern_circle", "args_bytes": 2834, "ok": true}
+{"type": "user", "id": "e40be233-7d0f-4c1b-96af-4dd0a0b40255", "ts": "2026-02-05T04:21:52Z", "text": "The lichen follows beside the ember, and the fjord mirrors."}
+{"type": "assistant", "id": "e72d6ee7-77d1-47cd-ac5f-337c6287909e", "ts": "2026-02-05T04:35:07Z", "text": "The nimble thicket returns under a vast heron near the willow.", "tokens": 3966}
+{"type": "user", "id": "3faafbb9-d981-4847-ba42-e0e356736b73", "ts": "2026-02-05T04:39:34Z", "text": "The moraine wanders beside the prairie, and the tributary crosses."}
+{"type": "tool_use", "id": "5a252c99-dd71-40a2-86c8-b48aa6e551c9", "ts": "2026-02-05T04:42:12Z", "tool": "thicket_gather", "args_bytes": 964, "ok": true}
+{"type": "assistant", "id": "30c5d799-4388-43db-ae34-efc7f5673514", "ts": "2026-02-05T04:44:02Z", "text": "The boulder listens beside the harbor, and the estuary listens.", "tokens": 1923}
+{"type": "tool_use", "id": "bc163479-2d05-4b13-8c3c-f7332387dc30", "ts": "2026-02-05T05:01:56Z", "tool": "heron_bend", "args_bytes": 894, "ok": true}
+{"type": "assistant", "id": "4d5fe975-ab89-445c-acf8-e5d459f0dfaf", "ts": "2026-02-05T05:18:36Z", "text": "The tranquil harbor circles under a solemn cove near the reed.", "tokens": 2571}
+{"type": "session_end", "id": "de49045f-3c82-40cb-8d78-1418211529cf", "ts": "2026-02-05T09:04:11Z", "records": 20, "reason": "limit"}

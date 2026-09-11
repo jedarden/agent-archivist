@@ -1,0 +1,14 @@
+{"type": "session_start", "id": "3e46a37a-db4c-4182-a809-c09ce04e8875", "ts": "2026-02-22T10:27:46Z", "account": "acct-0ff54fd7", "project": "proj-sturdy-dune", "model": "synthetic-meadow-380", "schema": 1}
+{"type": "user", "id": "a27937dc-f953-45a6-ae2d-43b57b494634", "ts": "2026-02-22T10:29:33Z", "text": "The thicket settles beside the clover, and the canyon circles."}
+{"type": "user", "id": "7242f7fb-b1db-4e35-afb3-9ff17be08b38", "ts": "2026-02-22T10:44:39Z", "text": "The soft summit settles under a fertile prairie near the marsh."}
+{"type": "tool_use", "id": "bfe7bfff-b5e6-44b2-9e38-478c7817eb9a", "ts": "2026-02-22T10:48:33Z", "tool": "orchard_circle", "args_bytes": 3362, "ok": true}
+{"type": "user", "id": "4990c314-6eb2-4d97-8655-5e602987dd20", "ts": "2026-02-22T10:59:57Z", "text": "The solemn thicket settles under a crisp kite near the boulder."}
+{"type": "tool_use", "id": "f94bcaf9-c95d-4a1b-9ca2-66ebbfbbf901", "ts": "2026-02-22T11:00:10Z", "tool": "orchard_circle", "args_bytes": 2194, "ok": false}
+{"type": "tool_use", "id": "3abc6842-f36e-4fc4-a157-3f2ae096a041", "ts": "2026-02-22T11:03:42Z", "tool": "thicket_return", "args_bytes": 1872, "ok": true}
+{"type": "assistant", "id": "131cf9f8-db93-4c25-9980-f4bcdd2284f5", "ts": "2026-02-22T11:03:45Z", "text": "The uneven prairie listens past the tranquil estuary.", "tokens": 3193}
+{"type": "user", "id": "7b30b1f3-8241-4bfe-b165-ed7d5e29e7bd", "ts": "2026-02-22T11:06:02Z", "text": "The amber willow gathers under a twin harbor near the wheat."}
+{"type": "tool_use", "id": "c728932f-4a5e-4ce6-a350-a1e39552e45b", "ts": "2026-02-22T11:14:50Z", "tool": "quarry_reach", "args_bytes": 2341, "ok": true}
+{"type": "user", "id": "c43a3844-34e9-43f1-a9e8-d6d3ab20a279", "ts": "2026-02-22T11:34:26Z", "text": "The amber canal follows under a southern beacon near the marsh."}
+{"type": "tool_use", "id": "7a7e8b88-8aad-4967-81be-40f17efee671", "ts": "2026-02-22T11:49:54Z", "tool": "dune_cross", "args_bytes": 1398, "ok": true}
+{"type": "user", "id": "b04199f1-1d47-42c6-9ee8-b205c21317f7", "ts": "2026-02-22T11:56:53Z", "text": "The meadow settles beside the ember, and the prairie mirrors."}
+{"type": "session_end", "id": "45f604a6-03ed-47b7-a094-51ddadb2e4bc", "ts": "2026-02-22T15:08:00Z", "records": 14, "reason": "limit"}

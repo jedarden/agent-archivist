@@ -1,0 +1,12 @@
+{"type": "session_start", "id": "f41546ec-7f56-4c48-aaf5-1c75b85b4155", "ts": "2026-04-30T21:46:57Z", "account": "acct-050c5341", "project": "proj-uneven-harbor", "model": "synthetic-quarry-340", "schema": 1}
+{"type": "assistant", "id": "978dc6e0-e4b3-4ff8-926a-0a2aadf0200d", "ts": "2026-04-30T21:49:04Z", "text": "The boulder settles beside the ember, and the atoll settles.", "tokens": 1395}
+{"type": "assistant", "id": "a11e7d7d-476c-4fc3-b3c1-b489bf23d56b", "ts": "2026-04-30T21:50:24Z", "text": "The rustic boulder settles past the gentle clover.", "tokens": 3027}
+{"type": "user", "id": "ce0521fd-5539-4235-8094-9644ecc8fb2b", "ts": "2026-04-30T22:02:01Z", "text": "The dune returns beside the willow, and the meadow wanders."}
+{"type": "user", "id": "278c025b-0600-42c9-97e5-7b9ed003fc48", "ts": "2026-04-30T22:05:02Z", "text": "The pebble wanders beside the estuary, and the harbor drifts."}
+{"type": "assistant", "id": "5eccf0de-a045-4af5-ada5-d4989e0c2293", "ts": "2026-04-30T22:15:51Z", "text": "The quiet orchard bends under a quiet beacon near the fjord.", "tokens": 730}
+{"type": "tool_use", "id": "b075e75a-d17f-4e4e-8308-2b27c29a69b6", "ts": "2026-04-30T22:20:25Z", "tool": "orchard_follow", "args_bytes": 406, "ok": true}
+{"type": "user", "id": "14a072e9-7f5b-411f-b57c-36aaa73ddf65", "ts": "2026-04-30T22:33:27Z", "text": "The fertile fjord returns past the coastal savanna."}
+{"type": "assistant", "id": "ae0d5d19-b848-43e7-8eb8-413739260e66", "ts": "2026-04-30T22:49:18Z", "text": "The twin harbor settles past the nimble savanna.", "tokens": 3277}
+{"type": "assistant", "id": "a27eb547-ffe3-4a48-8173-fe38a137bf8c", "ts": "2026-04-30T23:04:27Z", "text": "The dune bends beside the willow, and the harbor mirrors.", "tokens": 162}
+{"type": "tool_use", "id": "80aa9b2f-5bf2-4dac-8511-735d127bc085", "ts": "2026-04-30T23:18:19Z", "tool": "marsh_return", "args_bytes": 374, "ok": true}
+{"type": "session_end", "id": "b67484c9-e5ab-453a-94ca-b5472cc96f23", "ts": "2026-05-01T01:47:09Z", "records": 12, "reason": "limit"}

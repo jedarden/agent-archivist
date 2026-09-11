@@ -1,0 +1,16 @@
+{"type": "session_start", "id": "57c7b4ac-af30-418e-8b0d-5b478cf8ed23", "ts": "2026-01-07T06:13:20Z", "account": "acct-ebe75c56", "project": "proj-fertile-thicket", "model": "synthetic-marsh-869", "schema": 1}
+{"type": "assistant", "id": "3aa12117-4a2d-4b56-85cf-71e3ba5a3327", "ts": "2026-01-07T06:31:55Z", "text": "The hazy canal circles past the crisp prairie.", "tokens": 512}
+{"type": "user", "id": "013006cf-5a5b-41b7-989f-951d6487997f", "ts": "2026-01-07T06:35:06Z", "text": "The quarry gathers beside the pebble, and the harbor gathers."}
+{"type": "user", "id": "6ea0bffa-b0c6-4700-a49d-03e0fce454f4", "ts": "2026-01-07T06:50:24Z", "text": "The harbor gathers beside the canyon, and the pebble returns."}
+{"type": "system", "id": "12bcad43-afdb-48c3-846c-c770072d5953", "ts": "2026-01-07T07:03:05Z", "text": "The orchard follows beside the glacier, and the savanna drifts."}
+{"type": "user", "id": "41578881-7279-42d5-b8e2-078a4184f0a5", "ts": "2026-01-07T07:14:09Z", "text": "The summit reaches beside the rivulet, and the driftwood mirrors."}
+{"type": "assistant", "id": "7a7911e0-44ca-4b7c-97bc-d5b65b09334b", "ts": "2026-01-07T07:25:06Z", "text": "The atoll returns beside the prairie, and the cedar drifts.", "tokens": 1889}
+{"type": "user", "id": "eac3a1ed-884c-4233-8a69-695a43112e27", "ts": "2026-01-07T07:37:42Z", "text": "The slender moraine listens past the violet ember."}
+{"type": "user", "id": "f74b7596-8d2d-482d-bba9-a3c877f035ee", "ts": "2026-01-07T07:47:10Z", "text": "The lucid beacon settles under a fertile marsh near the warbler."}
+{"type": "assistant", "id": "5047ae9c-d8fe-4903-b129-77a8783d0fdd", "ts": "2026-01-07T07:59:01Z", "text": "The twin meadow reaches past the northern orchard.", "tokens": 2270}
+{"type": "assistant", "id": "11bf20ed-54d8-4cba-89b7-30568081a008", "ts": "2026-01-07T08:00:37Z", "text": "The hazy clover returns under a nimble marsh near the cove.", "tokens": 2652}
+{"type": "user", "id": "c8cf8412-bf91-47a4-b641-e01abe245ee3", "ts": "2026-01-07T08:13:32Z", "text": "The falcon crosses beside the clover, and the wheat settles."}
+{"type": "user", "id": "bb85ff33-6ad4-46a7-aa5f-f4b292da03ba", "ts": "2026-01-07T08:14:32Z", "text": "The mellow cedar follows past the rapid dune."}
+{"type": "tool_use", "id": "0cad57f0-8c93-444b-88d8-0c38da705249", "ts": "2026-01-07T08:26:04Z", "tool": "quarry_drift", "args_bytes": 2431, "ok": true}
+{"type": "user", "id": "92d3e696-3bf5-48f4-a3a1-2c83aedbc261", "ts": "2026-01-07T08:41:54Z", "text": "The sturdy reed follows past the gentle driftwood."}
+{"type": "session_end", "id": "f3c71e48-a1f2-482c-b24e-533faae939e1", "ts": "2026-01-07T11:33:36Z", "records": 16, "reason": "interrupt"}

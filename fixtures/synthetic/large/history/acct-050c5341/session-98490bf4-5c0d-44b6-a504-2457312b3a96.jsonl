@@ -1,0 +1,17 @@
+{"type": "session_start", "id": "98490bf4-5c0d-44b6-a504-2457312b3a96", "ts": "2026-02-21T15:32:31Z", "account": "acct-050c5341", "project": "proj-pale-prairie", "model": "synthetic-meadow-158", "schema": 1}
+{"type": "assistant", "id": "b4642fc5-b052-47ee-8d3a-4412d3ea1376", "ts": "2026-02-21T15:33:28Z", "text": "The fertile beacon returns under a sturdy willow near the prairie.", "tokens": 2505}
+{"type": "assistant", "id": "43b6e669-de42-484e-83ca-a72e5d3abc51", "ts": "2026-02-21T15:40:15Z", "text": "The amber driftwood gathers past the gentle lichen.", "tokens": 1686}
+{"type": "assistant", "id": "65a07dae-b400-40a7-8b42-ff0148856504", "ts": "2026-02-21T15:45:54Z", "text": "The sturdy boulder mirrors under a twin lantern near the pebble.", "tokens": 2508}
+{"type": "user", "id": "be34f412-e68e-44aa-9289-84543a218602", "ts": "2026-02-21T16:05:05Z", "text": "The pale reed settles past the uneven beacon."}
+{"type": "user", "id": "894a3636-5836-4400-a3da-f734800d2c09", "ts": "2026-02-21T16:09:13Z", "text": "The beacon mirrors beside the heron, and the reed settles."}
+{"type": "user", "id": "59144546-f447-42e4-9092-9b25bbc2f7c3", "ts": "2026-02-21T16:12:52Z", "text": "The cove returns beside the estuary, and the fjord follows."}
+{"type": "system", "id": "37f66461-68a9-4788-90da-634c5eb94c55", "ts": "2026-02-21T16:24:08Z", "text": "The soft beacon reaches under a amber thicket near the pebble."}
+{"type": "assistant", "id": "0987a3c3-2737-49f7-b8e5-d0a3efe7b4a6", "ts": "2026-02-21T16:35:48Z", "text": "The twin moraine mirrors under a soft savanna near the cedar.", "tokens": 2941}
+{"type": "assistant", "id": "b7cda914-861d-4a91-9bfc-a656e47b74e4", "ts": "2026-02-21T16:52:08Z", "text": "The vast dune gathers past the hazy canyon.", "tokens": 2913}
+{"type": "user", "id": "9ab2fa97-7a6e-4fbd-8d91-6cb9615d7421", "ts": "2026-02-21T17:03:22Z", "text": "The sturdy heron returns under a twin falcon near the canal."}
+{"type": "user", "id": "ccd18407-3cdf-47e6-a967-790268ba930d", "ts": "2026-02-21T17:14:10Z", "text": "The wheat drifts beside the tributary, and the cove gathers."}
+{"type": "user", "id": "d401e3d2-3cb9-4d01-bef2-2678d77dfd30", "ts": "2026-02-21T17:15:32Z", "text": "The harbor mirrors beside the marsh, and the cedar mirrors."}
+{"type": "user", "id": "d6e827a7-7e24-45ef-bdda-38f934e7bcb5", "ts": "2026-02-21T17:19:21Z", "text": "The falcon reaches beside the meadow, and the summit mirrors."}
+{"type": "system", "id": "8bc47ff3-715f-4a25-980e-21c6eb0971de", "ts": "2026-02-21T17:31:08Z", "text": "The nimble tributary circles under a hollow beacon near the rivulet."}
+{"type": "user", "id": "9be9d9a3-1209-4d5c-91a7-c07096debc69", "ts": "2026-02-21T17:50:27Z", "text": "The rapid wheat wanders under a mellow cove near the willow."}
+{"type": "session_end", "id": "2e654c11-6d7c-4821-bc6a-f340894e86f5", "ts": "2026-02-21T21:12:48Z", "records": 17, "reason": "end"}

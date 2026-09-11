@@ -1,0 +1,7 @@
+{"type": "session_start", "id": "0138d6ec-3ded-421e-9d90-c27def990d7e", "ts": "2026-04-21T08:46:55Z", "account": "acct-0403ee38", "project": "proj-northern-prairie", "model": "synthetic-glacier-176", "schema": 1}
+{"type": "user", "id": "6cd75906-0511-47a2-8aec-8d96ca463608", "ts": "2026-04-21T08:49:29Z", "text": "The rustic beacon drifts under a northern wheat near the glacier."}
+{"type": "user", "id": "5b2a5f37-912f-4c62-90e0-88493a32dcbe", "ts": "2026-04-21T08:53:22Z", "text": "The pebble circles beside the thicket, and the marsh follows."}
+{"type": "system", "id": "bed342cc-78bf-440a-8ef7-910f03f973b9", "ts": "2026-04-21T09:00:32Z", "text": "The reed settles beside the driftwood, and the prairie circles."}
+{"type": "system", "id": "b0269ddc-d965-4310-9351-925abea18a90", "ts": "2026-04-21T09:15:08Z", "text": "The fertile pebble drifts past the lucid orchard."}
+{"type": "user", "id": "2428d567-e6e6-495f-b733-81ecdd7fb0da", "ts": "2026-04-21T09:18:29Z", "text": "The pale pebble reaches under a amber prairie near the prairie."}
+{"type": "session_end", "id": "87ca9e77-8c8b-4eaa-bf62-038a51ffa6b3", "ts": "2026-04-21T10:32:02Z", "records": 7, "reason": "end"}

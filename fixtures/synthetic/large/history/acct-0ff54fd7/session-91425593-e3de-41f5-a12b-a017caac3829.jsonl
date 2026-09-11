@@ -1,0 +1,22 @@
+{"type": "session_start", "id": "91425593-e3de-41f5-a12b-a017caac3829", "ts": "2026-03-26T11:29:18Z", "account": "acct-0ff54fd7", "project": "proj-slender-heron", "model": "synthetic-wheat-733", "schema": 1}
+{"type": "user", "id": "798c8fbf-fd6d-4bb6-8b25-f7af6bdcdce8", "ts": "2026-03-26T11:46:25Z", "text": "The orchard wanders beside the ember, and the canal reaches."}
+{"type": "tool_use", "id": "d99ae3d6-60b6-4689-b07c-ca4c2611b33c", "ts": "2026-03-26T12:04:45Z", "tool": "summit_mirror", "args_bytes": 1035, "ok": true}
+{"type": "assistant", "id": "7d2d787a-b863-4c26-9b62-26bc7aef83b4", "ts": "2026-03-26T12:20:01Z", "text": "The uneven wheat crosses past the sturdy cove.", "tokens": 3606}
+{"type": "user", "id": "bdca8f30-91f3-447e-90b0-d23b7afc693e", "ts": "2026-03-26T12:36:54Z", "text": "The atoll crosses beside the beacon, and the estuary circles."}
+{"type": "assistant", "id": "a05d8201-b09b-4011-ab8e-914a768eb229", "ts": "2026-03-26T12:55:05Z", "text": "The pebble reaches beside the estuary, and the clover follows.", "tokens": 3562}
+{"type": "user", "id": "55a16eed-a966-4250-a2bf-ddbc7e89dd5b", "ts": "2026-03-26T13:11:00Z", "text": "The lucid ember crosses past the southern prairie."}
+{"type": "user", "id": "82d3c387-f70c-4302-8648-d1dba6038292", "ts": "2026-03-26T13:27:01Z", "text": "The soft atoll follows under a gentle estuary near the warbler."}
+{"type": "user", "id": "97a6bc2d-4ae6-436d-aee1-c36802ee5afa", "ts": "2026-03-26T13:36:38Z", "text": "The lucid estuary crosses under a rustic estuary near the reed."}
+{"type": "assistant", "id": "555bcd4b-42e7-4d4c-a116-675c21af5456", "ts": "2026-03-26T13:53:28Z", "text": "The rapid cedar mirrors past the rapid rivulet.", "tokens": 1254}
+{"type": "assistant", "id": "d13121ad-ec86-4ca4-9bdf-2dee699b0f83", "ts": "2026-03-26T14:08:22Z", "text": "The estuary drifts beside the harbor, and the thicket bends.", "tokens": 2287}
+{"type": "assistant", "id": "66ae943e-29e9-44a6-9379-f26c0f9e403c", "ts": "2026-03-26T14:22:06Z", "text": "The rustic reed follows under a coastal tributary near the falcon.", "tokens": 2166}
+{"type": "assistant", "id": "ba8b6351-26a3-4050-ab7e-c9c9015138bf", "ts": "2026-03-26T14:42:05Z", "text": "The lucid lichen crosses past the sturdy atoll.", "tokens": 2257}
+{"type": "assistant", "id": "46710d65-54ab-463b-bd02-f81914f63528", "ts": "2026-03-26T14:49:46Z", "text": "The pale wheat mirrors past the twin driftwood.", "tokens": 892}
+{"type": "tool_use", "id": "3ef11640-0f8d-40d3-85ae-1d9495a45775", "ts": "2026-03-26T15:02:49Z", "tool": "tributary_listen", "args_bytes": 2000, "ok": true}
+{"type": "assistant", "id": "25a0b675-9c26-4044-a4e3-cb5f22e3a04c", "ts": "2026-03-26T15:06:33Z", "text": "The northern atoll settles past the quiet canyon.", "tokens": 1903}
+{"type": "user", "id": "d6b7ff4e-dc34-4fe7-94b2-bbf90db23ebc", "ts": "2026-03-26T15:10:20Z", "text": "The rapid lichen listens past the rustic harbor."}
+{"type": "tool_use", "id": "46fc6a9e-9d8b-4ccc-be7d-89c254380535", "ts": "2026-03-26T15:28:38Z", "tool": "canal_gather", "args_bytes": 2065, "ok": true}
+{"type": "assistant", "id": "54b4d8f5-0eb9-4adc-80ae-a409f4257f9a", "ts": "2026-03-26T15:40:15Z", "text": "The harbor listens beside the canal, and the falcon bends.", "tokens": 2653}
+{"type": "tool_use", "id": "20ae7118-5dc6-421a-aa80-f8db93e1b98b", "ts": "2026-03-26T15:52:02Z", "tool": "ember_mirror", "args_bytes": 3264, "ok": true}
+{"type": "assistant", "id": "d3d4b4f7-f868-40fa-bf72-2f3c5b26760d", "ts": "2026-03-26T16:10:50Z", "text": "The lichen bends beside the pebble, and the marsh returns.", "tokens": 1623}
+{"type": "session_end", "id": "4263432c-f44f-4060-9245-dfa88b6673c3", "ts": "2026-03-26T18:49:40Z", "records": 22, "reason": "end"}

@@ -1,0 +1,14 @@
+{"type": "session_start", "id": "428685d5-f27a-4b68-b919-b46084bdf890", "ts": "2026-04-25T09:02:34Z", "account": "acct-1440ba87", "project": "proj-rustic-marsh", "model": "synthetic-meadow-347", "schema": 1}
+{"type": "user", "id": "cbbfb7da-d987-4362-8bfc-446f1ba23eb6", "ts": "2026-04-25T09:11:23Z", "text": "The rivulet returns beside the atoll, and the willow drifts."}
+{"type": "user", "id": "0f459404-61e3-4704-87c5-a99bc14125cb", "ts": "2026-04-25T09:20:12Z", "text": "The crisp kite reaches under a quiet meadow near the tributary."}
+{"type": "user", "id": "afaf54ee-5daf-4122-886a-cf396a9d0ce8", "ts": "2026-04-25T09:22:23Z", "text": "The orchard wanders beside the boulder, and the estuary mirrors."}
+{"type": "user", "id": "f63ac602-0020-4064-a5a2-be8adb1310e6", "ts": "2026-04-25T09:30:54Z", "text": "The tributary follows beside the kite, and the harbor crosses."}
+{"type": "compaction", "id": "6948a92a-194d-4de0-9ae5-eac5b428409a", "ts": "2026-04-27T09:02:34Z", "prior_records": 5}
+{"type": "system", "id": "13d0edcc-b315-468b-beca-a42e25b6744b", "ts": "2026-04-27T09:02:57Z", "text": "The rustic canyon settles under a sturdy heron near the willow."}
+{"type": "assistant", "id": "8cac55c7-ce38-47e8-b14f-f9a29b9dfe54", "ts": "2026-04-27T09:10:36Z", "text": "The beacon settles beside the boulder, and the lichen returns.", "tokens": 319}
+{"type": "user", "id": "c5d6bad0-b21a-44fe-bb7e-5b02144388b9", "ts": "2026-04-27T09:19:17Z", "text": "The pale summit crosses under a hazy ember near the clover."}
+{"type": "assistant", "id": "99b129ef-5c85-4aa5-ba60-976e44131ed6", "ts": "2026-04-27T09:25:53Z", "text": "The slender canyon bends past the sturdy wheat.", "tokens": 2421}
+{"type": "user", "id": "17be865a-5b57-4f6b-b686-fe9549362339", "ts": "2026-04-27T09:26:02Z", "text": "The beacon reaches beside the beacon, and the warbler bends."}
+{"type": "user", "id": "07e0fb01-44ae-4612-80b0-78caa393c196", "ts": "2026-04-27T09:34:42Z", "text": "The tranquil warbler mirrors past the solemn savanna."}
+{"type": "assistant", "id": "515661ba-39c1-4446-9db2-b1b193c5bb4d", "ts": "2026-04-27T09:41:16Z", "text": "The vast heron bends under a pale wheat near the harbor.", "tokens": 1438}
+{"type": "session_end", "id": "3951a7a6-5cf2-4ead-88c2-16e3107cc31d", "ts": "2026-04-27T11:02:34Z", "records": 13, "reason": "end"}

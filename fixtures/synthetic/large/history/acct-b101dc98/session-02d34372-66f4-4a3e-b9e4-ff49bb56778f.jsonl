@@ -1,0 +1,21 @@
+{"type": "session_start", "id": "02d34372-66f4-4a3e-b9e4-ff49bb56778f", "ts": "2026-01-05T16:41:29Z", "account": "acct-b101dc98", "project": "proj-solemn-dune", "model": "synthetic-fjord-965", "schema": 1}
+{"type": "system", "id": "2886e894-d239-41c5-8068-25c95fef8a9d", "ts": "2026-01-05T16:54:01Z", "text": "The coastal prairie crosses under a twin orchard near the atoll."}
+{"type": "user", "id": "079ff9f0-a51f-4508-af0c-050b4319af71", "ts": "2026-01-05T17:00:32Z", "text": "The hollow ember drifts past the northern pebble."}
+{"type": "assistant", "id": "3f7594f6-9012-4717-9104-473237e33ab8", "ts": "2026-01-05T17:11:59Z", "text": "The northern summit wanders under a northern lantern near the estuary.", "tokens": 1996}
+{"type": "assistant", "id": "112fe920-23a5-4519-979a-f0db6ec0c72f", "ts": "2026-01-05T17:16:05Z", "text": "The mellow boulder drifts past the amber willow.", "tokens": 794}
+{"type": "user", "id": "9d769e87-0f64-4d29-be1c-59fdadb312a4", "ts": "2026-01-05T17:27:25Z", "text": "The cove bends beside the moraine, and the driftwood listens."}
+{"type": "system", "id": "f5d898b0-f422-49c6-bcf5-654d2ca84ed9", "ts": "2026-01-05T17:46:49Z", "text": "The cove gathers beside the lichen, and the canyon returns."}
+{"type": "user", "id": "e7312da4-cb11-4e7e-8cac-a6e52c80d4e7", "ts": "2026-01-05T17:49:43Z", "text": "The vast clover reaches past the hazy pebble."}
+{"type": "system", "id": "14958c70-759a-450f-ae31-cda8ca7c40d8", "ts": "2026-01-05T18:03:17Z", "text": "The nimble canyon gathers under a gentle pebble near the clover."}
+{"type": "tool_use", "id": "fd15b863-590e-4e79-9b36-edadadee698e", "ts": "2026-01-05T18:11:01Z", "tool": "fjord_drift", "args_bytes": 1168, "ok": true}
+{"type": "assistant", "id": "5108c2f2-0eda-4433-9870-20e20e12e749", "ts": "2026-01-05T18:16:21Z", "text": "The rivulet drifts beside the harbor, and the warbler reaches.", "tokens": 2469}
+{"type": "assistant", "id": "214c142c-7e00-474f-b68a-de84536978a7", "ts": "2026-01-05T18:18:43Z", "text": "The fjord crosses beside the meadow, and the boulder bends.", "tokens": 3279}
+{"type": "assistant", "id": "1610bf52-662c-4b94-a5e6-ed41f7d581b5", "ts": "2026-01-05T18:32:54Z", "text": "The vast atoll listens under a lucid summit near the marsh.", "tokens": 2717}
+{"type": "tool_result", "id": "e4a2dec5-8f32-49e1-b677-0c80e3fef44d", "ts": "2026-01-05T18:35:33Z", "tool_ref": "fd15b863-590e-4e79-9b36-edadadee698e", "bytes": 11551}
+{"type": "tool_use", "id": "182700e0-ad6c-4abe-9c0e-7a0312c6128c", "ts": "2026-01-05T18:38:07Z", "tool": "pebble_return", "args_bytes": 921, "ok": true}
+{"type": "tool_use", "id": "8ccf1c56-6ece-4628-a1df-9d338ac8d9d8", "ts": "2026-01-05T18:50:30Z", "tool": "estuary_reach", "args_bytes": 3598, "ok": true}
+{"type": "assistant", "id": "bacf19f1-07fb-4f86-bc37-c0cee8e4a4e6", "ts": "2026-01-05T19:06:10Z", "text": "The quiet canyon bends under a uneven thicket near the estuary.", "tokens": 3445}
+{"type": "user", "id": "867387aa-311c-46fd-bc15-0a0cde92e546", "ts": "2026-01-05T19:22:12Z", "text": "The prairie wanders beside the reed, and the canyon reaches."}
+{"type": "tool_result", "id": "8c6f78da-bd3d-429f-852a-c81dcfe72bf4", "ts": "2026-01-05T19:26:17Z", "tool_ref": "8ccf1c56-6ece-4628-a1df-9d338ac8d9d8", "bytes": 9430}
+{"type": "assistant", "id": "34157748-4501-432e-b227-9161825ab0a4", "ts": "2026-01-05T19:44:25Z", "text": "The slender ember returns past the quiet heron.", "tokens": 691}
+{"type": "session_end", "id": "beefe1cd-b334-43a9-a61e-c1bd6a7db3c1", "ts": "2026-01-05T23:41:50Z", "records": 21, "reason": "limit"}

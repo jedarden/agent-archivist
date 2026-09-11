@@ -1,0 +1,9 @@
+{"type": "session_start", "id": "2bd4027f-0686-4d9d-9700-cb5edc5c3a7d", "ts": "2026-04-19T23:19:29Z", "account": "acct-050c5341", "project": "proj-soft-savanna", "model": "synthetic-quarry-461", "schema": 1}
+{"type": "user", "id": "886d981f-a615-43ea-b4b4-292d490c1085", "ts": "2026-04-19T23:36:43Z", "text": "The rustic rivulet gathers past the rapid beacon."}
+{"type": "tool_use", "id": "dbde619c-589c-466b-997c-68b4c4a66f6f", "ts": "2026-04-19T23:45:16Z", "tool": "estuary_bend", "args_bytes": 943, "ok": true}
+{"type": "user", "id": "edc17841-9d56-4589-b824-1cb932c91292", "ts": "2026-04-20T00:02:50Z", "text": "The rustic prairie gathers under a sturdy glacier near the summit."}
+{"type": "user", "id": "60d402ef-bb0e-4ad5-a5bd-b6449602ed68", "ts": "2026-04-20T00:09:11Z", "text": "The willow circles beside the tributary, and the cedar mirrors."}
+{"type": "tool_use", "id": "8f20c737-d082-4539-9a53-b753683c4e3d", "ts": "2026-04-20T00:23:18Z", "tool": "lantern_circle", "args_bytes": 3791, "ok": true}
+{"type": "assistant", "id": "ac8e9a25-725f-4f3c-91b0-c456b945455b", "ts": "2026-04-20T00:25:14Z", "text": "The solemn driftwood bends under a hazy quarry near the lichen.", "tokens": 1651}
+{"type": "user", "id": "8cd4972c-bcbe-4292-adec-44827b720416", "ts": "2026-04-20T00:41:39Z", "text": "The arid beacon circles past the sturdy clover."}
+{"type": "session_end", "id": "01af8545-0243-4b84-83fb-6df807131e18", "ts": "2026-04-20T02:19:38Z", "records": 9, "reason": "interrupt"}

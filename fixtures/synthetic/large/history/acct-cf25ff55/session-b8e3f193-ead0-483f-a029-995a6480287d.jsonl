@@ -1,0 +1,17 @@
+{"type": "session_start", "id": "b8e3f193-ead0-483f-a029-995a6480287d", "ts": "2026-02-23T12:34:28Z", "account": "acct-cf25ff55", "project": "proj-sturdy-clover", "model": "synthetic-rivulet-405", "schema": 1}
+{"type": "assistant", "id": "72e2e462-94c2-42c9-a967-a5884c4f4934", "ts": "2026-02-23T12:47:00Z", "text": "The solemn quarry follows past the slender thicket.", "tokens": 2796}
+{"type": "user", "id": "c81e869d-047b-4219-bd23-2c4415f6bd17", "ts": "2026-02-23T13:00:49Z", "text": "The estuary listens beside the savanna, and the moraine bends."}
+{"type": "assistant", "id": "dcd8b45e-f43c-4ba5-b12b-a62403949452", "ts": "2026-02-23T13:13:07Z", "text": "The arid driftwood settles under a hazy canyon near the wheat.", "tokens": 3603}
+{"type": "user", "id": "77e9c7de-a43e-4128-8600-01d1bc5e0f97", "ts": "2026-02-23T13:32:13Z", "text": "The vast clover follows under a lucid cedar near the quarry."}
+{"type": "assistant", "id": "4c863be1-b889-4a00-8454-54013ca568d1", "ts": "2026-02-23T13:37:17Z", "text": "The tranquil orchard mirrors under a rustic cove near the moraine.", "tokens": 2794}
+{"type": "assistant", "id": "c9b48b43-d160-4bf0-be43-79d0261b8367", "ts": "2026-02-23T13:56:54Z", "text": "The estuary settles beside the estuary, and the lantern returns.", "tokens": 1358}
+{"type": "user", "id": "bf05d7e6-d0f1-43b1-8ffa-56d4e044e502", "ts": "2026-02-23T14:06:05Z", "text": "The cove listens beside the atoll, and the cedar returns."}
+{"type": "user", "id": "e926e806-218f-4fb9-8159-438c133f9cd6", "ts": "2026-02-23T14:13:21Z", "text": "The fjord circles beside the moraine, and the clover crosses."}
+{"type": "assistant", "id": "f009a219-d885-4363-bde6-6e0a64b36b09", "ts": "2026-02-23T14:29:28Z", "text": "The kite returns beside the tributary, and the lichen crosses.", "tokens": 3460}
+{"type": "user", "id": "f2dcbc6b-c822-42ee-b5fd-7fde364e9136", "ts": "2026-02-23T14:36:45Z", "text": "The reed reaches beside the willow, and the falcon drifts."}
+{"type": "user", "id": "4380873b-5d16-436a-9430-76e4ff6f9b68", "ts": "2026-02-23T14:40:43Z", "text": "The twin ember drifts past the rapid canal."}
+{"type": "user", "id": "8dc428a7-071b-4aa3-8fb3-6116c3684146", "ts": "2026-02-23T14:46:35Z", "text": "The fertile falcon gathers under a arid warbler near the lichen."}
+{"type": "assistant", "id": "d715f8a6-96c8-45a4-a3e4-319a46a27a45", "ts": "2026-02-23T15:03:46Z", "text": "The soft tributary circles under a arid glacier near the cedar.", "tokens": 2071}
+{"type": "user", "id": "29eec704-be36-4100-b106-a0a6434f0b8c", "ts": "2026-02-23T15:19:57Z", "text": "The crisp glacier settles under a slender orchard near the thicket."}
+{"type": "assistant", "id": "05889901-bf50-436a-b880-e4f7ee33c013", "ts": "2026-02-23T15:36:53Z", "text": "The beacon listens beside the pebble, and the rivulet drifts.", "tokens": 2497}
+{"type": "session_end", "id": "c8e163fa-93e8-41e0-8c0b-d973d53e6912", "ts": "2026-02-23T18:14:45Z", "records": 17, "reason": "limit"}

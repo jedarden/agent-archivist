@@ -1,0 +1,14 @@
+{"type": "session_start", "id": "8a3b6aa1-a389-4831-81f7-26735782b1b1", "ts": "2026-01-09T04:46:08Z", "account": "acct-050c5341", "project": "proj-lucid-kite", "model": "synthetic-rivulet-993", "schema": 1}
+{"type": "assistant", "id": "08eb663c-7d73-47f5-9661-5210f69f678c", "ts": "2026-01-09T05:03:33Z", "text": "The coastal canyon drifts under a mellow summit near the pebble.", "tokens": 2420}
+{"type": "user", "id": "5b93d974-b883-4ab4-aa6b-acfdfce42591", "ts": "2026-01-09T05:08:36Z", "text": "The mellow orchard settles under a slender savanna near the beacon."}
+{"type": "user", "id": "3337421a-c229-4e07-ade8-d70fef7cb990", "ts": "2026-01-09T05:25:12Z", "text": "The vast prairie gathers past the northern savanna."}
+{"type": "user", "id": "92921d99-a853-4924-973f-123614dd2dfb", "ts": "2026-01-09T05:43:01Z", "text": "The boulder wanders beside the falcon, and the beacon crosses."}
+{"type": "user", "id": "13c54388-65b9-4b49-9dcc-29de4bdc669a", "ts": "2026-01-09T05:58:28Z", "text": "The vast harbor reaches past the hollow glacier."}
+{"type": "tool_use", "id": "820fbd2a-3176-46fa-bc79-a779adfa3cc7", "ts": "2026-01-09T06:16:00Z", "tool": "moraine_wander", "args_bytes": 4040, "ok": true}
+{"type": "tool_use", "id": "2a941ebb-fc78-4095-bb61-7db9f882afe6", "ts": "2026-01-09T06:24:10Z", "tool": "ember_gather", "args_bytes": 3589, "ok": true}
+{"type": "tool_result", "id": "d4052349-d2f3-4234-9786-151bd4d98a78", "ts": "2026-01-09T06:39:53Z", "tool_ref": "2a941ebb-fc78-4095-bb61-7db9f882afe6", "bytes": 10671}
+{"type": "tool_use", "id": "64a37a64-2f4f-4529-ad7b-d4ec987a3b73", "ts": "2026-01-09T06:40:02Z", "tool": "clover_drift", "args_bytes": 3774, "ok": false}
+{"type": "assistant", "id": "ec615f37-0c9f-4d5a-aefc-403bffd3218c", "ts": "2026-01-09T06:53:00Z", "text": "The cove crosses beside the thicket, and the lichen drifts.", "tokens": 1853}
+{"type": "assistant", "id": "eaf40bc3-28ea-4e9e-bdd5-6e96d36cac00", "ts": "2026-01-09T07:04:27Z", "text": "The crisp wheat reaches past the crisp kite.", "tokens": 696}
+{"type": "tool_result", "id": "31070224-d2a2-4ada-b896-3c295a93ae98", "ts": "2026-01-09T07:17:55Z", "tool_ref": "64a37a64-2f4f-4529-ad7b-d4ec987a3b73", "bytes": 8972}
+{"type": "session_end", "id": "f6af3fdc-f576-479d-b240-04249406481d", "ts": "2026-01-09T09:26:22Z", "records": 14, "reason": "limit"}

@@ -1,0 +1,14 @@
+{"type": "session_start", "id": "23be70c6-b37b-4a9c-be41-400932bbef3b", "ts": "2026-02-25T15:22:08Z", "account": "acct-c6f3bb9a", "project": "proj-hollow-meadow", "model": "synthetic-orchard-312", "schema": 1}
+{"type": "user", "id": "67cdc414-fd73-4f9c-a804-9226b38e8f92", "ts": "2026-02-25T15:27:48Z", "text": "The arid prairie gathers under a vast meadow near the rivulet."}
+{"type": "assistant", "id": "94e17dd2-f378-4d6a-ba6f-6d13acf7c957", "ts": "2026-02-25T15:42:19Z", "text": "The glacier crosses beside the pebble, and the moraine bends.", "tokens": 457, "future_field": 519, "vendor_note": "The violet fjord crosses past the rustic prairie."}
+{"type": "tool_use", "id": "bd195fcb-33c7-4772-ae68-a3f3271cfcb6", "ts": "2026-02-25T15:54:35Z", "tool": "driftwood_follow", "args_bytes": 1495, "ok": true}
+{"type": "assistant", "id": "cd6fa622-9699-401c-843e-b08603779da7", "ts": "2026-02-25T16:00:08Z", "text": "The tranquil pebble drifts under a sturdy quarry near the summit.", "tokens": 4031, "future_field": 129, "vendor_note": "The hollow beacon returns under a pale marsh near the dune."}
+{"type": "tool_result", "id": "a978a380-4db2-470d-8f15-91e992aecee2", "ts": "2026-02-25T16:13:28Z", "tool_ref": "bd195fcb-33c7-4772-ae68-a3f3271cfcb6", "bytes": 7406}
+{"type": "tool_use", "id": "7888896a-1798-4180-a11d-d90eedd5192c", "ts": "2026-02-25T16:15:58Z", "tool": "lantern_wander", "args_bytes": 3436, "ok": true}
+{"type": "tool_use", "id": "991094ce-1374-41ba-9d3d-95fd333b8185", "ts": "2026-02-25T16:19:06Z", "tool": "willow_follow", "args_bytes": 2380, "ok": true}
+{"type": "tool_use", "id": "5cbc4a95-d738-41b5-ac96-6a36276c542f", "ts": "2026-02-25T16:26:44Z", "tool": "harbor_settle", "args_bytes": 761, "ok": true}
+{"type": "tool_use", "id": "4bc44ee5-5f0a-4f8f-8a89-d81983051ff8", "ts": "2026-02-25T16:27:55Z", "tool": "dune_gather", "args_bytes": 1137, "ok": true}
+{"type": "user", "id": "8f27668d-3c97-4436-9b59-94081d099bc9", "ts": "2026-02-25T16:36:09Z", "text": "The vast prairie listens under a northern lichen near the glacier."}
+{"type": "tool_use", "id": "0c426cb7-9641-42e8-bcc4-9f2e385946c8", "ts": "2026-02-25T16:43:22Z", "tool": "orchard_listen", "args_bytes": 4095, "ok": true}
+{"type": "assistant", "id": "e68b2e6e-98cf-4095-af83-31c5228d10ed", "ts": "2026-02-25T16:53:26Z", "text": "The vast reed returns under a rapid reed near the lichen.", "tokens": 571, "future_field": 667, "vendor_note": "The violet cedar crosses past the gentle reed."}
+{"type": "session_end", "id": "34de4c5b-276b-4056-ad26-400b58be3af7", "ts": "2026-02-25T18:52:22Z", "records": 14, "reason": "end"}

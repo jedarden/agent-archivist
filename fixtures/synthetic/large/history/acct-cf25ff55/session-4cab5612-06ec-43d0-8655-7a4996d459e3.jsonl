@@ -1,0 +1,8 @@
+{"type": "session_start", "id": "4cab5612-06ec-43d0-8655-7a4996d459e3", "ts": "2026-03-15T16:06:22Z", "account": "acct-cf25ff55", "project": "proj-fertile-meadow", "model": "synthetic-lichen-670", "schema": 1}
+{"type": "user", "id": "20617e27-2629-4a9b-a79c-36f9e850a7e3", "ts": "2026-03-15T16:18:01Z", "text": "The mellow beacon reaches past the hazy savanna."}
+{"type": "user", "id": "a5a51518-659c-4876-ac2e-2d19a75e87ae", "ts": "2026-03-15T16:23:19Z", "text": "The lichen wanders beside the summit, and the reed returns."}
+{"type": "tool_use", "id": "d53bbb9a-876f-4f4a-af79-98930b840b8f", "ts": "2026-03-15T16:32:52Z", "tool": "heron_gather", "args_bytes": 2338, "ok": true}
+{"type": "assistant", "id": "4465fb55-1c25-4a0f-b4e6-f9456f1e58a0", "ts": "2026-03-15T16:42:22Z", "text": "The solemn lichen returns past the soft orchard.", "tokens": 2690}
+{"type": "tool_use", "id": "9e267724-c9eb-439e-9ab8-9f0e723553a2", "ts": "2026-03-15T16:45:25Z", "tool": "willow_listen", "args_bytes": 469, "ok": true}
+{"type": "user", "id": "8c181c22-0cb4-47f5-ab7b-40a5b16aa1aa", "ts": "2026-03-15T17:01:00Z", "text": "The rustic canyon follows past the gentle reed."}
+{"type": "session_end", "id": "98abeba4-97b0-4871-b288-25c134500ef7", "ts": "2026-03-15T18:46:30Z", "records": 8, "reason": "limit"}

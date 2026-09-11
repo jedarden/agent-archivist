@@ -1,0 +1,19 @@
+{"type": "session_start", "id": "62235fc1-0096-4906-bf4c-690ea2ad130c", "ts": "2026-04-19T06:03:39Z", "account": "acct-050c5341", "project": "proj-sturdy-thicket", "model": "synthetic-canal-119", "schema": 1}
+{"type": "user", "id": "8bc357eb-7fd9-4680-96ed-45cf134b61d6", "ts": "2026-04-19T06:05:13Z", "text": "The southern lichen bends under a soft lichen near the wheat."}
+{"type": "tool_use", "id": "da1c3cd4-710e-4166-9a55-05b48075d04f", "ts": "2026-04-19T06:07:55Z", "tool": "driftwood_circle", "args_bytes": 3218, "ok": true}
+{"type": "user", "id": "627d7b55-f6dd-43b0-beaf-ce9d615123e2", "ts": "2026-04-19T06:24:22Z", "text": "The quiet canyon wanders under a nimble driftwood near the thicket."}
+{"type": "user", "id": "16cb2bf4-a86b-42ef-8b5c-cb54e03cd102", "ts": "2026-04-19T06:27:00Z", "text": "The harbor reaches beside the beacon, and the marsh wanders."}
+{"type": "tool_use", "id": "5fe5e4ce-1bcf-459e-a691-f5f59c2d85e2", "ts": "2026-04-19T06:34:06Z", "tool": "lantern_mirror", "args_bytes": 2900, "ok": true}
+{"type": "user", "id": "b75f37a3-1be7-4098-867f-f8d9d3925b6d", "ts": "2026-04-19T06:36:30Z", "text": "The rapid moraine reaches under a southern tributary near the boulder."}
+{"type": "user", "id": "829e2c5c-513e-4358-8b1f-a7491c7fe468", "ts": "2026-04-19T06:41:48Z", "text": "The quiet heron follows past the pale falcon."}
+{"type": "assistant", "id": "433f3094-a5c2-4e8d-85aa-46433917309b", "ts": "2026-04-19T06:53:42Z", "text": "The amber dune wanders under a gentle lantern near the glacier.", "tokens": 3681}
+{"type": "user", "id": "f6d963f2-eea5-4831-9da6-23fedc79c0ef", "ts": "2026-04-19T06:54:41Z", "text": "The quiet marsh settles under a soft glacier near the meadow."}
+{"type": "assistant", "id": "9b79f350-0e11-4f42-93b0-20a8ca4cd427", "ts": "2026-04-19T07:06:02Z", "text": "The nimble beacon crosses past the arid estuary.", "tokens": 1142}
+{"type": "tool_result", "id": "b4220531-9c72-49c6-b264-6018b07ffded", "ts": "2026-04-19T07:11:17Z", "tool_ref": "5fe5e4ce-1bcf-459e-a691-f5f59c2d85e2", "bytes": 8497}
+{"type": "tool_use", "id": "816b5b84-294d-4b88-a67c-3d592181b23f", "ts": "2026-04-19T07:16:04Z", "tool": "rivulet_gather", "args_bytes": 3664, "ok": true}
+{"type": "assistant", "id": "bc7d19b4-3570-42ea-a9fe-409eccc5e7c0", "ts": "2026-04-19T07:31:21Z", "text": "The rapid reed follows past the hazy orchard.", "tokens": 3079}
+{"type": "user", "id": "ae6bf431-2e55-4df9-94b4-f1c5be5c4010", "ts": "2026-04-19T07:46:51Z", "text": "The coastal tributary follows under a mellow rivulet near the driftwood."}
+{"type": "tool_use", "id": "cf987646-4701-48e9-925c-baf68a0ea00f", "ts": "2026-04-19T08:03:15Z", "tool": "beacon_circle", "args_bytes": 941, "ok": true}
+{"type": "user", "id": "5485182b-cee8-437b-b320-e1aa4993fd16", "ts": "2026-04-19T08:03:40Z", "text": "The lucid savanna returns past the slender meadow."}
+{"type": "tool_use", "id": "50dcbdfa-0be3-458e-89a9-f73b8d71bdae", "ts": "2026-04-19T08:18:27Z", "tool": "meadow_cross", "args_bytes": 1122, "ok": true}
+{"type": "session_end", "id": "f98dbfda-5962-43d1-9f97-8adcc5519d0c", "ts": "2026-04-19T12:23:58Z", "records": 19, "reason": "end"}

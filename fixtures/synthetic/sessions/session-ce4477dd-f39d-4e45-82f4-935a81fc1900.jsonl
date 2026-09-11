@@ -1,0 +1,22 @@
+{"type": "session_start", "id": "ce4477dd-f39d-4e45-82f4-935a81fc1900", "ts": "2026-01-09T08:30:49Z", "account": "acct-4ce2086e", "project": "proj-quiet-clover", "model": "synthetic-prairie-309", "schema": 1}
+{"type": "assistant", "id": "8bcf0066-ea45-49dc-bd7a-98d3b63d1f4d", "ts": "2026-01-09T08:45:04Z", "text": "The hollow moraine circles under a arid fjord near the orchard.", "tokens": 1060}
+{"type": "assistant", "id": "61fad770-6264-4f88-8983-99a3e0fb45b5", "ts": "2026-01-09T08:51:19Z", "text": "The tranquil heron listens under a violet quarry near the marsh.", "tokens": 1050}
+{"type": "user", "id": "237a2a1b-36b9-47fa-abc4-37cbfdc84a5f", "ts": "2026-01-09T09:00:35Z", "text": "The pebble follows beside the thicket, and the cedar reaches."}
+{"type": "assistant", "id": "28f14d10-c557-46ba-88c0-74f487706606", "ts": "2026-01-09T09:01:38Z", "text": "The crisp pebble follows past the amber quarry.", "tokens": 3135}
+{"type": "system", "id": "ae60dbf5-22f4-4696-a1fb-9c65490f42ae", "ts": "2026-01-09T09:01:43Z", "text": "The mellow harbor mirrors under a arid wheat near the canyon."}
+{"type": "user", "id": "a2f6470f-132c-4e08-a14f-9d76a4b3755c", "ts": "2026-01-09T09:16:29Z", "text": "The pale cedar wanders past the hazy prairie."}
+{"type": "assistant", "id": "2ff4b5e8-4afe-4406-99b2-e93a6563d005", "ts": "2026-01-09T09:20:21Z", "text": "The tranquil summit reaches under a slender cedar near the driftwood.", "tokens": 238}
+{"type": "user", "id": "bdf18ab0-8d21-4584-b4de-7946afeea0b0", "ts": "2026-01-09T09:28:00Z", "text": "The slender atoll drifts past the northern driftwood."}
+{"type": "assistant", "id": "e5fd90b9-8e37-4084-98f1-4f2f4c5e375d", "ts": "2026-01-09T09:38:42Z", "text": "The tranquil clover returns past the northern glacier.", "tokens": 3835}
+{"type": "assistant", "id": "9f53b46d-e9f6-44e9-9a85-5360cdba3ef4", "ts": "2026-01-09T09:46:05Z", "text": "The sturdy canyon wanders under a mellow willow near the glacier.", "tokens": 3648}
+{"type": "assistant", "id": "f2b05807-ee84-4a8e-9cfe-b833ddc93db3", "ts": "2026-01-09T09:54:02Z", "text": "The hazy tributary crosses under a slender thicket near the tributary.", "tokens": 2293}
+{"type": "assistant", "id": "419c0f90-0a4f-4da2-9420-5e10ac1a6def", "ts": "2026-01-09T10:06:32Z", "text": "The cove listens beside the driftwood, and the meadow returns.", "tokens": 2499}
+{"type": "user", "id": "4e5e72ef-5860-4fbc-824f-37a3756f6b6b", "ts": "2026-01-09T10:11:36Z", "text": "The hazy heron mirrors past the rapid dune."}
+{"type": "assistant", "id": "cc52cd5d-e9d8-4e43-8df7-e17b9a6ef930", "ts": "2026-01-09T10:17:15Z", "text": "The fjord circles beside the harbor, and the moraine follows.", "tokens": 3034}
+{"type": "tool_use", "id": "f87cd4cc-a5c9-45c4-91c0-db1ac7099876", "ts": "2026-01-09T10:18:01Z", "tool": "falcon_cross", "args_bytes": 2298, "ok": false}
+{"type": "tool_use", "id": "d76b56bd-bdac-493a-868b-6f6c5f5695b9", "ts": "2026-01-09T10:28:49Z", "tool": "prairie_cross", "args_bytes": 3758, "ok": true}
+{"type": "tool_use", "id": "09e5ac6f-340a-4b74-907b-b8cb2a5c033d", "ts": "2026-01-09T10:33:28Z", "tool": "willow_gather", "args_bytes": 3064, "ok": true}
+{"type": "user", "id": "461b5bca-a77d-4c33-b132-a3be76a90c33", "ts": "2026-01-09T10:35:00Z", "text": "The twin ember returns past the amber beacon."}
+{"type": "user", "id": "abbed0f3-0b13-4056-8634-c78e667c472a", "ts": "2026-01-09T10:36:12Z", "text": "The fertile warbler gathers under a mellow prairie near the tributary."}
+{"type": "assistant", "id": "66996e5a-2ec3-44ee-acab-6679592dcb81", "ts": "2026-01-09T10:50:21Z", "text": "The quiet canal bends under a vast boulder near the willow.", "tokens": 813}
+{"type": "session_end", "id": "44c86242-89d2-4c41-b049-c2d4771c9d54", "ts": "2026-01-09T14:01:11Z", "records": 22, "reason": "limit"}

@@ -1,0 +1,11 @@
+{"type": "session_start", "id": "b116ea3e-2ff5-41c8-82d7-0588bb233cbb", "ts": "2026-03-23T22:49:50Z", "account": "acct-ebe75c56", "project": "proj-fertile-clover", "model": "synthetic-lichen-639", "schema": 1}
+{"type": "user", "id": "0766592a-8580-4481-b51d-c144db1b2e5e", "ts": "2026-03-23T22:57:26Z", "text": "The coastal wheat settles past the rapid beacon."}
+{"type": "user", "id": "c58fc6dc-ba79-4dbb-ae24-e4e04e827a3d", "ts": "2026-03-23T23:12:55Z", "text": "The quiet reed settles under a gentle warbler near the driftwood."}
+{"type": "user", "id": "4fcfa1b4-545c-4438-a330-ddcfc7f3abd1", "ts": "2026-03-23T23:19:13Z", "text": "The lucid canal settles past the solemn harbor."}
+{"type": "system", "id": "b25cf57c-8ab3-49a0-a0dc-3e51ff698538", "ts": "2026-03-23T23:31:53Z", "text": "The fjord listens beside the lichen, and the thicket crosses."}
+{"type": "user", "id": "f023a8c5-13f1-41ea-9b02-06e139727b61", "ts": "2026-03-23T23:40:43Z", "text": "The fertile lantern bends past the uneven beacon."}
+{"type": "assistant", "id": "025e3f2e-c318-4872-a04c-46c8a174b415", "ts": "2026-03-23T23:44:34Z", "text": "The twin estuary drifts under a vast meadow near the harbor.", "tokens": 2733}
+{"type": "tool_use", "id": "1850851e-31f9-4e1e-b3d0-647d2ccd6f8b", "ts": "2026-03-23T23:52:55Z", "tool": "lantern_bend", "args_bytes": 315, "ok": true}
+{"type": "user", "id": "485ea4ee-dd13-4276-8451-5ba33b8d29a2", "ts": "2026-03-23T23:56:56Z", "text": "The nimble warbler bends under a tranquil heron near the kite."}
+{"type": "user", "id": "55ca755c-9907-4968-827e-35126b3868d5", "ts": "2026-03-24T00:00:51Z", "text": "The slender pebble follows under a twin orchard near the pebble."}
+{"type": "session_end", "id": "9f94e59d-4a6e-4130-8f4f-f69b8890849e", "ts": "2026-03-24T02:30:01Z", "records": 11, "reason": "interrupt"}

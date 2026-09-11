@@ -1,0 +1,17 @@
+{"type": "session_start", "id": "06a4cb92-c43c-4515-8c35-3b966f1c4b31", "ts": "2026-01-12T09:29:22Z", "account": "acct-050c5341", "project": "proj-northern-cedar", "model": "synthetic-fjord-769", "schema": 1}
+{"type": "assistant", "id": "b5c53a6b-fa14-4700-a5b2-ce7ac155d6df", "ts": "2026-01-12T09:37:30Z", "text": "The arid marsh mirrors past the arid willow.", "tokens": 1963}
+{"type": "user", "id": "d16f762d-71fa-4c23-8f05-721f8e2e2e91", "ts": "2026-01-12T09:57:26Z", "text": "The heron gathers beside the heron, and the willow drifts."}
+{"type": "user", "id": "b96dc575-5039-4979-a848-f397f4f9c36f", "ts": "2026-01-12T10:00:43Z", "text": "The sturdy reed wanders under a solemn canal near the reed."}
+{"type": "assistant", "id": "a4954a01-79e5-4115-beff-41a6277f5a42", "ts": "2026-01-12T10:10:37Z", "text": "The arid summit settles under a rapid savanna near the pebble.", "tokens": 2148}
+{"type": "assistant", "id": "5739f57f-da13-459b-8308-c4b7847ce2d2", "ts": "2026-01-12T10:13:15Z", "text": "The uneven clover bends past the mellow thicket.", "tokens": 2554}
+{"type": "assistant", "id": "8176c6ca-89ce-471d-a3ed-7fd70390d571", "ts": "2026-01-12T10:28:33Z", "text": "The hollow estuary circles past the crisp dune.", "tokens": 3089}
+{"type": "tool_use", "id": "26eed547-70c4-496a-9d2c-a10891fe6dc3", "ts": "2026-01-12T10:43:36Z", "tool": "marsh_wander", "args_bytes": 354, "ok": true}
+{"type": "user", "id": "51e8c76d-ead1-4457-9ed3-0fd08b437c31", "ts": "2026-01-12T10:50:57Z", "text": "The canal drifts beside the driftwood, and the clover circles."}
+{"type": "assistant", "id": "3609ccfb-ca2c-4856-96b2-495ba51eea2f", "ts": "2026-01-12T10:52:08Z", "text": "The hazy tributary crosses under a hollow summit near the cedar.", "tokens": 3628}
+{"type": "tool_use", "id": "041d7be1-7e8b-40f9-ac6e-45c200b1c7f7", "ts": "2026-01-12T11:09:39Z", "tool": "prairie_bend", "args_bytes": 152, "ok": true}
+{"type": "tool_use", "id": "885f7b24-bb1f-4e8b-9dc2-bcb615caecac", "ts": "2026-01-12T11:18:09Z", "tool": "dune_circle", "args_bytes": 3388, "ok": true}
+{"type": "user", "id": "0a6b7b15-30e8-4147-9c8b-cf2603577416", "ts": "2026-01-12T11:27:39Z", "text": "The uneven rivulet circles past the gentle canyon."}
+{"type": "tool_result", "id": "ebf8e6cc-91a0-43b3-8d07-8a6170434ffa", "ts": "2026-01-12T11:33:23Z", "tool_ref": "885f7b24-bb1f-4e8b-9dc2-bcb615caecac", "bytes": 3179}
+{"type": "user", "id": "803f9267-9a4b-44ea-a7f5-7908caf04d12", "ts": "2026-01-12T11:42:06Z", "text": "The thicket wanders beside the falcon, and the canal listens."}
+{"type": "system", "id": "b6398362-1a79-4fdd-b513-61c420d7791c", "ts": "2026-01-12T11:46:04Z", "text": "The orchard returns beside the lantern, and the cedar wanders."}
+{"type": "session_end", "id": "bcf96477-256c-49df-8729-457902d0cf23", "ts": "2026-01-12T15:09:39Z", "records": 17, "reason": "limit"}

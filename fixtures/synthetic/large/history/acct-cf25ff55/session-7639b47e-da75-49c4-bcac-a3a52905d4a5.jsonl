@@ -1,0 +1,18 @@
+{"type": "session_start", "id": "7639b47e-da75-49c4-bcac-a3a52905d4a5", "ts": "2026-05-04T04:59:59Z", "account": "acct-cf25ff55", "project": "proj-sturdy-clover", "model": "synthetic-dune-481", "schema": 1}
+{"type": "user", "id": "bdc49cea-d395-437f-8281-79ae7eb297dd", "ts": "2026-05-04T05:04:48Z", "text": "The quiet summit drifts under a vast lichen near the cove."}
+{"type": "system", "id": "a16ae9b0-b9df-4770-b9dd-bf01745083b7", "ts": "2026-05-04T05:05:05Z", "text": "The soft warbler listens past the mellow thicket."}
+{"type": "user", "id": "22c5d5db-cd98-45bd-b3d2-192053d93d8a", "ts": "2026-05-04T05:05:44Z", "text": "The northern dune follows past the amber thicket."}
+{"type": "system", "id": "f2858a30-43b1-4a92-99d1-3b8c96c650f0", "ts": "2026-05-04T05:16:23Z", "text": "The falcon drifts beside the falcon, and the clover follows."}
+{"type": "user", "id": "2c54a839-e864-47a0-9930-c2c6ca044f6b", "ts": "2026-05-04T05:34:38Z", "text": "The clover crosses beside the savanna, and the quarry settles."}
+{"type": "assistant", "id": "e2ad0412-fe91-48c6-abfb-930e810738e2", "ts": "2026-05-04T05:42:11Z", "text": "The glacier bends beside the driftwood, and the marsh gathers.", "tokens": 2487}
+{"type": "assistant", "id": "58ac9c51-5443-4e0a-aaf8-a52306cc5a25", "ts": "2026-05-04T06:01:09Z", "text": "The soft driftwood drifts past the soft thicket.", "tokens": 3146}
+{"type": "user", "id": "2f0ef0d7-542a-4658-ab7c-5e9f9aa755b3", "ts": "2026-05-04T06:05:42Z", "text": "The kite settles beside the quarry, and the wheat returns."}
+{"type": "system", "id": "c0372b3b-7a0e-44d3-9df5-39dd9952a810", "ts": "2026-05-04T06:22:32Z", "text": "The quiet meadow returns under a mellow harbor near the heron."}
+{"type": "system", "id": "18b56002-9ccc-4891-a06a-6f14c7dcfb83", "ts": "2026-05-04T06:26:42Z", "text": "The reed follows beside the orchard, and the harbor crosses."}
+{"type": "tool_use", "id": "8835242b-fd46-45a7-9f94-c9ace6ac192c", "ts": "2026-05-04T06:40:30Z", "tool": "kite_mirror", "args_bytes": 2984, "ok": true}
+{"type": "user", "id": "1c216d48-cee4-43ee-9917-2a711e8248c4", "ts": "2026-05-04T06:55:28Z", "text": "The rustic kite circles under a slender quarry near the willow."}
+{"type": "assistant", "id": "671b47e1-440b-4e96-8392-d4a20e8fdd6b", "ts": "2026-05-04T07:04:57Z", "text": "The boulder circles beside the kite, and the lantern drifts.", "tokens": 96}
+{"type": "tool_use", "id": "3b362d27-fc3c-4c78-8ae4-33002e9fcc06", "ts": "2026-05-04T07:24:43Z", "tool": "thicket_return", "args_bytes": 1362, "ok": true}
+{"type": "user", "id": "7dd2bf84-765d-47a3-8e90-9b8965ddb563", "ts": "2026-05-04T07:33:44Z", "text": "The quiet kite crosses under a amber canal near the tributary."}
+{"type": "user", "id": "66e7f420-f6c9-47f8-8be6-df8cd9207f74", "ts": "2026-05-04T07:39:39Z", "text": "The dune reaches beside the prairie, and the clover follows."}
+{"type": "session_end", "id": "d004babf-c6cd-4ebc-b535-02525fa1e790", "ts": "2026-05-04T11:00:17Z", "records": 18, "reason": "end"}

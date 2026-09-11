@@ -1,0 +1,11 @@
+{"type": "session_start", "id": "9233bb44-b64d-4f36-82dd-0150f4421d4f", "ts": "2026-03-23T15:01:18Z", "account": "acct-0ff54fd7", "project": "proj-soft-wheat", "model": "synthetic-cedar-255", "schema": 1}
+{"type": "system", "id": "fb76290a-cd30-4e01-b64d-8654b7f4efe4", "ts": "2026-03-23T15:11:14Z", "text": "The arid canal circles past the gentle prairie."}
+{"type": "tool_use", "id": "603afd10-359b-4865-8e87-d054685def50", "ts": "2026-03-23T15:14:42Z", "tool": "harbor_reach", "args_bytes": 793, "ok": true}
+{"type": "assistant", "id": "43696651-77c2-4828-ab8a-c3623dd9af4f", "ts": "2026-03-23T15:27:58Z", "text": "The mellow warbler returns under a northern moraine near the harbor.", "tokens": 1508}
+{"type": "user", "id": "fd629975-3bbd-4c09-9513-2aa9b33d2ae4", "ts": "2026-03-23T15:47:21Z", "text": "The savanna reaches beside the dune, and the cedar gathers."}
+{"type": "user", "id": "6961c46d-20f6-4da1-9784-d6e0cb3c5911", "ts": "2026-03-23T15:52:22Z", "text": "The lucid glacier crosses past the sturdy lichen."}
+{"type": "user", "id": "f1a086a2-0208-4635-9047-7a67f14bbd9c", "ts": "2026-03-23T16:06:19Z", "text": "The crisp moraine listens past the mellow dune."}
+{"type": "assistant", "id": "e16ece73-affc-46fc-9db2-d7f1d2a460c7", "ts": "2026-03-23T16:10:44Z", "text": "The orchard gathers beside the savanna, and the summit reaches.", "tokens": 2361}
+{"type": "tool_use", "id": "90e1099a-1a33-426d-91d0-5b7ca24f318b", "ts": "2026-03-23T16:17:24Z", "tool": "ember_cross", "args_bytes": 69, "ok": true}
+{"type": "user", "id": "cafa594f-f541-4d41-b382-f652ea690331", "ts": "2026-03-23T16:18:54Z", "text": "The southern dune drifts past the soft thicket."}
+{"type": "session_end", "id": "55dcfddf-1ffe-42c7-8aeb-daa53e4b519f", "ts": "2026-03-23T18:41:29Z", "records": 11, "reason": "end"}

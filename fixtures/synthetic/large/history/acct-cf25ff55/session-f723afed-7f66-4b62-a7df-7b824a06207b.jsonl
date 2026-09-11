@@ -1,0 +1,15 @@
+{"type": "session_start", "id": "f723afed-7f66-4b62-a7df-7b824a06207b", "ts": "2026-02-12T17:30:22Z", "account": "acct-cf25ff55", "project": "proj-uneven-clover", "model": "synthetic-meadow-496", "schema": 1}
+{"type": "tool_use", "id": "74f0b607-3ed9-41aa-b37b-ed869b23ad6a", "ts": "2026-02-12T17:45:14Z", "tool": "ember_settle", "args_bytes": 1538, "ok": true}
+{"type": "tool_use", "id": "fdc538c3-9d3a-43f7-be9b-265065fd4b1c", "ts": "2026-02-12T17:45:53Z", "tool": "ember_drift", "args_bytes": 164, "ok": true}
+{"type": "assistant", "id": "0bc63880-149f-424b-98aa-b881b09bdf07", "ts": "2026-02-12T18:01:15Z", "text": "The pebble follows beside the harbor, and the marsh gathers.", "tokens": 3249}
+{"type": "tool_result", "id": "cd80875c-81ee-49d8-9f79-e481e2714039", "ts": "2026-02-12T18:20:29Z", "tool_ref": "fdc538c3-9d3a-43f7-be9b-265065fd4b1c", "bytes": 12846}
+{"type": "tool_use", "id": "c862de13-805d-4808-ab9e-70b39505c1ba", "ts": "2026-02-12T18:33:51Z", "tool": "fjord_cross", "args_bytes": 2942, "ok": true}
+{"type": "user", "id": "42eb9cc7-06e4-4b24-9388-d7c6e9be1aab", "ts": "2026-02-12T18:51:14Z", "text": "The tranquil heron gathers past the fertile falcon."}
+{"type": "user", "id": "b58073c0-5b83-4883-8afc-2ec4486bf6ba", "ts": "2026-02-12T19:05:56Z", "text": "The solemn reed crosses past the twin moraine."}
+{"type": "user", "id": "f9ec88d4-f19b-43b1-97ed-509606ea4739", "ts": "2026-02-12T19:15:48Z", "text": "The violet cove gathers under a southern willow near the pebble."}
+{"type": "tool_result", "id": "779631f1-f4cf-47e3-bb80-aad8d802b0b1", "ts": "2026-02-12T19:24:53Z", "tool_ref": "c862de13-805d-4808-ab9e-70b39505c1ba", "bytes": 4576}
+{"type": "assistant", "id": "f8b7860d-c9d8-478a-b96f-76d668357c12", "ts": "2026-02-12T19:39:22Z", "text": "The slender cove crosses under a fertile canyon near the lichen.", "tokens": 584}
+{"type": "user", "id": "1c04425f-7e10-4d56-a343-fb2e72ff6aff", "ts": "2026-02-12T19:58:36Z", "text": "The prairie gathers beside the atoll, and the canal gathers."}
+{"type": "user", "id": "87859555-aa7d-44ce-9f14-6ae19f99f5e4", "ts": "2026-02-12T20:10:07Z", "text": "The quiet lichen gathers past the tranquil canyon."}
+{"type": "tool_use", "id": "4c8a9c57-623e-45b6-8d2b-eb74b4de8747", "ts": "2026-02-12T20:21:01Z", "tool": "clover_gather", "args_bytes": 4016, "ok": true}
+{"type": "session_end", "id": "f4f61d26-8224-45b2-84eb-d9f71bc5f098", "ts": "2026-02-12T22:30:37Z", "records": 15, "reason": "limit"}

@@ -1,0 +1,20 @@
+{"type": "session_start", "id": "82900f6f-1ce0-461c-88eb-c42d04d8d2f0", "ts": "2026-01-23T01:00:37Z", "account": "acct-12d8cd6a", "project": "proj-southern-moraine", "model": "synthetic-boulder-147", "schema": 1}
+{"type": "user", "id": "3fe9ab41-7ddf-4edc-b03c-618340abd940", "ts": "2026-01-23T01:02:47Z", "text": "The heron bends beside the wheat, and the orchard circles."}
+{"type": "user", "id": "0b6f046c-1719-4e61-b834-5ffed899dbff", "ts": "2026-01-23T01:04:29Z", "text": "The sturdy summit crosses under a solemn fjord near the dune."}
+{"type": "assistant", "id": "d8493e53-0893-4011-af45-1bb9b1dddadc", "ts": "2026-01-23T01:22:27Z", "text": "The tranquil cove reaches past the tranquil canal.", "tokens": 870}
+{"type": "user", "id": "ad64a2ec-7de4-4a0a-b7dc-0a39414345b7", "ts": "2026-01-23T01:33:25Z", "text": "The reed wanders beside the boulder, and the lantern returns."}
+{"type": "assistant", "id": "2ccafd9d-ebd2-476d-af15-794476ed1a86", "ts": "2026-01-23T01:42:06Z", "text": "The willow drifts beside the meadow, and the tributary settles.", "tokens": 2054}
+{"type": "assistant", "id": "7e0aef14-8c9f-4a5c-824e-854cb7df577d", "ts": "2026-01-23T01:43:09Z", "text": "The crisp cove circles under a gentle quarry near the reed.", "tokens": 2048}
+{"type": "tool_use", "id": "65f17703-556a-461c-94ef-fb939acf952f", "ts": "2026-01-23T01:59:41Z", "tool": "kite_drift", "args_bytes": 3657, "ok": true}
+{"type": "tool_use", "id": "7551728b-1a19-430c-8b5c-e52de50df034", "ts": "2026-01-23T02:13:30Z", "tool": "marsh_mirror", "args_bytes": 149, "ok": true}
+{"type": "tool_use", "id": "6c5a029d-2bc6-49f6-a891-86078dc6b948", "ts": "2026-01-23T02:18:42Z", "tool": "warbler_follow", "args_bytes": 4071, "ok": true}
+{"type": "tool_use", "id": "c03b4d10-1e63-4f54-bff7-182172aa91c6", "ts": "2026-01-23T02:31:30Z", "tool": "harbor_return", "args_bytes": 142, "ok": true}
+{"type": "tool_use", "id": "f109fb41-d3cc-46fe-97a3-e8bab04fb1ac", "ts": "2026-01-23T02:42:24Z", "tool": "prairie_return", "args_bytes": 2691, "ok": true}
+{"type": "tool_use", "id": "b905f21b-b0d8-487d-84a7-4f89ea212506", "ts": "2026-01-23T02:55:43Z", "tool": "cedar_return", "args_bytes": 4079, "ok": true}
+{"type": "tool_result", "id": "52747bf9-9bef-4560-82df-5d45946b1c19", "ts": "2026-01-23T03:03:06Z", "tool_ref": "b905f21b-b0d8-487d-84a7-4f89ea212506", "bytes": 7442}
+{"type": "user", "id": "e5425cd9-ffbb-4354-889f-3fd68217f561", "ts": "2026-01-23T03:21:21Z", "text": "The hollow rivulet drifts under a southern marsh near the wheat."}
+{"type": "assistant", "id": "0313b95c-76cd-436e-92bb-9299aa991d69", "ts": "2026-01-23T03:35:31Z", "text": "The southern thicket returns under a solemn boulder near the pebble.", "tokens": 2085}
+{"type": "assistant", "id": "efd78ff4-2897-406d-9ce6-bf76f892e833", "ts": "2026-01-23T03:48:03Z", "text": "The wheat settles beside the rivulet, and the cedar follows.", "tokens": 3074}
+{"type": "user", "id": "bfdb1dda-d108-4cd9-b3a4-1a34b2a422f9", "ts": "2026-01-23T03:48:24Z", "text": "The rapid harbor reaches under a uneven cedar near the ember."}
+{"type": "system", "id": "d5bb0816-22cc-4a05-8545-1201282eb1dd", "ts": "2026-01-23T04:02:28Z", "text": "The glacier bends beside the estuary, and the reed reaches."}
+{"type": "session_end", "id": "fe67aba8-af63-4902-8d83-9eeab39be294", "ts": "2026-01-23T07:40:57Z", "records": 20, "reason": "interrupt"}

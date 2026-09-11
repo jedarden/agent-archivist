@@ -1,0 +1,21 @@
+{"type": "session_start", "id": "9b328aee-8cfd-48b0-9da4-c52492875765", "ts": "2026-04-07T22:35:49Z", "account": "acct-0ff54fd7", "project": "proj-twin-kite", "model": "synthetic-tributary-622", "schema": 1}
+{"type": "tool_use", "id": "19411cbc-6b14-4916-97a0-7036e7b139d0", "ts": "2026-04-07T22:51:02Z", "tool": "canal_wander", "args_bytes": 1177, "ok": true}
+{"type": "tool_use", "id": "bb2da319-cb05-46ca-8c98-8eb494c80cd8", "ts": "2026-04-07T22:58:15Z", "tool": "lantern_mirror", "args_bytes": 3679, "ok": true}
+{"type": "assistant", "id": "79b545fb-aa2c-43d1-90b5-5c7caae61a58", "ts": "2026-04-07T23:12:43Z", "text": "The atoll listens beside the reed, and the cove circles.", "tokens": 3299}
+{"type": "user", "id": "fa4ced3b-ad05-4036-882d-748f58c3bca7", "ts": "2026-04-07T23:15:52Z", "text": "The nimble moraine returns past the mellow canal."}
+{"type": "user", "id": "7948bc31-3d23-45bb-845a-ca2d09c05d90", "ts": "2026-04-07T23:24:34Z", "text": "The pebble returns beside the kite, and the boulder returns."}
+{"type": "assistant", "id": "da3b0527-cdb8-4aef-9551-12f326a19290", "ts": "2026-04-07T23:37:08Z", "text": "The dune bends beside the atoll, and the ember returns.", "tokens": 1914}
+{"type": "user", "id": "657d361a-8591-4635-a583-0d18d89b34bf", "ts": "2026-04-07T23:42:10Z", "text": "The pale lichen wanders past the rapid falcon."}
+{"type": "tool_use", "id": "18a958c4-5667-48c1-961c-f4080ef31a23", "ts": "2026-04-07T23:46:54Z", "tool": "rivulet_listen", "args_bytes": 597, "ok": true}
+{"type": "assistant", "id": "32f4aa5f-9046-488b-bf55-a24d39458168", "ts": "2026-04-07T23:56:03Z", "text": "The rustic driftwood settles under a rustic kite near the driftwood.", "tokens": 1252}
+{"type": "user", "id": "b203161d-56fe-4329-ab19-f1ec161a12c2", "ts": "2026-04-08T00:02:09Z", "text": "The pale estuary wanders past the lucid fjord."}
+{"type": "user", "id": "80c2b979-830d-420d-bf81-6e4e959cbfe4", "ts": "2026-04-08T00:04:07Z", "text": "The savanna follows beside the fjord, and the canyon reaches."}
+{"type": "tool_result", "id": "4a777c10-2812-473c-9e23-e0916e6b6578", "ts": "2026-04-08T00:21:48Z", "tool_ref": "18a958c4-5667-48c1-961c-f4080ef31a23", "bytes": 13308}
+{"type": "user", "id": "4a588e0d-8908-4c0a-8b8b-6d661b9b378a", "ts": "2026-04-08T00:35:18Z", "text": "The ember returns beside the prairie, and the lichen circles."}
+{"type": "user", "id": "b2780ac6-83d0-4a10-8786-98bf99f8319b", "ts": "2026-04-08T00:39:23Z", "text": "The amber canyon crosses past the fertile cove."}
+{"type": "user", "id": "a6c89abf-689f-4014-ae6d-07b00df2ba7e", "ts": "2026-04-08T00:58:33Z", "text": "The thicket wanders beside the tributary, and the harbor reaches."}
+{"type": "tool_use", "id": "5d725f43-4773-4043-92e8-2feef15224c9", "ts": "2026-04-08T00:58:36Z", "tool": "falcon_bend", "args_bytes": 3478, "ok": true}
+{"type": "user", "id": "64b3e51d-bee7-4eaa-b982-6f82907c27dc", "ts": "2026-04-08T01:04:05Z", "text": "The uneven heron bends past the tranquil savanna."}
+{"type": "tool_result", "id": "d4a470e6-d6c3-44e5-ac7b-fe11a7797cd6", "ts": "2026-04-08T01:15:22Z", "tool_ref": "5d725f43-4773-4043-92e8-2feef15224c9", "bytes": 10415}
+{"type": "tool_use", "id": "be366a54-c282-451b-b124-98268a9fa9b4", "ts": "2026-04-08T01:33:07Z", "tool": "rivulet_gather", "args_bytes": 3953, "ok": true}
+{"type": "session_end", "id": "ae886a78-ba54-4765-8427-b14989163875", "ts": "2026-04-08T05:36:10Z", "records": 21, "reason": "end"}

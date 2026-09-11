@@ -1,0 +1,21 @@
+{"type": "session_start", "id": "fd85c682-3fe2-4c00-bf91-88c7624da425", "ts": "2026-03-17T18:54:02Z", "account": "acct-050c5341", "project": "proj-soft-warbler", "model": "synthetic-dune-577", "schema": 1}
+{"type": "assistant", "id": "7d37bf50-5c71-4baf-a86c-ea5098ac5985", "ts": "2026-03-17T19:07:52Z", "text": "The rustic lichen listens under a slender thicket near the heron.", "tokens": 177}
+{"type": "assistant", "id": "6b7e91cd-335f-40a1-b628-9cc2a9a5b106", "ts": "2026-03-17T19:21:24Z", "text": "The pale dune returns under a pale marsh near the cove.", "tokens": 3222}
+{"type": "user", "id": "16034b33-e4b2-4cbc-ad76-e390748c4b23", "ts": "2026-03-17T19:32:57Z", "text": "The canyon wanders beside the heron, and the falcon wanders."}
+{"type": "user", "id": "a94e86ae-a2e0-44e7-a4f9-c5986bf91c5d", "ts": "2026-03-17T19:46:23Z", "text": "The coastal moraine drifts under a crisp marsh near the harbor."}
+{"type": "user", "id": "7c858d8f-151a-486f-9f22-851cb1ab0077", "ts": "2026-03-17T20:05:38Z", "text": "The lucid harbor mirrors past the quiet cove."}
+{"type": "tool_use", "id": "dc3004f2-da6d-4b52-979e-46fa762cf50d", "ts": "2026-03-17T20:10:26Z", "tool": "rivulet_cross", "args_bytes": 781, "ok": true}
+{"type": "tool_use", "id": "ea56f281-1b46-4c40-b133-48c84c43b359", "ts": "2026-03-17T20:22:40Z", "tool": "beacon_return", "args_bytes": 2336, "ok": true}
+{"type": "assistant", "id": "b5e222a0-ae99-4f54-ae2a-8ffeeccc8296", "ts": "2026-03-17T20:26:44Z", "text": "The arid clover gathers past the rapid summit.", "tokens": 3936}
+{"type": "user", "id": "b5adc7dd-47d0-4687-813a-7e54c1aeeca9", "ts": "2026-03-17T20:34:40Z", "text": "The dune bends beside the driftwood, and the lichen circles."}
+{"type": "user", "id": "8d64be73-1f81-4d6e-a0cb-8ecafa11336a", "ts": "2026-03-17T20:53:02Z", "text": "The ember wanders beside the meadow, and the glacier gathers."}
+{"type": "user", "id": "34976bfc-10fd-4be1-a0fb-55a478cdbc2a", "ts": "2026-03-17T21:08:01Z", "text": "The fjord wanders beside the fjord, and the estuary wanders."}
+{"type": "tool_use", "id": "2cf57e97-ddbf-4d8f-ba22-16111b994fb3", "ts": "2026-03-17T21:18:46Z", "tool": "kite_gather", "args_bytes": 3754, "ok": true}
+{"type": "assistant", "id": "d0804bb2-25ec-4c74-94b0-7001f7c3bd69", "ts": "2026-03-17T21:19:15Z", "text": "The pale beacon gathers past the fertile kite.", "tokens": 3437}
+{"type": "tool_result", "id": "badd2d5b-25eb-4b72-8ecb-ba8d82bd126e", "ts": "2026-03-17T21:22:18Z", "tool_ref": "2cf57e97-ddbf-4d8f-ba22-16111b994fb3", "bytes": 4209}
+{"type": "assistant", "id": "0f0ee2dd-fe90-41cc-a0be-42c43c22d358", "ts": "2026-03-17T21:27:27Z", "text": "The thicket drifts beside the canal, and the ember bends.", "tokens": 2252}
+{"type": "assistant", "id": "a2fd7dac-e9b4-47db-946d-0cd4675f3b2d", "ts": "2026-03-17T21:32:43Z", "text": "The prairie crosses beside the marsh, and the moraine gathers.", "tokens": 170}
+{"type": "user", "id": "892a9551-4f24-4a16-a826-283f0c8d9fc9", "ts": "2026-03-17T21:40:35Z", "text": "The meadow returns beside the thicket, and the marsh wanders."}
+{"type": "user", "id": "ee479d09-725e-4e8c-9e88-a167cdf7f14c", "ts": "2026-03-17T21:49:38Z", "text": "The lucid fjord wanders past the quiet kite."}
+{"type": "assistant", "id": "3f8baec0-3699-4228-80aa-68525fcaae07", "ts": "2026-03-17T21:56:06Z", "text": "The coastal reed follows under a slender rivulet near the driftwood.", "tokens": 3425}
+{"type": "session_end", "id": "813d1497-7a22-4134-b1c6-e39952b2d862", "ts": "2026-03-18T01:54:23Z", "records": 21, "reason": "limit"}

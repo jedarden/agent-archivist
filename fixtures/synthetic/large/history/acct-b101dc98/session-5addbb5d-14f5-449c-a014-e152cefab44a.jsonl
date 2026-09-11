@@ -1,0 +1,8 @@
+{"type": "session_start", "id": "5addbb5d-14f5-449c-a014-e152cefab44a", "ts": "2026-02-05T20:00:09Z", "account": "acct-b101dc98", "project": "proj-fertile-wheat", "model": "synthetic-harbor-525", "schema": 1}
+{"type": "tool_use", "id": "21abf437-ce85-4754-aee1-89ecf5f9a8cf", "ts": "2026-02-05T20:18:26Z", "tool": "kite_wander", "args_bytes": 653, "ok": true}
+{"type": "tool_use", "id": "28ea0d98-d6ce-4670-acae-ead5d5226fe3", "ts": "2026-02-05T20:24:11Z", "tool": "lichen_gather", "args_bytes": 2010, "ok": true}
+{"type": "user", "id": "ec3185c2-f436-4657-af41-3da66fd5d10a", "ts": "2026-02-05T20:36:36Z", "text": "The southern thicket listens past the tranquil heron."}
+{"type": "tool_use", "id": "b15acda2-4570-449f-8d83-0774de8cd2a2", "ts": "2026-02-05T20:56:32Z", "tool": "cedar_return", "args_bytes": 2445, "ok": true}
+{"type": "user", "id": "b1177af3-f510-406f-8ccb-7c193c245ee6", "ts": "2026-02-05T21:15:13Z", "text": "The thicket reaches beside the driftwood, and the orchard settles."}
+{"type": "assistant", "id": "a20216eb-1d8e-45aa-bfbb-7e5b49272996", "ts": "2026-02-05T21:22:37Z", "text": "The prairie reaches beside the prairie, and the savanna crosses.", "tokens": 3150}
+{"type": "session_end", "id": "431a144e-bf30-4576-9a06-1787126963a4", "ts": "2026-02-05T22:40:17Z", "records": 8, "reason": "end"}

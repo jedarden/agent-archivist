@@ -1,0 +1,14 @@
+{"type": "session_start", "id": "dee9b787-9f0c-4455-ad11-1c4760e37ade", "ts": "2026-01-23T08:06:50Z", "account": "acct-0ff54fd7", "project": "proj-coastal-orchard", "model": "synthetic-tributary-608", "schema": 1}
+{"type": "user", "id": "a64893ff-03a1-4c96-9169-40601753e973", "ts": "2026-01-23T08:23:46Z", "text": "The glacier crosses beside the meadow, and the tributary reaches."}
+{"type": "user", "id": "d71d7f91-0361-4e04-b983-0bbf0453d2ae", "ts": "2026-01-23T08:30:44Z", "text": "The boulder reaches beside the quarry, and the cove settles."}
+{"type": "user", "id": "cb5fdb62-4d9f-4721-81b0-1d563be3c506", "ts": "2026-01-23T08:45:24Z", "text": "The violet savanna returns under a rustic meadow near the glacier."}
+{"type": "user", "id": "423544d2-6fc7-43ed-a395-e81f64b591d9", "ts": "2026-01-23T09:02:18Z", "text": "The sturdy willow gathers past the hollow quarry."}
+{"type": "user", "id": "ad4b2879-e6a6-4ab2-a1f3-a98edaa0eec0", "ts": "2026-01-23T09:11:22Z", "text": "The pale meadow bends past the slender willow."}
+{"type": "system", "id": "60585e0d-0252-4c5c-b669-68dc3dfb5226", "ts": "2026-01-23T09:23:01Z", "text": "The mellow harbor crosses under a amber moraine near the heron."}
+{"type": "system", "id": "2939bb50-839f-4d80-9169-5ab5657f989a", "ts": "2026-01-23T09:26:00Z", "text": "The hazy driftwood reaches past the nimble dune."}
+{"type": "system", "id": "8dc7b1b7-f484-488d-8b57-214b4bc3d5f2", "ts": "2026-01-23T09:27:46Z", "text": "The dune mirrors beside the willow, and the clover crosses."}
+{"type": "user", "id": "50e6e255-5c9a-401e-8b7f-73912d0728f4", "ts": "2026-01-23T09:41:43Z", "text": "The rustic cedar crosses past the rustic summit."}
+{"type": "tool_use", "id": "8a33b280-fc42-4df6-bbb7-70b910787661", "ts": "2026-01-23T09:46:51Z", "tool": "summit_return", "args_bytes": 2784, "ok": true}
+{"type": "assistant", "id": "241c49df-8ce3-465d-95c2-dd1e4a133b8b", "ts": "2026-01-23T09:51:39Z", "text": "The coastal quarry returns under a violet dune near the kite.", "tokens": 1123}
+{"type": "assistant", "id": "40e36126-e0c8-44fa-ab42-ab940d083a9c", "ts": "2026-01-23T10:09:00Z", "text": "The fertile quarry crosses under a quiet pebble near the lantern.", "tokens": 2619}
+{"type": "session_end", "id": "67388de3-bf9b-45f1-92c3-0a491c7763aa", "ts": "2026-01-23T12:47:04Z", "records": 14, "reason": "interrupt"}

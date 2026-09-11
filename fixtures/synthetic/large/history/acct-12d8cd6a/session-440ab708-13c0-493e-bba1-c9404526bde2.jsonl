@@ -1,0 +1,19 @@
+{"type": "session_start", "id": "440ab708-13c0-493e-bba1-c9404526bde2", "ts": "2026-04-10T11:41:01Z", "account": "acct-12d8cd6a", "project": "proj-gentle-tributary", "model": "synthetic-quarry-336", "schema": 1}
+{"type": "system", "id": "b7b665d9-2ce5-41a3-a94d-86b25a4f6eba", "ts": "2026-04-10T12:00:46Z", "text": "The pale pebble wanders under a pale lantern near the wheat."}
+{"type": "tool_use", "id": "f6f1e27f-b038-452a-ac57-2d656e13107c", "ts": "2026-04-10T12:14:04Z", "tool": "reed_cross", "args_bytes": 2151, "ok": true}
+{"type": "assistant", "id": "9518c1bf-252a-4b94-b116-c2a94bb7b0fd", "ts": "2026-04-10T12:32:57Z", "text": "The hazy warbler follows past the gentle harbor.", "tokens": 659}
+{"type": "user", "id": "86223990-7d26-4b6d-96c2-7aeee9b738f5", "ts": "2026-04-10T12:41:23Z", "text": "The moraine gathers beside the harbor, and the falcon mirrors."}
+{"type": "user", "id": "8d3f70bd-2083-4c78-ad7d-358883d81c6f", "ts": "2026-04-10T12:56:12Z", "text": "The nimble thicket returns past the lucid willow."}
+{"type": "assistant", "id": "f61b1023-b559-48f3-89fd-3c4af2e9daa6", "ts": "2026-04-10T13:04:50Z", "text": "The crisp lantern listens past the pale marsh.", "tokens": 3071}
+{"type": "assistant", "id": "22fffefa-49ea-41ee-8b0d-26302bf51faa", "ts": "2026-04-10T13:08:15Z", "text": "The estuary follows beside the glacier, and the quarry crosses.", "tokens": 920}
+{"type": "tool_use", "id": "34677d62-584d-489d-ab17-aa74fc837af6", "ts": "2026-04-10T13:16:52Z", "tool": "canyon_listen", "args_bytes": 1950, "ok": false}
+{"type": "user", "id": "d87768bf-bc1e-4daa-afb2-b8e2610075dc", "ts": "2026-04-10T13:30:18Z", "text": "The tranquil falcon reaches under a pale lichen near the quarry."}
+{"type": "tool_use", "id": "3ba89539-915b-4278-be9d-b771685fee5f", "ts": "2026-04-10T13:40:24Z", "tool": "marsh_drift", "args_bytes": 3307, "ok": true}
+{"type": "user", "id": "0da7ce0b-da22-4f89-8897-22f24b098ee3", "ts": "2026-04-10T13:50:52Z", "text": "The southern estuary mirrors past the pale rivulet."}
+{"type": "assistant", "id": "27314c35-5ba4-429b-aa52-2309dc25ead4", "ts": "2026-04-10T14:01:02Z", "text": "The arid summit wanders past the twin kite.", "tokens": 1973}
+{"type": "tool_use", "id": "3170e268-38f4-48c1-9203-d524ed2718a2", "ts": "2026-04-10T14:18:31Z", "tool": "wheat_circle", "args_bytes": 2009, "ok": true}
+{"type": "tool_use", "id": "4d65ef14-20b3-4234-8e12-fc5c26835e60", "ts": "2026-04-10T14:31:12Z", "tool": "falcon_reach", "args_bytes": 3726, "ok": true}
+{"type": "user", "id": "d882dabf-0fbd-44db-9d56-6982123b2a05", "ts": "2026-04-10T14:46:16Z", "text": "The moraine mirrors beside the lichen, and the lichen mirrors."}
+{"type": "tool_use", "id": "6d6520ae-f64f-4439-9d3c-8f7d7964d7d3", "ts": "2026-04-10T15:01:29Z", "tool": "summit_listen", "args_bytes": 1774, "ok": true}
+{"type": "assistant", "id": "7f07e63b-d754-4d34-a2a8-3dab9792c9b7", "ts": "2026-04-10T15:05:07Z", "text": "The estuary settles beside the canal, and the meadow returns.", "tokens": 2587}
+{"type": "session_end", "id": "661b68c2-364a-4675-b67a-1bcb410ae973", "ts": "2026-04-10T18:01:20Z", "records": 19, "reason": "interrupt"}

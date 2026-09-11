@@ -1,0 +1,23 @@
+{"type": "session_start", "id": "4aff7323-def2-47cb-bdc1-6d3255cd5a16", "ts": "2026-05-02T07:41:23Z", "account": "acct-cf25ff55", "project": "proj-mellow-clover", "model": "synthetic-lantern-765", "schema": 1}
+{"type": "assistant", "id": "5bc7c8be-2f72-4cf4-a0d9-981dae8fedc7", "ts": "2026-05-02T07:42:46Z", "text": "The rustic atoll listens past the amber quarry.", "tokens": 2707}
+{"type": "assistant", "id": "0471520f-404f-47dc-9f4c-81976faed788", "ts": "2026-05-02T07:53:57Z", "text": "The arid orchard returns past the hollow willow.", "tokens": 3677}
+{"type": "assistant", "id": "467bbc64-5cbf-4e47-ad45-51aef5a86acb", "ts": "2026-05-02T07:56:55Z", "text": "The hazy cedar listens under a mellow dune near the beacon.", "tokens": 2336}
+{"type": "user", "id": "a63a5810-eaa5-4113-bca1-745315e69f2f", "ts": "2026-05-02T08:14:36Z", "text": "The tranquil tributary mirrors past the gentle summit."}
+{"type": "assistant", "id": "6db9ebef-b395-4032-97d7-dceabfbd4a90", "ts": "2026-05-02T08:18:47Z", "text": "The vast moraine returns past the vast harbor.", "tokens": 2355}
+{"type": "tool_use", "id": "6b37f74b-fd2d-40a9-89db-333e2ac3ec2b", "ts": "2026-05-02T08:22:09Z", "tool": "rivulet_follow", "args_bytes": 2947, "ok": true}
+{"type": "tool_use", "id": "6ea92382-e35b-42ca-b72f-01abbbaea0eb", "ts": "2026-05-02T08:27:19Z", "tool": "orchard_bend", "args_bytes": 2345, "ok": true}
+{"type": "assistant", "id": "1d4eaf32-1a49-4e20-9c1a-2e39752e4f81", "ts": "2026-05-02T08:32:14Z", "text": "The prairie settles beside the harbor, and the canal returns.", "tokens": 698}
+{"type": "assistant", "id": "b7f88b00-9f99-4c1d-baa3-284fcdeffd02", "ts": "2026-05-02T08:41:47Z", "text": "The soft prairie follows past the amber cedar.", "tokens": 2945}
+{"type": "user", "id": "04929116-e082-428d-baec-5d9f4dfe7b8e", "ts": "2026-05-02T08:50:14Z", "text": "The hollow canal gathers past the lucid cedar."}
+{"type": "assistant", "id": "18e58a31-c847-47f4-aec9-843ece280679", "ts": "2026-05-02T09:06:34Z", "text": "The solemn dune reaches under a mellow thicket near the cedar.", "tokens": 3452}
+{"type": "user", "id": "9ced9466-10b2-47f4-948e-2ae339807080", "ts": "2026-05-02T09:20:12Z", "text": "The solemn beacon circles past the northern dune."}
+{"type": "user", "id": "3d23d892-a69c-432d-adf6-dc18c936276f", "ts": "2026-05-02T09:25:22Z", "text": "The soft glacier listens under a violet ember near the savanna."}
+{"type": "user", "id": "21402fcf-9fcb-46b0-9ec3-43ca7109f777", "ts": "2026-05-02T09:38:59Z", "text": "The hazy summit wanders under a rustic cove near the boulder."}
+{"type": "user", "id": "70f90d4a-d010-468f-8daf-3a42dcaf8a16", "ts": "2026-05-02T09:56:01Z", "text": "The gentle falcon settles past the lucid cove."}
+{"type": "tool_result", "id": "65a06567-9417-4eb6-acac-eec09a766b62", "ts": "2026-05-02T10:00:39Z", "tool_ref": "6ea92382-e35b-42ca-b72f-01abbbaea0eb", "bytes": 1350}
+{"type": "system", "id": "abf7f17f-2522-4d2d-8746-7b424ead6f75", "ts": "2026-05-02T10:16:20Z", "text": "The twin falcon gathers past the hazy estuary."}
+{"type": "assistant", "id": "9ffe090e-f6be-4d31-a02c-42284ae12f24", "ts": "2026-05-02T10:28:35Z", "text": "The coastal summit mirrors under a mellow orchard near the lichen.", "tokens": 50}
+{"type": "user", "id": "1dba65cf-0e25-4afc-af5d-772576435673", "ts": "2026-05-02T10:41:55Z", "text": "The soft marsh bends under a quiet savanna near the moraine."}
+{"type": "tool_use", "id": "db8fd92f-bef5-43ca-b82f-ab29cf2c38c3", "ts": "2026-05-02T10:42:28Z", "tool": "cove_wander", "args_bytes": 1321, "ok": true}
+{"type": "tool_result", "id": "73192d1b-3f70-454b-914b-58c0938f4f97", "ts": "2026-05-02T10:56:56Z", "tool_ref": "db8fd92f-bef5-43ca-b82f-ab29cf2c38c3", "bytes": 2646}
+{"type": "session_end", "id": "89a5c80c-c2c2-4380-a32d-a85883b7183f", "ts": "2026-05-02T15:21:46Z", "records": 23, "reason": "interrupt"}

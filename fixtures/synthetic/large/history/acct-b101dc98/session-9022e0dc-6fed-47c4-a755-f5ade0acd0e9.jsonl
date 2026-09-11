@@ -1,0 +1,20 @@
+{"type": "session_start", "id": "9022e0dc-6fed-47c4-a755-f5ade0acd0e9", "ts": "2026-04-11T15:24:41Z", "account": "acct-b101dc98", "project": "proj-quiet-harbor", "model": "synthetic-cove-164", "schema": 1}
+{"type": "tool_use", "id": "3e386089-7ffa-48d7-b7bf-43f5ca29a37e", "ts": "2026-04-11T15:28:44Z", "tool": "cove_reach", "args_bytes": 1500, "ok": true}
+{"type": "user", "id": "2627ea0a-240d-4c75-a06f-7c3dd56240fc", "ts": "2026-04-11T15:43:54Z", "text": "The solemn quarry reaches past the lucid thicket."}
+{"type": "user", "id": "e2fc3838-9e7b-48e3-a6fc-1f530829bc92", "ts": "2026-04-11T15:51:45Z", "text": "The mellow canyon settles under a lucid estuary near the driftwood."}
+{"type": "assistant", "id": "e7d0e59b-0988-4b53-bf1a-5d9af9008914", "ts": "2026-04-11T16:04:27Z", "text": "The quiet beacon gathers under a slender clover near the rivulet.", "tokens": 2171}
+{"type": "tool_result", "id": "11d5af36-5ef5-45e1-a057-9b9b9fb198dd", "ts": "2026-04-11T16:09:19Z", "tool_ref": "3e386089-7ffa-48d7-b7bf-43f5ca29a37e", "bytes": 6589}
+{"type": "system", "id": "774daa18-34cf-46f2-a586-54a9579cad4a", "ts": "2026-04-11T16:11:26Z", "text": "The soft tributary follows past the violet atoll."}
+{"type": "user", "id": "36e87b9b-1cf1-453c-9956-4a8d9b09341e", "ts": "2026-04-11T16:24:59Z", "text": "The mellow moraine bends past the pale marsh."}
+{"type": "user", "id": "a540c292-b5db-4694-8042-a68b4c52ca9b", "ts": "2026-04-11T16:32:10Z", "text": "The rapid cedar drifts past the coastal canyon."}
+{"type": "assistant", "id": "25363c6e-8d63-4d54-b525-1aa005b14e1c", "ts": "2026-04-11T16:50:47Z", "text": "The prairie mirrors beside the harbor, and the summit wanders.", "tokens": 427}
+{"type": "user", "id": "9c56ca28-caea-436c-bf59-29f5f3c83e22", "ts": "2026-04-11T16:55:59Z", "text": "The thicket reaches beside the heron, and the fjord gathers."}
+{"type": "assistant", "id": "9e7b14ba-505f-4aa6-a6d7-b4539f3b6425", "ts": "2026-04-11T17:12:07Z", "text": "The slender marsh bends under a hazy driftwood near the willow.", "tokens": 2507}
+{"type": "assistant", "id": "6931f7ea-80dc-43d3-b4f4-e79cafc0a277", "ts": "2026-04-11T17:26:22Z", "text": "The warbler settles beside the beacon, and the fjord wanders.", "tokens": 2599}
+{"type": "assistant", "id": "899e971e-ab80-4e1f-bf6d-5718b52877c2", "ts": "2026-04-11T17:35:53Z", "text": "The orchard crosses beside the reed, and the canal follows.", "tokens": 1610}
+{"type": "assistant", "id": "e646baea-f8f7-4ee2-9d88-c2793c80c30e", "ts": "2026-04-11T17:39:44Z", "text": "The pale canyon reaches under a slender atoll near the marsh.", "tokens": 204}
+{"type": "tool_use", "id": "bcdae3f9-b17b-49dd-8ca2-608d87188e98", "ts": "2026-04-11T17:46:40Z", "tool": "thicket_drift", "args_bytes": 2093, "ok": true}
+{"type": "tool_use", "id": "248e7bac-6b02-414f-b586-731c547ea99f", "ts": "2026-04-11T17:53:25Z", "tool": "savanna_settle", "args_bytes": 3656, "ok": true}
+{"type": "tool_use", "id": "de462206-3a75-4d3f-947d-34856ea20618", "ts": "2026-04-11T17:53:43Z", "tool": "rivulet_drift", "args_bytes": 3837, "ok": true}
+{"type": "tool_result", "id": "b21f903a-2164-4aaf-b141-99dd4f038d65", "ts": "2026-04-11T18:02:41Z", "tool_ref": "de462206-3a75-4d3f-947d-34856ea20618", "bytes": 7327}
+{"type": "session_end", "id": "c73dcae5-4acc-4b3d-acf9-2cba83c193b3", "ts": "2026-04-11T22:05:01Z", "records": 20, "reason": "end"}

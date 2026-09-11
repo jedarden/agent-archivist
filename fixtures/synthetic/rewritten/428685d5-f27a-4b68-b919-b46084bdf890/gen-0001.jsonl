@@ -1,0 +1,15 @@
+{"type": "session_start", "id": "428685d5-f27a-4b68-b919-b46084bdf890", "ts": "2026-04-25T09:02:34Z", "account": "acct-1440ba87", "project": "proj-rustic-marsh", "model": "synthetic-meadow-347", "schema": 1}
+{"type": "user", "id": "cbbfb7da-d987-4362-8bfc-446f1ba23eb6", "ts": "2026-04-25T09:11:23Z", "text": "The rivulet returns beside the atoll, and the willow drifts."}
+{"type": "user", "id": "0f459404-61e3-4704-87c5-a99bc14125cb", "ts": "2026-04-25T09:20:12Z", "text": "The crisp kite reaches under a quiet meadow near the tributary."}
+{"type": "user", "id": "afaf54ee-5daf-4122-886a-cf396a9d0ce8", "ts": "2026-04-25T09:22:23Z", "text": "The orchard wanders beside the boulder, and the estuary mirrors."}
+{"type": "user", "id": "f63ac602-0020-4064-a5a2-be8adb1310e6", "ts": "2026-04-25T09:30:54Z", "text": "The tributary follows beside the kite, and the harbor crosses."}
+{"type": "tool_use", "id": "35237e1d-f80a-471b-b621-2fd8ec33dd52", "ts": "2026-04-25T09:35:45Z", "tool": "thicket_gather", "args_bytes": 1062, "ok": true}
+{"type": "user", "id": "c0a8f54f-a78a-46af-81fb-c067838a7458", "ts": "2026-04-25T09:41:54Z", "text": "The slender kite wanders under a crisp falcon near the harbor."}
+{"type": "assistant", "id": "85f6453b-740b-4f1d-a7a5-a7a5027d5d0b", "ts": "2026-04-25T09:47:56Z", "text": "The tranquil willow listens past the slender canal.", "tokens": 465}
+{"type": "assistant", "id": "db1d8427-7675-4568-8f1f-ff86e2b648be", "ts": "2026-04-25T09:52:25Z", "text": "The crisp atoll reaches past the pale orchard.", "tokens": 3513}
+{"type": "tool_use", "id": "88f5251c-df70-4a57-b603-db83a50f9981", "ts": "2026-04-25T10:02:21Z", "tool": "willow_drift", "args_bytes": 3429, "ok": true}
+{"type": "assistant", "id": "921b9b79-9c56-44b8-9741-b2b1a1d12c2e", "ts": "2026-04-25T10:05:45Z", "text": "The quiet dune gathers past the mellow cedar.", "tokens": 3955}
+{"type": "assistant", "id": "9ab5d58a-565c-4bbd-ada0-772c6caefc6b", "ts": "2026-04-25T10:06:00Z", "text": "The warbler listens beside the tributary, and the marsh reaches.", "tokens": 1398}
+{"type": "tool_result", "id": "f560fe67-16cb-4d67-9d37-525ae2ce87bf", "ts": "2026-04-25T10:15:49Z", "tool_ref": "88f5251c-df70-4a57-b603-db83a50f9981", "bytes": 335}
+{"type": "user", "id": "c405a3e0-ff9a-4222-a7e1-86c7d609f05e", "ts": "2026-04-25T10:25:41Z", "text": "The hazy willow mirrors past the amber driftwood."}
+{"type": "session_end", "id": "2cc58037-2066-4f4d-8d5d-ea60f4e64f50", "ts": "2026-04-25T11:32:49Z", "records": 15, "reason": "interrupt"}

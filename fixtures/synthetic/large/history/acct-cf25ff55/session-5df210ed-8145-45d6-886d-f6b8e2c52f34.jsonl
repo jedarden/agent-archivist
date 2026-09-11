@@ -1,0 +1,18 @@
+{"type": "session_start", "id": "5df210ed-8145-45d6-886d-f6b8e2c52f34", "ts": "2026-01-30T05:45:09Z", "account": "acct-cf25ff55", "project": "proj-violet-ember", "model": "synthetic-fjord-133", "schema": 1}
+{"type": "assistant", "id": "604e5dfa-ee50-4579-b245-82737b26bf51", "ts": "2026-01-30T05:48:24Z", "text": "The rustic summit drifts past the nimble boulder.", "tokens": 3151}
+{"type": "assistant", "id": "3ae14975-873d-4d3c-ac4c-c41cc8f40374", "ts": "2026-01-30T05:58:40Z", "text": "The soft wheat circles past the coastal prairie.", "tokens": 3133}
+{"type": "assistant", "id": "8f03419d-8f08-46a4-bf1b-457f14d3822d", "ts": "2026-01-30T06:00:32Z", "text": "The tranquil lichen reaches past the fertile marsh.", "tokens": 417}
+{"type": "assistant", "id": "bdeea954-426a-427d-b814-466b562743e9", "ts": "2026-01-30T06:06:53Z", "text": "The harbor gathers beside the lichen, and the marsh mirrors.", "tokens": 3839}
+{"type": "tool_use", "id": "9a31b40d-8d63-4e1d-99c6-ca092074d4d5", "ts": "2026-01-30T06:23:08Z", "tool": "meadow_drift", "args_bytes": 3445, "ok": true}
+{"type": "user", "id": "b8db2d1f-d79e-4e0b-ba09-2c89a4338455", "ts": "2026-01-30T06:31:32Z", "text": "The mellow canyon returns under a slender ember near the willow."}
+{"type": "user", "id": "0a9b6ca4-c56f-4626-8a8d-ee7fb93a47f4", "ts": "2026-01-30T06:36:31Z", "text": "The amber heron circles past the fertile marsh."}
+{"type": "user", "id": "447d8d85-3842-44e6-8ef6-e7d733d370b8", "ts": "2026-01-30T06:41:47Z", "text": "The nimble orchard listens past the southern estuary."}
+{"type": "assistant", "id": "ee2f4ade-1790-43e3-a0ca-44b2fbaef54c", "ts": "2026-01-30T06:49:56Z", "text": "The gentle beacon settles past the vast lantern.", "tokens": 3048}
+{"type": "tool_use", "id": "2689dee1-920d-4666-b260-8fac67a56f9e", "ts": "2026-01-30T07:03:35Z", "tool": "beacon_bend", "args_bytes": 3993, "ok": true}
+{"type": "assistant", "id": "213f5b46-ddc8-4b7f-86f8-f9e9602e4f69", "ts": "2026-01-30T07:20:20Z", "text": "The canal listens beside the lichen, and the canal drifts.", "tokens": 935}
+{"type": "assistant", "id": "fbd7f49e-48d3-4004-adc2-dd046b1d3f2c", "ts": "2026-01-30T07:21:22Z", "text": "The slender willow mirrors past the twin clover.", "tokens": 435}
+{"type": "user", "id": "098255bc-a469-4688-9c84-3ebc35eb7ea4", "ts": "2026-01-30T07:23:20Z", "text": "The crisp heron returns past the lucid dune."}
+{"type": "assistant", "id": "52dab3f2-ceac-4242-bbcc-77c77cf1a739", "ts": "2026-01-30T07:29:12Z", "text": "The gentle lantern bends past the violet cedar.", "tokens": 2360}
+{"type": "user", "id": "0287f89e-9b12-4426-a1ba-2b6d191be935", "ts": "2026-01-30T07:34:24Z", "text": "The soft quarry bends past the mellow canyon."}
+{"type": "user", "id": "d4cea954-9b1a-4425-bb79-ae023330c3d1", "ts": "2026-01-30T07:36:19Z", "text": "The rustic quarry drifts past the fertile moraine."}
+{"type": "session_end", "id": "9db98242-0506-4dbb-ae72-881172e0e211", "ts": "2026-01-30T11:45:27Z", "records": 18, "reason": "interrupt"}

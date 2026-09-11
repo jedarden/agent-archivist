@@ -1,0 +1,20 @@
+{"type": "session_start", "id": "22de87a7-8377-4c20-900e-e6c1d4fcec2c", "ts": "2026-04-11T07:51:49Z", "account": "acct-12d8cd6a", "project": "proj-rapid-savanna", "model": "synthetic-glacier-866", "schema": 1}
+{"type": "tool_use", "id": "43206eaf-21fa-45ef-8357-902174b02045", "ts": "2026-04-11T08:10:55Z", "tool": "driftwood_reach", "args_bytes": 2834, "ok": true}
+{"type": "user", "id": "c58f91cc-e148-45bf-bc30-c6c9d8df3690", "ts": "2026-04-11T08:13:49Z", "text": "The prairie reaches beside the atoll, and the reed wanders."}
+{"type": "user", "id": "c73026e7-2df4-481d-817a-6dae62c83fca", "ts": "2026-04-11T08:30:35Z", "text": "The sturdy rivulet mirrors under a arid wheat near the glacier."}
+{"type": "tool_use", "id": "1f0ffcf2-5902-4a0f-a890-456b993f6d4b", "ts": "2026-04-11T08:42:29Z", "tool": "canyon_drift", "args_bytes": 141, "ok": true}
+{"type": "tool_result", "id": "b5a6926c-cb8e-4d08-8bd7-5b04f1b4c84a", "ts": "2026-04-11T08:42:45Z", "tool_ref": "1f0ffcf2-5902-4a0f-a890-456b993f6d4b", "bytes": 2782}
+{"type": "tool_use", "id": "19e4f85a-7e73-4fcf-a634-7748fe4de755", "ts": "2026-04-11T08:51:29Z", "tool": "falcon_mirror", "args_bytes": 3777, "ok": true}
+{"type": "assistant", "id": "ebefaa4c-4eef-4dae-8a8e-a7f4a9b9e7cb", "ts": "2026-04-11T09:05:43Z", "text": "The slender beacon circles past the coastal dune.", "tokens": 2336}
+{"type": "user", "id": "3015c37d-f499-458d-9a95-e7c01f17bdf8", "ts": "2026-04-11T09:16:40Z", "text": "The amber beacon circles past the mellow beacon."}
+{"type": "user", "id": "1ac2a861-5a18-4459-98fb-3499ed272163", "ts": "2026-04-11T09:26:32Z", "text": "The slender boulder bends past the rustic canyon."}
+{"type": "assistant", "id": "00f4a719-cc27-47b3-b3e2-5bec4d50e807", "ts": "2026-04-11T09:39:09Z", "text": "The arid dune mirrors past the pale tributary.", "tokens": 3022}
+{"type": "user", "id": "e2250565-b19d-4ee7-b39d-9dd386a74f1e", "ts": "2026-04-11T09:57:01Z", "text": "The pebble crosses beside the thicket, and the estuary follows."}
+{"type": "tool_result", "id": "023e1e2d-efd3-468a-b310-e025d439d0f0", "ts": "2026-04-11T10:11:18Z", "tool_ref": "19e4f85a-7e73-4fcf-a634-7748fe4de755", "bytes": 2378}
+{"type": "user", "id": "09332531-ad68-4b9e-bda6-20aee711bf07", "ts": "2026-04-11T10:28:57Z", "text": "The orchard gathers beside the clover, and the orchard circles."}
+{"type": "user", "id": "a9e8afd8-1e65-4b51-a995-e78b2ea05aeb", "ts": "2026-04-11T10:35:33Z", "text": "The quiet lantern returns past the solemn harbor."}
+{"type": "assistant", "id": "64f945b2-1bfa-4c0e-b2d3-d1b7c38778bd", "ts": "2026-04-11T10:51:02Z", "text": "The nimble thicket wanders past the nimble warbler.", "tokens": 1855}
+{"type": "user", "id": "b9d51c31-a261-4067-b447-b2252afcb47b", "ts": "2026-04-11T11:01:52Z", "text": "The fertile pebble drifts under a amber meadow near the reed."}
+{"type": "user", "id": "fe16e8f4-bd02-4975-8361-82c09ec8c52b", "ts": "2026-04-11T11:03:59Z", "text": "The hollow meadow wanders under a solemn canyon near the lichen."}
+{"type": "tool_use", "id": "d43ca80a-9732-40d8-9687-4d7ee88f43fa", "ts": "2026-04-11T11:15:01Z", "tool": "ember_settle", "args_bytes": 306, "ok": true}
+{"type": "session_end", "id": "18edc7b8-6807-45a6-baf2-c053bab53ed4", "ts": "2026-04-11T14:32:09Z", "records": 20, "reason": "interrupt"}

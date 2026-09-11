@@ -6,7 +6,8 @@
 #
 # Lanes:
 #   - Fast:  fmt, build, clippy (-D warnings), rustdoc, stub scan, crate
-#     graph, license gate, error-code registry gate, secret scan of the
+#     graph, license gate, error-code registry gate, synthetic-fixture
+#     regeneration and content scan, secret scan of the
 #     working tree (seconds, offline; safe as a gate)
 #   - Slow:  the workspace test suite
 #   - Audit: dependency audit (cargo audit; fetches the public RustSec
@@ -103,6 +104,10 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   run_check "crate graph"          python3 tools/check-crate-graph.py
   run_check "license gate"         python3 tools/check-licenses.py
   run_check "error-code registry"  python3 tools/check-error-codes.py --self-test
+  # Byte-exact regeneration from the recorded seed plus the closed-
+  # vocabulary content scan (docs/notes/fixtures.md). Output is
+  # content-free: counts, bytes, and digests only.
+  run_check "synthetic fixtures"   python3 tools/fixturegen.py --verify
   # .gitleaks.toml (extend-default + never-committed path exclusions) is
   # picked up automatically from the repository root.
   require_tool gitleaks "gitleaks >= 8.19 (dir mode, --redact); see CONTRIBUTING.md" \

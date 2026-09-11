@@ -1,0 +1,9 @@
+{"type": "session_start", "id": "22f20896-cb75-42da-ac49-c66d86ff4a88", "ts": "2026-01-07T19:42:29Z", "account": "acct-0ff54fd7", "project": "proj-mellow-kite", "model": "synthetic-canal-427", "schema": 1}
+{"type": "user", "id": "7ce6155e-fb0c-4c7b-8305-877ac1cc5aaa", "ts": "2026-01-07T19:54:17Z", "text": "The violet summit drifts under a solemn savanna near the tributary."}
+{"type": "assistant", "id": "b3f0a767-220b-4736-8212-31a388b9a2de", "ts": "2026-01-07T20:01:50Z", "text": "The amber rivulet listens under a tranquil cedar near the estuary.", "tokens": 476}
+{"type": "user", "id": "229b3d0f-aee1-4210-9796-6f3c8c961882", "ts": "2026-01-07T20:20:18Z", "text": "The amber marsh wanders past the solemn falcon."}
+{"type": "user", "id": "f57c874d-4334-4980-b758-b49d2ae47588", "ts": "2026-01-07T20:27:44Z", "text": "The willow crosses beside the canal, and the quarry returns."}
+{"type": "user", "id": "c0fb1e0a-910c-4f99-9087-30f0f508f4f3", "ts": "2026-01-07T20:35:48Z", "text": "The hollow boulder bends under a sturdy thicket near the ember."}
+{"type": "tool_use", "id": "bd13c876-9e02-4dfa-98e2-ca37ee86c8d3", "ts": "2026-01-07T20:40:47Z", "tool": "kite_return", "args_bytes": 3298, "ok": true}
+{"type": "tool_use", "id": "c3ab76c9-69c9-4eb9-82cb-7a31cf546e67", "ts": "2026-01-07T20:49:57Z", "tool": "tributary_wander", "args_bytes": 3746, "ok": true}
+{"type": "session_end", "id": "f235e845-f9a8-4cd1-b599-0fe21cd75a0e", "ts": "2026-01-07T22:42:38Z", "records": 9, "reason": "end"}

@@ -1,0 +1,19 @@
+{"type": "session_start", "id": "59606843-344e-4405-9afc-11fac4397308", "ts": "2026-02-26T00:07:48Z", "account": "acct-ebe75c56", "project": "proj-rustic-pebble", "model": "synthetic-boulder-586", "schema": 1}
+{"type": "user", "id": "a1e42d81-5b8a-4f14-a6a3-71e3e8e17274", "ts": "2026-02-26T00:17:26Z", "text": "The southern lantern follows past the northern canal."}
+{"type": "user", "id": "78a45f73-2267-4a3b-b1f5-c897298d4211", "ts": "2026-02-26T00:18:44Z", "text": "The coastal cedar circles under a soft wheat near the clover."}
+{"type": "assistant", "id": "b623e01b-5b0a-4baa-a644-cf35882a5883", "ts": "2026-02-26T00:31:07Z", "text": "The northern heron bends under a fertile canal near the moraine.", "tokens": 2567}
+{"type": "tool_use", "id": "a56e0d19-c42d-4da5-a9c8-164c0b190772", "ts": "2026-02-26T00:48:06Z", "tool": "moraine_settle", "args_bytes": 3477, "ok": true}
+{"type": "tool_result", "id": "829e1096-bdb9-4b98-8986-8e323c0b3fa6", "ts": "2026-02-26T01:03:31Z", "tool_ref": "a56e0d19-c42d-4da5-a9c8-164c0b190772", "bytes": 14014}
+{"type": "user", "id": "e967b237-3c8a-4815-a6a5-2d5f07dc7ec9", "ts": "2026-02-26T01:07:32Z", "text": "The tributary follows beside the meadow, and the savanna listens."}
+{"type": "assistant", "id": "3e82b0b8-a044-4459-8573-93afac328ee9", "ts": "2026-02-26T01:21:45Z", "text": "The quiet orchard mirrors under a gentle meadow near the fjord.", "tokens": 1702}
+{"type": "tool_use", "id": "2aaf9664-491b-45b2-a7ba-ccd95d45a26f", "ts": "2026-02-26T01:31:26Z", "tool": "cove_bend", "args_bytes": 114, "ok": false}
+{"type": "assistant", "id": "da158d7f-84ee-4471-bd84-af3c3b6d23f2", "ts": "2026-02-26T01:39:07Z", "text": "The northern driftwood bends under a tranquil cove near the marsh.", "tokens": 56}
+{"type": "tool_use", "id": "d95427ed-fcfd-4334-821e-b36486eeb786", "ts": "2026-02-26T01:50:25Z", "tool": "reed_drift", "args_bytes": 634, "ok": true}
+{"type": "user", "id": "fe4dfbb6-89dd-4628-85a4-3d1ac4f4fde6", "ts": "2026-02-26T02:01:34Z", "text": "The soft warbler drifts under a soft dune near the reed."}
+{"type": "tool_result", "id": "1c080c9d-4097-4b40-966e-d11d9a1a5a9e", "ts": "2026-02-26T02:16:34Z", "tool_ref": "d95427ed-fcfd-4334-821e-b36486eeb786", "bytes": 5064}
+{"type": "user", "id": "ea53ea8f-c8b4-49a1-9a7d-1d2e4693b93f", "ts": "2026-02-26T02:33:14Z", "text": "The boulder drifts beside the moraine, and the estuary bends."}
+{"type": "assistant", "id": "a1ca1b34-a5e4-404f-96a4-52e6d99029f4", "ts": "2026-02-26T02:37:54Z", "text": "The northern savanna circles under a rustic ember near the quarry.", "tokens": 2552}
+{"type": "user", "id": "21f999ad-629a-4352-a238-7e2d44fb24b3", "ts": "2026-02-26T02:46:31Z", "text": "The violet moraine wanders past the vast canal."}
+{"type": "tool_use", "id": "d06d6a20-bab3-42d6-8ea6-dca04ed9afdd", "ts": "2026-02-26T02:50:26Z", "tool": "canyon_return", "args_bytes": 2069, "ok": true}
+{"type": "assistant", "id": "2e4a779b-7982-4378-9099-56a612f04343", "ts": "2026-02-26T02:54:05Z", "text": "The twin beacon returns past the soft canal.", "tokens": 990}
+{"type": "session_end", "id": "6aff5a4a-3577-4dbf-a2b2-d5bacddd8ae6", "ts": "2026-02-26T06:28:07Z", "records": 19, "reason": "interrupt"}

@@ -1,0 +1,9 @@
+{"type": "session_start", "id": "1f2f87e9-cc72-4f20-9457-27e6e4222176", "ts": "2026-04-26T16:01:23Z", "account": "acct-cf25ff55", "project": "proj-vast-wheat", "model": "synthetic-boulder-289", "schema": 1}
+{"type": "assistant", "id": "897cef30-66eb-4102-ba87-04b55320d7a6", "ts": "2026-04-26T16:03:09Z", "text": "The fjord bends beside the moraine, and the moraine returns.", "tokens": 2751}
+{"type": "user", "id": "cfb38007-83ee-4e65-bf51-aae6176dc58e", "ts": "2026-04-26T16:16:22Z", "text": "The cedar reaches beside the wheat, and the harbor crosses."}
+{"type": "user", "id": "fb774328-a608-4339-9068-e4d5a451d9f9", "ts": "2026-04-26T16:22:32Z", "text": "The coastal ember circles under a pale canal near the reed."}
+{"type": "system", "id": "1484a465-860d-40bb-b910-0712d7c68a37", "ts": "2026-04-26T16:37:34Z", "text": "The slender fjord crosses under a quiet marsh near the canyon."}
+{"type": "user", "id": "236d7558-425d-4ff4-9e29-cfd5dbc23fb2", "ts": "2026-04-26T16:42:08Z", "text": "The northern reed drifts past the gentle pebble."}
+{"type": "tool_use", "id": "61348628-b1ac-4420-8b73-33d97f7a843d", "ts": "2026-04-26T16:49:19Z", "tool": "harbor_circle", "args_bytes": 3973, "ok": true}
+{"type": "tool_use", "id": "f492cf0e-af23-44b8-b986-1196c063994f", "ts": "2026-04-26T16:51:42Z", "tool": "estuary_cross", "args_bytes": 3658, "ok": true}
+{"type": "session_end", "id": "1936ecfa-e465-4469-8f30-8d3983443124", "ts": "2026-04-26T19:01:32Z", "records": 9, "reason": "limit"}

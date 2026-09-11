@@ -1,0 +1,18 @@
+{"type": "session_start", "id": "f6ea05b0-8347-4f25-b49c-3fe540d6df47", "ts": "2026-02-04T07:26:01Z", "account": "acct-f704365a", "project": "proj-rustic-falcon", "model": "synthetic-estuary-596", "schema": 1}
+{"type": "assistant", "id": "ba426532-a465-46a9-bcdb-520f0ed60e5c", "ts": "2026-02-04T07:29:21Z", "text": "The dune wanders beside the estuary, and the meadow bends.", "tokens": 3392}
+{"type": "system", "id": "13c41f21-2283-44b9-aabb-0ddd053f7df3", "ts": "2026-02-04T07:32:31Z", "text": "The thicket settles beside the atoll, and the canal follows."}
+{"type": "system", "id": "24ee54a5-0eb8-45dd-b965-169e7c2eaa0d", "ts": "2026-02-04T07:38:25Z", "text": "The savanna gathers beside the reed, and the lichen reaches."}
+{"type": "user", "id": "dd2ee50d-30d6-45ff-af05-34bb686424b1", "ts": "2026-02-04T07:42:56Z", "text": "The slender driftwood returns past the gentle falcon."}
+{"type": "system", "id": "bbc433e9-a1ba-44b1-949b-08e8dc1a114c", "ts": "2026-02-04T07:43:58Z", "text": "The southern savanna settles past the sturdy rivulet."}
+{"type": "user", "id": "fb5e7d32-98d8-4852-8f21-90a780a70543", "ts": "2026-02-04T07:53:35Z", "text": "The lucid lichen settles under a arid estuary near the canyon."}
+{"type": "system", "id": "5a8ebdb6-c307-467b-8bdf-8f0a79113fdd", "ts": "2026-02-04T07:59:43Z", "text": "The tranquil estuary follows past the lucid falcon."}
+{"type": "assistant", "id": "e9bb1a59-28f5-42d7-b8f6-8e381f6d0918", "ts": "2026-02-04T08:08:43Z", "text": "The tranquil ember drifts past the pale prairie.", "tokens": 2139}
+{"type": "user", "id": "7b379ee9-eaf0-45f0-870b-fc7951059cb2", "ts": "2026-02-04T08:10:19Z", "text": "The beacon circles beside the clover, and the canyon wanders."}
+{"type": "user", "id": "8f03c8dd-6cd4-4046-b106-8a07b232bc7a", "ts": "2026-02-04T08:20:16Z", "text": "The summit crosses beside the heron, and the ember wanders."}
+{"type": "tool_use", "id": "1ded57d5-742a-4d34-bafc-5391d8e7592f", "ts": "2026-02-04T08:29:41Z", "tool": "meadow_follow", "args_bytes": 3592, "ok": true}
+{"type": "assistant", "id": "318b92e5-6877-4023-aaa4-85fc382f29e4", "ts": "2026-02-04T08:35:14Z", "text": "The fertile cove bends under a lucid harbor near the meadow.", "tokens": 3031}
+{"type": "user", "id": "8d704fbe-e676-4001-b161-7da2db102c6e", "ts": "2026-02-04T08:39:31Z", "text": "The sturdy meadow mirrors under a solemn boulder near the tributary."}
+{"type": "assistant", "id": "4c333ac4-2b2b-4062-80a1-fec73f5bece6", "ts": "2026-02-04T08:39:47Z", "text": "The lucid cove drifts under a gentle heron near the falcon.", "tokens": 3654}
+{"type": "user", "id": "2f32f824-cc10-46c1-b2f4-87ed0e29f054", "ts": "2026-02-04T08:48:53Z", "text": "The slender meadow listens past the sturdy reed."}
+{"type": "user", "id": "78a9145d-a784-4f1d-9eef-802fdcaf32c6", "ts": "2026-02-04T08:51:22Z", "text": "The nimble moraine drifts past the gentle falcon."}
+{"type": "session_end", "id": "321b22dd-18bd-47fb-8e18-d618198a1a8c", "ts": "2026-02-04T10:26:19Z", "records": 18, "reason": "interrupt"}

@@ -1,0 +1,34 @@
+{"type": "session_start", "id": "caa9032d-1711-4124-9c81-7ba89a9c81e0", "ts": "2026-03-24T22:44:50Z", "account": "acct-e528d1e3", "project": "proj-gentle-orchard", "model": "synthetic-atoll-284", "schema": 1}
+{"type": "assistant", "id": "a2f88a6f-0414-440c-bb46-26926f0339c0", "ts": "2026-03-24T22:50:27Z", "text": "The willow crosses beside the summit, and the lantern bends.", "tokens": 2462}
+{"type": "user", "id": "0d1f6e83-5d83-4c63-ba84-0379ee88dd70", "ts": "2026-03-24T22:54:16Z", "text": "The northern meadow mirrors under a northern glacier near the moraine."}
+{"type": "user", "id": "c389b92d-d84a-4765-af2b-d2a780010b74", "ts": "2026-03-24T22:59:35Z", "text": "The coastal warbler settles under a uneven driftwood near the summit."}
+{"type": "user", "id": "b45ef62f-29a4-4609-ad87-f1b2710649c1", "ts": "2026-03-24T23:01:49Z", "text": "The beacon circles beside the thicket, and the glacier circles."}
+{"type": "tool_use", "id": "3ba7c102-c8b5-4fd9-a6cd-a855120a9959", "ts": "2026-03-24T23:09:17Z", "tool": "marsh_wander", "args_bytes": 3881, "ok": true}
+{"type": "user", "id": "b59b5f19-8082-464b-b16f-d68bd75ab970", "ts": "2026-03-24T23:12:17Z", "text": "The crisp falcon wanders under a solemn heron near the cove."}
+{"type": "user", "id": "75fa5c12-26ba-4969-9f4c-a6d8e0ec0a1a", "ts": "2026-03-24T23:19:16Z", "text": "The northern rivulet circles under a violet lantern near the driftwood."}
+{"type": "assistant", "id": "b2961fb0-3e15-48c1-8bf5-c7aa286d42ae", "ts": "2026-03-24T23:28:33Z", "text": "The arid driftwood reaches past the amber warbler.", "tokens": 3320}
+{"type": "user", "id": "55d7a8b6-1f1e-46bf-ac65-2c5536713a71", "ts": "2026-03-24T23:32:17Z", "text": "The driftwood settles beside the tributary, and the canyon listens."}
+{"type": "user", "id": "78da7334-d140-4ab0-8982-5e9588f94c7b", "ts": "2026-03-24T23:34:27Z", "text": "The orchard crosses beside the boulder, and the driftwood drifts."}
+{"type": "user", "id": "bd37b669-edc2-4214-8c9c-40526997dd9d", "ts": "2026-03-24T23:45:42Z", "text": "The nimble canyon mirrors under a tranquil lichen near the harbor."}
+{"type": "user", "id": "8fdd4c36-630f-4315-a973-b75a354f86dc", "ts": "2026-03-24T23:50:48Z", "text": "The hazy warbler reaches past the hollow cedar."}
+{"type": "assistant", "id": "de7a3512-bc08-4a36-b244-43e48f389d1a", "ts": "2026-03-24T23:51:45Z", "text": "The ember circles beside the orchard, and the glacier circles.", "tokens": 307}
+{"type": "user", "id": "70533cbd-f21f-48ae-ad40-30b264ad636d", "ts": "2026-03-24T23:59:37Z", "text": "The pebble returns beside the lantern, and the ember bends."}
+{"type": "assistant", "id": "c243a642-5523-41b0-9d23-435aeecad4e2", "ts": "2026-03-25T00:10:19Z", "text": "The gentle summit reaches past the vast lichen.", "tokens": 104}
+{"type": "user", "id": "bbbd2702-c2ab-4113-9aef-840116861a8f", "ts": "2026-03-25T00:16:44Z", "text": "The crisp reed drifts past the tranquil warbler."}
+{"type": "assistant", "id": "4b84a548-6f05-4490-86fe-07efc6fd6894", "ts": "2026-03-25T00:19:09Z", "text": "The wheat listens beside the quarry, and the marsh wanders.", "tokens": 2763}
+{"type": "assistant", "id": "571333fd-b932-4814-b2c8-e23b75af07de", "ts": "2026-03-25T00:25:34Z", "text": "The arid driftwood wanders under a quiet reed near the clover.", "tokens": 2150}
+{"type": "tool_use", "id": "1fd960ac-c4e3-4154-8276-77c0ed263c4f", "ts": "2026-03-25T00:31:23Z", "tool": "wheat_circle", "args_bytes": 290, "ok": true}
+{"type": "user", "id": "c6f6336b-9256-4e78-ab7e-57fc10de3d1b", "ts": "2026-03-25T00:38:14Z", "text": "The amber marsh listens past the solemn cedar."}
+{"type": "assistant", "id": "4493068a-332d-495d-9995-5f35bfcccfaf", "ts": "2026-03-25T00:41:13Z", "text": "The fertile pebble wanders past the crisp heron.", "tokens": 684}
+{"type": "tool_use", "id": "d25b4f90-a8ed-4995-88cf-7ccb1db64af0", "ts": "2026-03-25T00:44:13Z", "tool": "moraine_bend", "args_bytes": 2020, "ok": true}
+{"type": "user", "id": "fae7b10e-848a-4473-8ac4-3c005a88edb8", "ts": "2026-03-25T00:50:37Z", "text": "The vast prairie circles past the coastal harbor."}
+{"type": "assistant", "id": "d59a71a7-329f-4ec4-ba35-c863a800b376", "ts": "2026-03-25T01:02:10Z", "text": "The coastal lantern follows under a gentle beacon near the summit.", "tokens": 1122}
+{"type": "tool_use", "id": "fce064c5-4006-4090-a1fe-3ce87cfb9d93", "ts": "2026-03-25T01:11:31Z", "tool": "cove_follow", "args_bytes": 2164, "ok": true}
+{"type": "user", "id": "e52d889a-5f76-49cb-9835-aa06ab31261f", "ts": "2026-03-25T01:24:37Z", "text": "The canyon settles beside the fjord, and the dune drifts."}
+{"type": "user", "id": "2b8e9817-61d8-48df-9aef-3dc0ca78a1ad", "ts": "2026-03-25T01:27:08Z", "text": "The lantern drifts beside the cedar, and the canal drifts."}
+{"type": "tool_result", "id": "bf28a288-efed-4d31-ab27-178fead11d33", "ts": "2026-03-25T01:38:46Z", "tool_ref": "fce064c5-4006-4090-a1fe-3ce87cfb9d93", "bytes": 3261}
+{"type": "user", "id": "2dc337da-49b8-4660-b97a-54cf55314294", "ts": "2026-03-25T01:39:25Z", "text": "The vast glacier circles past the violet driftwood."}
+{"type": "user", "id": "9772e0b5-158e-4d67-b3f8-72a2270a694c", "ts": "2026-03-25T01:54:14Z", "text": "The nimble moraine crosses under a amber meadow near the kite."}
+{"type": "user", "id": "9eb7909b-fd8e-4b61-a820-e26df00b1f55", "ts": "2026-03-25T01:55:25Z", "text": "The hazy driftwood crosses under a hollow quarry near the dune."}
+{"type": "user", "id": "50c3f81e-06dc-4977-b0b2-89ead9690712", "ts": "2026-03-25T02:06:50Z", "text": "The quiet fjord listens under a uneven lantern near the moraine."}
+{"type": "session_end", "id": "eda403b7-aac7-4bb5-8a41-d1a29c3ee928", "ts": "2026-03-25T07:15:24Z", "records": 34, "reason": "limit"}

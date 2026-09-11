@@ -1,0 +1,12 @@
+{"type": "session_start", "id": "2cf9a1ab-4cc4-4ee2-8d43-ce9dd24838e8", "ts": "2026-03-02T05:31:45Z", "account": "acct-b101dc98", "project": "proj-violet-savanna", "model": "synthetic-estuary-487", "schema": 1}
+{"type": "user", "id": "3cbc714d-c72b-4246-be1b-048b7d49b734", "ts": "2026-03-02T05:34:05Z", "text": "The glacier gathers beside the beacon, and the lantern wanders."}
+{"type": "user", "id": "5c99ca06-9c40-4d10-943e-9a180e0ad460", "ts": "2026-03-02T05:43:49Z", "text": "The lucid canyon returns under a rustic summit near the cove."}
+{"type": "user", "id": "89cf3655-dd58-4147-b719-c527dc26a939", "ts": "2026-03-02T05:45:49Z", "text": "The prairie bends beside the rivulet, and the atoll circles."}
+{"type": "user", "id": "4cfdfd96-863e-4393-bcb2-4396c6974219", "ts": "2026-03-02T05:57:30Z", "text": "The arid fjord reaches past the coastal beacon."}
+{"type": "user", "id": "7a3556f4-e5f2-469f-8205-d41355abbfac", "ts": "2026-03-02T06:15:06Z", "text": "The northern canal listens under a rapid savanna near the pebble."}
+{"type": "assistant", "id": "a6216627-e645-41b3-ab5f-3216e0d87323", "ts": "2026-03-02T06:28:24Z", "text": "The uneven cedar drifts past the uneven orchard.", "tokens": 3820}
+{"type": "assistant", "id": "775bfd3a-1407-4598-9c26-6f7f2101e7dd", "ts": "2026-03-02T06:39:32Z", "text": "The vast tributary listens past the southern willow.", "tokens": 2109}
+{"type": "user", "id": "9ff9bce6-26ff-4921-8d68-ba6dbb0da4f1", "ts": "2026-03-02T06:50:08Z", "text": "The rustic dune listens past the hazy glacier."}
+{"type": "tool_use", "id": "4f11f687-17e0-4e27-8e76-199445ab4f6b", "ts": "2026-03-02T07:09:12Z", "tool": "willow_return", "args_bytes": 1646, "ok": false}
+{"type": "user", "id": "570c0d04-5b1c-4500-ab4f-f823dac846cf", "ts": "2026-03-02T07:09:30Z", "text": "The beacon reaches beside the warbler, and the savanna mirrors."}
+{"type": "session_end", "id": "f84ec34f-ddae-48d1-8f65-e41f0826b4f7", "ts": "2026-03-02T09:31:57Z", "records": 12, "reason": "end"}

@@ -1,0 +1,19 @@
+{"type": "session_start", "id": "5c4836f2-921f-491a-8032-d1fa4e390d7c", "ts": "2026-03-20T07:12:35Z", "account": "acct-0ff54fd7", "project": "proj-tranquil-moraine", "model": "synthetic-reed-570", "schema": 1}
+{"type": "system", "id": "e87e648d-8619-460e-99ee-e1cc0057fc57", "ts": "2026-03-20T07:23:32Z", "text": "The rustic harbor circles under a southern harbor near the tributary."}
+{"type": "user", "id": "1c2a887e-43d3-4fdb-a587-32d6954e1751", "ts": "2026-03-20T07:40:41Z", "text": "The glacier drifts beside the heron, and the warbler reaches."}
+{"type": "assistant", "id": "0c6a3bbc-c54d-40e3-a1a3-026875fdf289", "ts": "2026-03-20T07:57:24Z", "text": "The fertile quarry mirrors past the southern lichen.", "tokens": 2775}
+{"type": "system", "id": "90acb425-f812-4d56-9150-d2c5c9c4585b", "ts": "2026-03-20T08:08:24Z", "text": "The lichen reaches beside the quarry, and the atoll circles."}
+{"type": "user", "id": "13c02908-6fed-4420-92c9-9ea82ca80c4e", "ts": "2026-03-20T08:27:41Z", "text": "The twin marsh bends under a fertile cove near the harbor."}
+{"type": "system", "id": "9fbee877-2af1-4525-b70a-f55a40d1f9db", "ts": "2026-03-20T08:45:50Z", "text": "The amber prairie settles under a fertile reed near the prairie."}
+{"type": "tool_use", "id": "e5e20a23-806e-4283-b186-c1b7aeaa07f4", "ts": "2026-03-20T09:00:40Z", "tool": "pebble_return", "args_bytes": 113, "ok": true}
+{"type": "assistant", "id": "f7dc45bd-071d-4063-807f-fc4e780c2f74", "ts": "2026-03-20T09:17:20Z", "text": "The fertile glacier reaches past the northern pebble.", "tokens": 826}
+{"type": "user", "id": "e4a06bea-b473-46d9-91c6-f17bd4f0a3b9", "ts": "2026-03-20T09:19:01Z", "text": "The soft reed mirrors under a gentle glacier near the rivulet."}
+{"type": "user", "id": "1633efd8-2a08-4a97-b1d7-7a4a9b606759", "ts": "2026-03-20T09:27:03Z", "text": "The canyon settles beside the meadow, and the cedar gathers."}
+{"type": "user", "id": "05f6199d-07e8-42ff-a248-85eb27f7cb78", "ts": "2026-03-20T09:34:17Z", "text": "The quarry crosses beside the orchard, and the clover crosses."}
+{"type": "assistant", "id": "5a98cebd-4362-4ee9-ad7f-7f97c6e62809", "ts": "2026-03-20T09:54:17Z", "text": "The falcon drifts beside the canyon, and the meadow circles.", "tokens": 592}
+{"type": "tool_use", "id": "57c860c6-4ebf-46f4-ba75-6db9b83bb8d0", "ts": "2026-03-20T10:01:53Z", "tool": "prairie_reach", "args_bytes": 2302, "ok": true}
+{"type": "user", "id": "45f1bab4-d6b0-4b84-895a-b958380eaa21", "ts": "2026-03-20T10:19:06Z", "text": "The willow drifts beside the falcon, and the heron gathers."}
+{"type": "tool_use", "id": "a7bcdf61-2ac8-4678-81c7-9c5334fca249", "ts": "2026-03-20T10:21:05Z", "tool": "driftwood_settle", "args_bytes": 1876, "ok": true}
+{"type": "assistant", "id": "1784aed8-71da-4938-999e-e66888e6ec5b", "ts": "2026-03-20T10:32:06Z", "text": "The twin pebble gathers under a sturdy estuary near the cove.", "tokens": 894}
+{"type": "user", "id": "5fd62d92-e718-46d9-b06f-01e37385a49f", "ts": "2026-03-20T10:41:06Z", "text": "The amber ember listens under a rapid warbler near the summit."}
+{"type": "session_end", "id": "2c610782-9140-4dc2-ab34-b9a184932733", "ts": "2026-03-20T13:32:54Z", "records": 19, "reason": "interrupt"}

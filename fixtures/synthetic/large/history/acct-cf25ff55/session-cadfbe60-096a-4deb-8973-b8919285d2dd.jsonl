@@ -1,0 +1,12 @@
+{"type": "session_start", "id": "cadfbe60-096a-4deb-8973-b8919285d2dd", "ts": "2026-05-04T04:14:41Z", "account": "acct-cf25ff55", "project": "proj-pale-moraine", "model": "synthetic-cove-776", "schema": 1}
+{"type": "tool_use", "id": "10fc0c22-a082-4f30-a9f4-c33beed2cd27", "ts": "2026-05-04T04:18:34Z", "tool": "boulder_settle", "args_bytes": 3342, "ok": true}
+{"type": "assistant", "id": "2149af65-55fb-45e4-9dfc-5735a3c5a6b8", "ts": "2026-05-04T04:21:36Z", "text": "The hazy willow circles past the gentle pebble.", "tokens": 3778}
+{"type": "user", "id": "1d0693d8-0533-432c-839c-f82b93c3bb98", "ts": "2026-05-04T04:27:02Z", "text": "The gentle prairie bends under a arid estuary near the marsh."}
+{"type": "tool_use", "id": "27dfccce-8e6a-4be8-aa97-341b68743838", "ts": "2026-05-04T04:42:44Z", "tool": "savanna_bend", "args_bytes": 1545, "ok": true}
+{"type": "assistant", "id": "9a1b5ac8-ec0c-41b3-9794-fd358ef87b0f", "ts": "2026-05-04T05:00:54Z", "text": "The nimble fjord mirrors under a southern glacier near the beacon.", "tokens": 1779}
+{"type": "tool_use", "id": "bff56234-761a-40d1-8ac4-c8bfabee4ca6", "ts": "2026-05-04T05:08:10Z", "tool": "boulder_follow", "args_bytes": 2256, "ok": true}
+{"type": "tool_use", "id": "5c07a956-08ea-42ee-9733-153404a254df", "ts": "2026-05-04T05:12:17Z", "tool": "quarry_drift", "args_bytes": 3554, "ok": true}
+{"type": "user", "id": "ae529ad5-7e53-4da8-97d5-98c934813d77", "ts": "2026-05-04T05:22:41Z", "text": "The hazy pebble listens under a hazy driftwood near the fjord."}
+{"type": "assistant", "id": "a074fee8-aec2-4c3f-b15e-2d425c7599f6", "ts": "2026-05-04T05:42:03Z", "text": "The rivulet returns beside the quarry, and the harbor gathers.", "tokens": 97}
+{"type": "assistant", "id": "5216ad9d-271d-4c47-9e53-cbecfbb09454", "ts": "2026-05-04T05:54:15Z", "text": "The lucid lantern settles past the coastal rivulet.", "tokens": 1499}
+{"type": "session_end", "id": "b1307a20-f460-421a-afaa-0f59611c8c79", "ts": "2026-05-04T08:14:53Z", "records": 12, "reason": "end"}

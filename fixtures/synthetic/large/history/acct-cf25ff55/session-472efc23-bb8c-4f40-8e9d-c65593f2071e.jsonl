@@ -1,0 +1,16 @@
+{"type": "session_start", "id": "472efc23-bb8c-4f40-8e9d-c65593f2071e", "ts": "2026-01-07T09:01:46Z", "account": "acct-cf25ff55", "project": "proj-northern-heron", "model": "synthetic-pebble-254", "schema": 1}
+{"type": "user", "id": "40525a15-b0ed-4890-9053-9aa1492bcb89", "ts": "2026-01-07T09:12:20Z", "text": "The rapid cedar listens under a violet rivulet near the cedar."}
+{"type": "user", "id": "b0db42dc-3ae8-474c-9fa0-75d352ab79ed", "ts": "2026-01-07T09:15:59Z", "text": "The fjord drifts beside the clover, and the ember gathers."}
+{"type": "assistant", "id": "093bab17-f2b1-426d-9d71-9256211bb7ab", "ts": "2026-01-07T09:35:09Z", "text": "The northern thicket follows past the crisp prairie.", "tokens": 734}
+{"type": "tool_use", "id": "0fe8a5de-d551-4789-9778-513a835b731e", "ts": "2026-01-07T09:50:10Z", "tool": "beacon_follow", "args_bytes": 581, "ok": true}
+{"type": "tool_use", "id": "ec34e862-7c5c-41dc-8aad-a8ae31faf3e3", "ts": "2026-01-07T10:00:50Z", "tool": "cove_return", "args_bytes": 2491, "ok": true}
+{"type": "assistant", "id": "3ca3fdc9-8a53-439e-b205-a0f48592cdd1", "ts": "2026-01-07T10:17:48Z", "text": "The summit returns beside the atoll, and the ember reaches.", "tokens": 1920}
+{"type": "user", "id": "5146479c-6ba7-4a80-838e-8c9e5d242651", "ts": "2026-01-07T10:23:40Z", "text": "The mellow tributary drifts past the uneven reed."}
+{"type": "tool_result", "id": "c1283933-339f-4585-b0c0-0988c803205d", "ts": "2026-01-07T10:37:50Z", "tool_ref": "ec34e862-7c5c-41dc-8aad-a8ae31faf3e3", "bytes": 12753}
+{"type": "user", "id": "d5a941a0-93a0-4d05-84c8-ac08c66dbf05", "ts": "2026-01-07T10:40:21Z", "text": "The crisp meadow mirrors past the arid ember."}
+{"type": "assistant", "id": "c3ab057a-1fa9-411a-8b3a-b8c1df675b8f", "ts": "2026-01-07T10:54:38Z", "text": "The rapid savanna returns under a tranquil cedar near the orchard.", "tokens": 4011}
+{"type": "user", "id": "3c497cbd-2810-48df-aa61-e7ab8adf7355", "ts": "2026-01-07T11:07:00Z", "text": "The boulder mirrors beside the falcon, and the orchard settles."}
+{"type": "tool_use", "id": "ff2dc7bd-6066-4f04-abc1-972d068c6069", "ts": "2026-01-07T11:16:44Z", "tool": "heron_follow", "args_bytes": 2901, "ok": true}
+{"type": "user", "id": "6f9ed8bf-9000-4bbc-8fa6-9926453ecb62", "ts": "2026-01-07T11:24:38Z", "text": "The lucid moraine bends past the tranquil prairie."}
+{"type": "tool_use", "id": "11e3ed52-1c8f-4b6b-82fa-5b249bb29fbd", "ts": "2026-01-07T11:42:35Z", "tool": "tributary_mirror", "args_bytes": 832, "ok": true}
+{"type": "session_end", "id": "ba339fd6-87f4-4d7d-a2af-1d77324c1114", "ts": "2026-01-07T14:22:02Z", "records": 16, "reason": "limit"}

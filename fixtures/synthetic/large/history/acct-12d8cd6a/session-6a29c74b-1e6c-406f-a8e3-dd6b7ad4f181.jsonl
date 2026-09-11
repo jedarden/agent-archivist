@@ -1,0 +1,18 @@
+{"type": "session_start", "id": "6a29c74b-1e6c-406f-a8e3-dd6b7ad4f181", "ts": "2026-02-25T14:32:30Z", "account": "acct-12d8cd6a", "project": "proj-nimble-pebble", "model": "synthetic-quarry-535", "schema": 1}
+{"type": "system", "id": "88f9972f-d6b3-4cd3-bf1f-8c807582a92b", "ts": "2026-02-25T14:50:22Z", "text": "The sturdy orchard settles under a quiet lantern near the estuary."}
+{"type": "tool_use", "id": "fbe2e814-d0b9-4914-b216-b5a8d2d37cbc", "ts": "2026-02-25T15:04:54Z", "tool": "meadow_return", "args_bytes": 660, "ok": true}
+{"type": "tool_use", "id": "d1a92377-226a-43ca-aa0e-5b82f3d9e74e", "ts": "2026-02-25T15:13:35Z", "tool": "meadow_follow", "args_bytes": 1766, "ok": true}
+{"type": "user", "id": "d5ac46eb-19ce-4636-a464-050b16522f80", "ts": "2026-02-25T15:20:08Z", "text": "The glacier wanders beside the glacier, and the lantern crosses."}
+{"type": "tool_use", "id": "deab2190-6bc7-4037-b40c-41367d4e9c20", "ts": "2026-02-25T15:21:38Z", "tool": "reed_wander", "args_bytes": 2227, "ok": false}
+{"type": "tool_result", "id": "99667680-8928-4e98-8a39-3bf24af48165", "ts": "2026-02-25T15:24:29Z", "tool_ref": "deab2190-6bc7-4037-b40c-41367d4e9c20", "bytes": 13263}
+{"type": "assistant", "id": "481bfb75-cf81-4ce2-8638-6d544ab9b22f", "ts": "2026-02-25T15:42:56Z", "text": "The atoll circles beside the orchard, and the reed follows.", "tokens": 3742}
+{"type": "assistant", "id": "4eb2ce6d-8090-4d78-91d7-690ecc5b3634", "ts": "2026-02-25T15:52:41Z", "text": "The beacon mirrors beside the wheat, and the beacon returns.", "tokens": 4019}
+{"type": "assistant", "id": "3a26c9be-0208-4b50-95ee-0de96105ea9f", "ts": "2026-02-25T15:59:01Z", "text": "The twin warbler drifts under a fertile savanna near the canyon.", "tokens": 3049}
+{"type": "user", "id": "4ffdfa48-8178-46db-8c79-9abe188ef6e3", "ts": "2026-02-25T16:15:27Z", "text": "The gentle lantern returns past the pale glacier."}
+{"type": "assistant", "id": "ced34994-616b-47c8-8548-0fcb574a884a", "ts": "2026-02-25T16:18:37Z", "text": "The moraine wanders beside the heron, and the warbler follows.", "tokens": 2439}
+{"type": "user", "id": "8dad56be-3fd2-4bd3-bffd-06669f89b5c9", "ts": "2026-02-25T16:29:33Z", "text": "The quarry settles beside the clover, and the clover circles."}
+{"type": "assistant", "id": "bd4ad54e-26fe-4dab-bbcf-c5d9e2f2ae49", "ts": "2026-02-25T16:37:57Z", "text": "The quiet atoll follows past the uneven harbor.", "tokens": 2072}
+{"type": "assistant", "id": "e414631b-188d-4675-bda8-7942629e3b04", "ts": "2026-02-25T16:47:01Z", "text": "The driftwood mirrors beside the rivulet, and the moraine follows.", "tokens": 380}
+{"type": "user", "id": "f4bc9e76-8d3a-451d-b300-3a18f5e35dda", "ts": "2026-02-25T16:53:20Z", "text": "The rapid kite wanders under a arid reed near the pebble."}
+{"type": "assistant", "id": "40a3e6c0-5c7f-4616-85ae-44ebe8b8b149", "ts": "2026-02-25T17:10:17Z", "text": "The tranquil harbor listens under a rapid summit near the estuary.", "tokens": 1858}
+{"type": "session_end", "id": "1100c2b2-b553-4f71-9ec0-391a102bf19a", "ts": "2026-02-25T20:32:48Z", "records": 18, "reason": "end"}

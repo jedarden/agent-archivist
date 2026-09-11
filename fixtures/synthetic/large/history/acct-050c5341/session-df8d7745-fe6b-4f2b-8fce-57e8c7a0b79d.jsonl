@@ -1,0 +1,15 @@
+{"type": "session_start", "id": "df8d7745-fe6b-4f2b-8fce-57e8c7a0b79d", "ts": "2026-02-21T13:03:31Z", "account": "acct-050c5341", "project": "proj-rapid-canal", "model": "synthetic-prairie-707", "schema": 1}
+{"type": "assistant", "id": "9cbb6735-41d4-4fc4-b432-5255cb9fa65d", "ts": "2026-02-21T13:11:28Z", "text": "The tributary wanders beside the canyon, and the quarry wanders.", "tokens": 3627}
+{"type": "user", "id": "b1eecced-4d1e-4050-a178-b37cee77a671", "ts": "2026-02-21T13:28:26Z", "text": "The solemn lichen returns under a lucid cove near the thicket."}
+{"type": "assistant", "id": "217f9ea5-c652-4e0d-93eb-7be475005210", "ts": "2026-02-21T13:45:45Z", "text": "The pale orchard returns under a vast savanna near the canal.", "tokens": 1249}
+{"type": "system", "id": "461e08cd-a447-4056-864b-4e8a29030f8e", "ts": "2026-02-21T13:53:26Z", "text": "The lucid warbler crosses under a fertile driftwood near the warbler."}
+{"type": "user", "id": "8d7967ba-e828-46d7-b449-355dfd105fde", "ts": "2026-02-21T14:13:02Z", "text": "The quiet ember returns past the violet lichen."}
+{"type": "tool_use", "id": "a479a34c-89c5-4497-b285-162108da9b2e", "ts": "2026-02-21T14:26:25Z", "tool": "heron_follow", "args_bytes": 2297, "ok": true}
+{"type": "assistant", "id": "e872b236-ca4a-45fa-a144-ccd7ef742035", "ts": "2026-02-21T14:43:12Z", "text": "The lantern circles beside the lichen, and the fjord reaches.", "tokens": 2635}
+{"type": "assistant", "id": "3074d26e-df7d-43e1-830f-eb7ea222aeaf", "ts": "2026-02-21T14:57:52Z", "text": "The fjord returns beside the cedar, and the atoll wanders.", "tokens": 827}
+{"type": "tool_use", "id": "587c9d13-2102-4ffa-863d-69fd49d3dc82", "ts": "2026-02-21T14:59:58Z", "tool": "kite_return", "args_bytes": 3629, "ok": true}
+{"type": "user", "id": "7d53dbab-a706-4d9b-ab09-081d1663e963", "ts": "2026-02-21T15:19:01Z", "text": "The arid pebble mirrors past the slender canal."}
+{"type": "assistant", "id": "bc838cba-b1d8-41fb-b22d-799a285c7bde", "ts": "2026-02-21T15:25:51Z", "text": "The lucid ember listens under a sturdy falcon near the driftwood.", "tokens": 370}
+{"type": "user", "id": "faf248b8-d950-4459-b9d3-9b82ae60452e", "ts": "2026-02-21T15:28:57Z", "text": "The amber quarry mirrors past the twin wheat."}
+{"type": "assistant", "id": "ab7e9e7f-b5a5-4c77-ace1-92c86f1cc70c", "ts": "2026-02-21T15:47:59Z", "text": "The moraine wanders beside the clover, and the reed settles.", "tokens": 3247}
+{"type": "session_end", "id": "7c221032-39aa-4b3a-b28d-0fe9b22d4934", "ts": "2026-02-21T18:03:46Z", "records": 15, "reason": "limit"}

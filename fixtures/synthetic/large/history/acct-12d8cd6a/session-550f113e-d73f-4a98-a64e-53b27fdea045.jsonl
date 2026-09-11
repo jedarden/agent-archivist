@@ -1,0 +1,13 @@
+{"type": "session_start", "id": "550f113e-d73f-4a98-a64e-53b27fdea045", "ts": "2026-03-20T04:48:28Z", "account": "acct-12d8cd6a", "project": "proj-hazy-moraine", "model": "synthetic-heron-686", "schema": 1}
+{"type": "user", "id": "470b26f1-8621-4044-bbc9-fa0185c28561", "ts": "2026-03-20T04:57:52Z", "text": "The clover returns beside the quarry, and the glacier reaches."}
+{"type": "system", "id": "85f26153-e935-4ae3-a8a4-b7b8bcf08535", "ts": "2026-03-20T05:05:59Z", "text": "The crisp rivulet returns under a amber beacon near the canal."}
+{"type": "assistant", "id": "5695f2a9-0af1-426f-af2c-52708092e1fd", "ts": "2026-03-20T05:09:25Z", "text": "The violet pebble reaches past the mellow warbler.", "tokens": 1050}
+{"type": "system", "id": "34ed7174-af4e-4a0c-8907-f103718e8757", "ts": "2026-03-20T05:28:32Z", "text": "The hazy cedar follows under a fertile atoll near the summit."}
+{"type": "tool_use", "id": "f5df9bee-60e8-48ed-925c-6bd250654525", "ts": "2026-03-20T05:35:34Z", "tool": "meadow_circle", "args_bytes": 3848, "ok": true}
+{"type": "user", "id": "05c2b9ff-4efb-48e3-b59b-2645fed18dc5", "ts": "2026-03-20T05:47:22Z", "text": "The tranquil thicket circles under a hazy savanna near the beacon."}
+{"type": "tool_result", "id": "e73ac1f3-ae19-4d16-a6d5-b2d51ba0c5bd", "ts": "2026-03-20T06:01:49Z", "tool_ref": "f5df9bee-60e8-48ed-925c-6bd250654525", "bytes": 1165}
+{"type": "assistant", "id": "9b4a13b9-8fe7-4f3e-bada-a50cf3cfc1ce", "ts": "2026-03-20T06:04:59Z", "text": "The quiet boulder mirrors under a tranquil falcon near the boulder.", "tokens": 2656}
+{"type": "assistant", "id": "e4733182-787a-449f-84ec-2ad7f9eb83f6", "ts": "2026-03-20T06:20:35Z", "text": "The orchard mirrors beside the atoll, and the kite crosses.", "tokens": 2997}
+{"type": "user", "id": "1b8588ac-7bcd-4bbd-8c1d-4175247f1e00", "ts": "2026-03-20T06:27:14Z", "text": "The nimble reed crosses under a northern lantern near the wheat."}
+{"type": "tool_use", "id": "6d8d8abd-193e-49a3-bf0b-5dcc82ecd616", "ts": "2026-03-20T06:34:24Z", "tool": "marsh_circle", "args_bytes": 126, "ok": true}
+{"type": "session_end", "id": "b506620d-b5f9-4bb6-bab8-59837315e68d", "ts": "2026-03-20T09:08:41Z", "records": 13, "reason": "interrupt"}

@@ -1,0 +1,23 @@
+{"type": "session_start", "id": "3cbdffad-1ff1-4e22-ba88-a335ecee53c0", "ts": "2026-01-07T18:40:32Z", "account": "acct-12d8cd6a", "project": "proj-northern-wheat", "model": "synthetic-estuary-962", "schema": 1}
+{"type": "system", "id": "f655f921-69bc-422e-a8f8-46cf71108995", "ts": "2026-01-07T18:53:28Z", "text": "The thicket bends beside the glacier, and the boulder bends."}
+{"type": "tool_use", "id": "71ae89b9-e396-44af-b2b1-b4cae799c6b2", "ts": "2026-01-07T18:57:57Z", "tool": "summit_wander", "args_bytes": 578, "ok": true}
+{"type": "assistant", "id": "91a297f8-0615-49a5-ba13-669e039e0dca", "ts": "2026-01-07T19:10:02Z", "text": "The hollow ember bends under a arid reed near the rivulet.", "tokens": 3323}
+{"type": "tool_use", "id": "0241c13c-04f9-422f-aa10-bcc40051766f", "ts": "2026-01-07T19:20:34Z", "tool": "pebble_cross", "args_bytes": 3895, "ok": true}
+{"type": "tool_result", "id": "f720aff8-c235-4c96-b8ba-e8e79f2737c1", "ts": "2026-01-07T19:37:30Z", "tool_ref": "0241c13c-04f9-422f-aa10-bcc40051766f", "bytes": 3335}
+{"type": "assistant", "id": "1b783b5e-4aca-4314-b033-4638b31e7f58", "ts": "2026-01-07T19:46:54Z", "text": "The fertile dune circles past the crisp meadow.", "tokens": 759}
+{"type": "tool_use", "id": "c864002b-37c1-4e42-ac5e-5c78bdf25cf3", "ts": "2026-01-07T19:53:57Z", "tool": "pebble_cross", "args_bytes": 3498, "ok": true}
+{"type": "tool_use", "id": "cd789e9b-3c8e-4ce4-b58c-0dd58f32c160", "ts": "2026-01-07T20:07:50Z", "tool": "heron_circle", "args_bytes": 3042, "ok": true}
+{"type": "user", "id": "12cb78b7-b602-4a81-94b5-82a4b2a0ae9a", "ts": "2026-01-07T20:24:58Z", "text": "The uneven canyon listens under a rapid beacon near the canyon."}
+{"type": "user", "id": "c83cca98-4919-4d8a-bf7c-659a576fbe8c", "ts": "2026-01-07T20:43:56Z", "text": "The harbor listens beside the savanna, and the moraine crosses."}
+{"type": "assistant", "id": "3a3e2b35-f584-4eb0-b083-663938f2869e", "ts": "2026-01-07T20:56:11Z", "text": "The moraine wanders beside the lantern, and the canyon returns.", "tokens": 927}
+{"type": "tool_use", "id": "ff55e23a-2ea1-41b9-9e12-3f279e8f25bf", "ts": "2026-01-07T21:05:46Z", "tool": "cove_listen", "args_bytes": 2545, "ok": true}
+{"type": "user", "id": "6a957079-9812-4006-b23e-e8d0203e4b54", "ts": "2026-01-07T21:08:52Z", "text": "The ember bends beside the moraine, and the marsh reaches."}
+{"type": "assistant", "id": "ce15724d-ba69-4b50-a0b3-3a6e1722b74a", "ts": "2026-01-07T21:10:54Z", "text": "The thicket returns beside the thicket, and the heron wanders.", "tokens": 3296}
+{"type": "assistant", "id": "b43303e3-7438-40d1-8ce2-b3d6ff4d7d13", "ts": "2026-01-07T21:27:42Z", "text": "The thicket follows beside the canal, and the clover gathers.", "tokens": 776}
+{"type": "user", "id": "26fe0150-414c-4979-b735-ad451b446943", "ts": "2026-01-07T21:29:04Z", "text": "The slender dune drifts under a solemn warbler near the dune."}
+{"type": "user", "id": "0e5fd8be-2fd5-49e5-b319-e1cb27174d2a", "ts": "2026-01-07T21:42:11Z", "text": "The amber canyon reaches under a southern pebble near the summit."}
+{"type": "tool_result", "id": "0f52ba28-370d-46fb-ab0b-edd54bf22793", "ts": "2026-01-07T21:58:35Z", "tool_ref": "ff55e23a-2ea1-41b9-9e12-3f279e8f25bf", "bytes": 1754}
+{"type": "tool_use", "id": "717de064-e0e2-45cc-a3f3-10fcf3e7a2f1", "ts": "2026-01-07T22:16:17Z", "tool": "fjord_cross", "args_bytes": 2133, "ok": true}
+{"type": "tool_result", "id": "218a9df6-bb92-4db5-93e9-653e351a57cc", "ts": "2026-01-07T22:21:18Z", "tool_ref": "717de064-e0e2-45cc-a3f3-10fcf3e7a2f1", "bytes": 33}
+{"type": "assistant", "id": "97bdd7cb-ed4e-4a1a-87be-a3deec672273", "ts": "2026-01-07T22:31:32Z", "text": "The southern boulder crosses under a vast heron near the cedar.", "tokens": 920}
+{"type": "session_end", "id": "c4b19369-9495-4863-8f24-59a937419cd8", "ts": "2026-01-08T02:20:55Z", "records": 23, "reason": "limit"}

@@ -1,0 +1,12 @@
+{"type": "session_start", "id": "baac536a-5d68-4fd2-b824-6466d6c521be", "ts": "2026-04-13T10:04:57Z", "account": "acct-0ff54fd7", "project": "proj-quiet-thicket", "model": "synthetic-canyon-843", "schema": 1}
+{"type": "assistant", "id": "52c96b86-7936-4c1e-a473-a1daa1a4effc", "ts": "2026-04-13T10:10:57Z", "text": "The vast cedar wanders past the arid canyon.", "tokens": 1337}
+{"type": "user", "id": "2246d336-8807-4ea4-bdf7-cb65e9915cd1", "ts": "2026-04-13T10:22:52Z", "text": "The sturdy fjord wanders under a arid falcon near the thicket."}
+{"type": "tool_use", "id": "67950316-86ce-4659-91f1-f008a1e151a7", "ts": "2026-04-13T10:28:30Z", "tool": "falcon_bend", "args_bytes": 1208, "ok": true}
+{"type": "user", "id": "4139d907-1093-40d1-a2b6-d079d6dcf77b", "ts": "2026-04-13T10:34:02Z", "text": "The wheat bends beside the harbor, and the fjord wanders."}
+{"type": "user", "id": "e1ceb7d0-62f3-40d2-92cc-68d76bd81cb4", "ts": "2026-04-13T10:39:37Z", "text": "The amber kite returns past the hollow cedar."}
+{"type": "assistant", "id": "b8f58951-2aee-492d-9f64-07564a8c957f", "ts": "2026-04-13T10:55:52Z", "text": "The cedar listens beside the warbler, and the estuary returns.", "tokens": 2811}
+{"type": "assistant", "id": "cd31949d-6a64-48ae-b542-55dca9c37cb1", "ts": "2026-04-13T11:14:24Z", "text": "The quarry bends beside the clover, and the falcon crosses.", "tokens": 2180}
+{"type": "tool_use", "id": "868e0973-cc76-44b2-9c53-ead0e4afe1b1", "ts": "2026-04-13T11:30:36Z", "tool": "harbor_return", "args_bytes": 2657, "ok": true}
+{"type": "tool_use", "id": "a695ec93-38fd-4f3e-9456-afe3d585b1bb", "ts": "2026-04-13T11:33:24Z", "tool": "canal_mirror", "args_bytes": 3739, "ok": true}
+{"type": "tool_use", "id": "15ceaac6-4b22-45a1-ad5d-caf6aa873bd2", "ts": "2026-04-13T11:33:47Z", "tool": "reed_return", "args_bytes": 2802, "ok": true}
+{"type": "session_end", "id": "aea9ad4f-d20c-42e3-88be-f98fb1d18eef", "ts": "2026-04-13T14:05:09Z", "records": 12, "reason": "end"}

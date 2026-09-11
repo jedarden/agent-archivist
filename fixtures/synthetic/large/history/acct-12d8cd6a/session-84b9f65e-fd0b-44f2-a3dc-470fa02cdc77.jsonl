@@ -1,0 +1,18 @@
+{"type": "session_start", "id": "84b9f65e-fd0b-44f2-a3dc-470fa02cdc77", "ts": "2026-01-23T21:24:53Z", "account": "acct-12d8cd6a", "project": "proj-pale-canyon", "model": "synthetic-marsh-556", "schema": 1}
+{"type": "assistant", "id": "3c4c5fd4-ecdc-4816-9c88-c94029427fcf", "ts": "2026-01-23T21:39:58Z", "text": "The twin prairie returns past the hazy glacier.", "tokens": 1158}
+{"type": "assistant", "id": "5947cb93-6d27-4ade-9e07-f1906dfcc06a", "ts": "2026-01-23T21:42:23Z", "text": "The prairie settles beside the estuary, and the clover bends.", "tokens": 3368}
+{"type": "tool_use", "id": "17ac22e8-6943-4c06-aa63-a6b7f60010df", "ts": "2026-01-23T22:01:56Z", "tool": "meadow_bend", "args_bytes": 458, "ok": false}
+{"type": "assistant", "id": "d5253bc0-e353-4f32-973a-dcb1f5de816d", "ts": "2026-01-23T22:18:22Z", "text": "The slender thicket reaches under a mellow willow near the heron.", "tokens": 141}
+{"type": "user", "id": "72a5915c-d9d1-454f-bad5-f04121d21d2d", "ts": "2026-01-23T22:24:15Z", "text": "The pale cedar drifts under a pale clover near the estuary."}
+{"type": "assistant", "id": "c682cb0d-4e02-4f8e-9a53-a8b8ba00b0f1", "ts": "2026-01-23T22:40:01Z", "text": "The lucid lichen gathers under a slender ember near the ember.", "tokens": 3255}
+{"type": "assistant", "id": "2beed978-2658-4bd7-aa8b-480af5010160", "ts": "2026-01-23T22:55:49Z", "text": "The nimble prairie mirrors past the arid estuary.", "tokens": 3164}
+{"type": "assistant", "id": "e2c4e34c-dbbb-466f-a8f8-7dbb2452475b", "ts": "2026-01-23T22:58:09Z", "text": "The hazy falcon circles under a crisp tributary near the dune.", "tokens": 474}
+{"type": "user", "id": "f261e8a8-4e0b-45f3-913a-68e6671f293a", "ts": "2026-01-23T23:15:51Z", "text": "The fertile ember bends past the violet harbor."}
+{"type": "user", "id": "e8fb2f68-5a1b-4d08-a1ff-8f6441754489", "ts": "2026-01-23T23:21:03Z", "text": "The solemn summit drifts under a vast beacon near the wheat."}
+{"type": "user", "id": "7db6beb2-405c-4b7b-bebb-79ff3425fa34", "ts": "2026-01-23T23:39:30Z", "text": "The meadow drifts beside the glacier, and the wheat wanders."}
+{"type": "user", "id": "6464299a-60bc-450a-b292-6e2a2fa76195", "ts": "2026-01-23T23:58:21Z", "text": "The ember bends beside the clover, and the pebble returns."}
+{"type": "user", "id": "abaf4fe7-3666-4db2-aa65-49f5a58a1cb0", "ts": "2026-01-24T00:04:16Z", "text": "The meadow listens beside the canyon, and the pebble wanders."}
+{"type": "user", "id": "e07041d3-58ef-4025-8e01-34bd4aa1cf5b", "ts": "2026-01-24T00:05:55Z", "text": "The hazy reed listens under a quiet estuary near the meadow."}
+{"type": "tool_result", "id": "f6699413-8b59-4364-b7e6-8b66ca0cf441", "ts": "2026-01-24T00:20:18Z", "tool_ref": "17ac22e8-6943-4c06-aa63-a6b7f60010df", "bytes": 13349}
+{"type": "user", "id": "ebe85154-50da-4a4b-82fa-601c46d6a45a", "ts": "2026-01-24T00:37:20Z", "text": "The solemn marsh returns under a tranquil cedar near the estuary."}
+{"type": "session_end", "id": "f2d5f6d5-6be2-4350-93f2-30ba50b986af", "ts": "2026-01-24T03:25:11Z", "records": 18, "reason": "end"}

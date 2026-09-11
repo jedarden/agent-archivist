@@ -1,0 +1,13 @@
+{"type": "session_start", "id": "be83b6b2-cf75-4821-87dc-8bbe3cbf90db", "ts": "2026-02-28T11:19:31Z", "account": "acct-018ee739", "project": "proj-tranquil-orchard", "model": "synthetic-clover-298", "schema": 1}
+{"type": "tool_use", "id": "82319f03-5de0-47a9-b0ea-2591dbc16b00", "ts": "2026-02-28T11:26:33Z", "tool": "marsh_gather", "args_bytes": 1261, "ok": true}
+{"type": "user", "id": "bc77b726-bc87-4f34-8f15-3cd08a2c3ec0", "ts": "2026-02-28T11:28:23Z", "text": "The clover follows beside the reed, and the clover follows."}
+{"type": "user", "id": "23d6ca1b-8678-4650-80dd-fa8199f1b246", "ts": "2026-02-28T11:29:33Z", "text": "The mellow ember follows past the fertile reed."}
+{"type": "user", "id": "08c825be-50d8-4159-b8f3-9803ecca9b3e", "ts": "2026-02-28T11:33:08Z", "text": "The driftwood wanders beside the atoll, and the summit circles."}
+{"type": "user", "id": "3a729a87-da8c-4870-983d-3e0b011b1a85", "ts": "2026-02-28T11:40:15Z", "text": "The rivulet listens beside the canyon, and the kite mirrors."}
+{"type": "user", "id": "6e25a66a-ed6d-4f18-877e-32e71ae58409", "ts": "2026-02-28T11:42:12Z", "text": "The falcon settles beside the thicket, and the driftwood mirrors."}
+{"type": "assistant", "id": "c2dbb9e6-8425-4485-bae6-61f8eec73204", "ts": "2026-02-28T11:43:41Z", "text": "The rapid moraine wanders past the arid rivulet.", "tokens": 3922}
+{"type": "assistant", "id": "02302596-58a4-4790-9f73-4700d8683637", "ts": "2026-02-28T11:45:38Z", "text": "The rustic clover mirrors under a vast glacier near the dune.", "tokens": 2154}
+{"type": "assistant", "id": "3a0e583c-f456-4e78-8c12-198a936edef8", "ts": "2026-02-28T11:52:29Z", "text": "The arid lantern crosses past the arid willow.", "tokens": 2326}
+{"type": "tool_use", "id": "2390d5e9-b798-470c-b54a-75e0123bb7be", "ts": "2026-02-28T12:06:15Z", "tool": "tributary_cross", "args_bytes": 4013, "ok": true}
+{"type": "user", "id": "4c1c5eab-3d5e-4fb4-8fcb-3835f21e5657", "ts": "2026-02-28T12:20:57Z", "text": "The driftwood circles beside the savanna, and the heron gathers."}
+{"type": "session_end", "id": "69bdcb38-08d1-43da-b500-3c77b5ee240f", "ts": "2026-02-28T14:34:44Z", "records": 13, "reason": "limit"}

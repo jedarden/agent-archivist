@@ -1,0 +1,17 @@
+{"type": "session_start", "id": "4f2f28b4-cb39-4086-8ac8-66dbcb7645ea", "ts": "2026-03-01T23:43:59Z", "account": "acct-050c5341", "project": "proj-twin-moraine", "model": "synthetic-clover-226", "schema": 1}
+{"type": "system", "id": "0c247c71-a36d-4a99-b557-14f9dd22422c", "ts": "2026-03-02T00:01:13Z", "text": "The crisp orchard crosses past the gentle rivulet."}
+{"type": "tool_use", "id": "1724fd4e-e3e5-467c-8351-b9574cf4129b", "ts": "2026-03-02T00:13:22Z", "tool": "dune_wander", "args_bytes": 2821, "ok": false}
+{"type": "user", "id": "9a62e1da-830c-4842-b981-1f282648b8ea", "ts": "2026-03-02T00:16:59Z", "text": "The vast estuary wanders past the northern rivulet."}
+{"type": "user", "id": "98132022-3be8-4b6c-91cb-3b366cb0c4df", "ts": "2026-03-02T00:19:32Z", "text": "The canyon settles beside the beacon, and the summit returns."}
+{"type": "assistant", "id": "8b6eed52-34e4-4c8a-9770-11fa70e08ea0", "ts": "2026-03-02T00:36:59Z", "text": "The orchard circles beside the lichen, and the savanna follows.", "tokens": 519}
+{"type": "tool_result", "id": "946722cf-aa0d-4cd9-b98b-2b4511770f7d", "ts": "2026-03-02T00:37:10Z", "tool_ref": "1724fd4e-e3e5-467c-8351-b9574cf4129b", "bytes": 11056}
+{"type": "user", "id": "8e49aa84-a144-42c6-8a11-777d1dc99a87", "ts": "2026-03-02T00:55:48Z", "text": "The northern canyon reaches past the twin beacon."}
+{"type": "user", "id": "803cb80b-cfeb-4174-97ae-aa7897aec16a", "ts": "2026-03-02T01:06:54Z", "text": "The fertile quarry settles under a coastal glacier near the rivulet."}
+{"type": "system", "id": "b3d08db5-7e77-475a-9206-3b7405011972", "ts": "2026-03-02T01:24:09Z", "text": "The violet estuary returns under a uneven dune near the meadow."}
+{"type": "user", "id": "9b09676e-e0ec-436a-b2c7-af33ee244563", "ts": "2026-03-02T01:42:17Z", "text": "The warbler settles beside the kite, and the falcon circles."}
+{"type": "assistant", "id": "deb64d66-580e-492a-9b03-dc4ddbec3436", "ts": "2026-03-02T02:00:47Z", "text": "The thicket crosses beside the orchard, and the tributary wanders.", "tokens": 1777}
+{"type": "assistant", "id": "64d5676c-a00a-42c5-b910-2fbebdb7b232", "ts": "2026-03-02T02:02:27Z", "text": "The hazy thicket wanders past the amber kite.", "tokens": 2190}
+{"type": "user", "id": "300e8de2-36ba-452b-999f-01fa527d1b0a", "ts": "2026-03-02T02:10:42Z", "text": "The moraine reaches beside the fjord, and the heron bends."}
+{"type": "assistant", "id": "e6fed056-875e-463a-9737-6039796c51e0", "ts": "2026-03-02T02:19:31Z", "text": "The nimble wheat reaches past the rapid ember.", "tokens": 3125}
+{"type": "user", "id": "fd1ab6ad-8ff8-4162-8d8c-814b4bebfe20", "ts": "2026-03-02T02:27:31Z", "text": "The reed bends beside the reed, and the summit reaches."}
+{"type": "session_end", "id": "7eb955eb-bcad-4f25-995c-e861b11d1340", "ts": "2026-03-02T05:24:16Z", "records": 17, "reason": "interrupt"}

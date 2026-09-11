@@ -1,0 +1,15 @@
+{"type": "session_start", "id": "5147bc44-596b-47d2-aaa7-6320eb3e8422", "ts": "2026-02-18T09:26:56Z", "account": "acct-050c5341", "project": "proj-gentle-warbler", "model": "synthetic-orchard-646", "schema": 1}
+{"type": "tool_use", "id": "29a51ce3-2c94-4f33-8e4b-09bb939ac0c3", "ts": "2026-02-18T09:27:06Z", "tool": "lichen_circle", "args_bytes": 1601, "ok": true}
+{"type": "assistant", "id": "0c4aa218-d5d5-4afd-9f18-fb158cebd7db", "ts": "2026-02-18T09:37:04Z", "text": "The falcon listens beside the reed, and the clover wanders.", "tokens": 2162}
+{"type": "user", "id": "e476a858-d6e5-4d71-83c0-6bbd06bf07a8", "ts": "2026-02-18T09:49:49Z", "text": "The hollow kite gathers past the coastal ember."}
+{"type": "user", "id": "d09b959b-2080-4f3a-8544-1efec10293af", "ts": "2026-02-18T09:59:35Z", "text": "The rapid canyon settles past the nimble clover."}
+{"type": "tool_use", "id": "7e148d83-8e0d-49ad-a927-b51c9a3257cf", "ts": "2026-02-18T10:10:38Z", "tool": "meadow_listen", "args_bytes": 2239, "ok": true}
+{"type": "tool_use", "id": "1c7d1d46-6775-4274-a95c-d8daa5087dce", "ts": "2026-02-18T10:24:45Z", "tool": "kite_wander", "args_bytes": 2194, "ok": true}
+{"type": "user", "id": "6853eafd-af70-4221-b18a-6864d598772b", "ts": "2026-02-18T10:31:44Z", "text": "The nimble tributary bends past the slender pebble."}
+{"type": "assistant", "id": "62198b8f-28fb-49e5-970b-513866dc8cda", "ts": "2026-02-18T10:49:37Z", "text": "The mellow cove listens past the southern boulder.", "tokens": 1587}
+{"type": "user", "id": "ab624a47-b5e0-4638-8f73-562dec491cdf", "ts": "2026-02-18T10:57:08Z", "text": "The quarry mirrors beside the falcon, and the ember gathers."}
+{"type": "tool_use", "id": "6eba74fb-0c56-48f8-8214-7e1d5151c0e4", "ts": "2026-02-18T11:01:46Z", "tool": "moraine_cross", "args_bytes": 140, "ok": true}
+{"type": "tool_use", "id": "dba0ad8b-49c0-4ece-be2f-432bb5357971", "ts": "2026-02-18T11:07:49Z", "tool": "cedar_return", "args_bytes": 2540, "ok": true}
+{"type": "tool_result", "id": "0a5b24b7-6fe8-4bab-9b29-3c49aa9352aa", "ts": "2026-02-18T11:19:01Z", "tool_ref": "dba0ad8b-49c0-4ece-be2f-432bb5357971", "bytes": 3147}
+{"type": "assistant", "id": "38a27433-13e8-452c-a8d3-f058dbf1bb6d", "ts": "2026-02-18T11:31:34Z", "text": "The mellow summit wanders under a rustic glacier near the canyon.", "tokens": 3978}
+{"type": "session_end", "id": "bda3b581-a42a-4d3c-8cc6-850653b295fd", "ts": "2026-02-18T14:27:11Z", "records": 15, "reason": "interrupt"}

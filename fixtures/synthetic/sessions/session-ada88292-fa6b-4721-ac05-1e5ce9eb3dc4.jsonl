@@ -1,0 +1,34 @@
+{"type": "session_start", "id": "ada88292-fa6b-4721-ac05-1e5ce9eb3dc4", "ts": "2026-01-26T17:56:26Z", "account": "acct-392eceba", "project": "proj-southern-reed", "model": "synthetic-atoll-181", "schema": 1}
+{"type": "user", "id": "d2d2a7e1-bda4-4f5f-ae19-90093690bbb4", "ts": "2026-01-26T18:09:24Z", "text": "The arid reed gathers under a crisp fjord near the tributary."}
+{"type": "user", "id": "e50b7f79-ff73-42b6-b4bd-a5c066ed09ae", "ts": "2026-01-26T18:15:36Z", "text": "The glacier wanders beside the harbor, and the heron reaches."}
+{"type": "tool_use", "id": "aca215e6-e8a1-4af1-8886-9712056e7833", "ts": "2026-01-26T18:25:30Z", "tool": "atoll_gather", "args_bytes": 3627, "ok": true}
+{"type": "user", "id": "a99f2758-7a33-432c-8fa4-752d4b987bae", "ts": "2026-01-26T18:29:40Z", "text": "The southern ember reaches past the nimble canyon."}
+{"type": "user", "id": "cdbb0451-98c4-4cbe-81b1-4f7288dab917", "ts": "2026-01-26T18:33:59Z", "text": "The twin lichen follows past the twin harbor."}
+{"type": "tool_result", "id": "a4097064-a36d-4037-8734-c1bfb34ca5b5", "ts": "2026-01-26T18:43:42Z", "tool_ref": "aca215e6-e8a1-4af1-8886-9712056e7833", "bytes": 7696}
+{"type": "user", "id": "79957d40-b5ad-41ac-93f8-9d7ec8799dc4", "ts": "2026-01-26T18:48:25Z", "text": "The nimble beacon returns under a solemn rivulet near the lichen."}
+{"type": "assistant", "id": "f5018ae8-3008-4bc1-bab8-78f27f3b4cd1", "ts": "2026-01-26T18:57:36Z", "text": "The twin moraine settles past the twin glacier.", "tokens": 760}
+{"type": "assistant", "id": "026c10c4-0f2b-4a47-96a5-a0b99e33c7f2", "ts": "2026-01-26T19:05:31Z", "text": "The meadow reaches beside the canal, and the atoll reaches.", "tokens": 1118}
+{"type": "assistant", "id": "0218591d-917f-46c3-a8d8-a289b0520fe6", "ts": "2026-01-26T19:19:36Z", "text": "The twin reed wanders under a sturdy meadow near the tributary.", "tokens": 2286}
+{"type": "assistant", "id": "ec1b7ec0-3878-459a-8bf0-3f1fa2b3f601", "ts": "2026-01-26T19:32:41Z", "text": "The mellow quarry gathers past the southern willow.", "tokens": 363}
+{"type": "user", "id": "91b1cac0-9abd-46c2-9b41-863d7136fbb4", "ts": "2026-01-26T19:38:18Z", "text": "The vast prairie follows under a slender warbler near the dune."}
+{"type": "user", "id": "4324066b-03f0-42f4-b438-bb6d46535b2d", "ts": "2026-01-26T19:46:10Z", "text": "The coastal driftwood circles past the rustic dune."}
+{"type": "assistant", "id": "90cae4a1-4a4f-402b-8691-ac449f3339c1", "ts": "2026-01-26T19:58:06Z", "text": "The heron follows beside the cedar, and the tributary returns.", "tokens": 2406}
+{"type": "user", "id": "ae110a18-19e2-4aad-9b9e-36a6e6f87876", "ts": "2026-01-26T19:58:27Z", "text": "The slender atoll reaches past the slender willow."}
+{"type": "tool_use", "id": "968b268d-e87d-4d2d-9a3a-56cd7b92c165", "ts": "2026-01-26T20:12:30Z", "tool": "boulder_settle", "args_bytes": 1977, "ok": true}
+{"type": "assistant", "id": "1699efa8-a24d-4a62-844b-cab994531f41", "ts": "2026-01-26T20:22:38Z", "text": "The savanna settles beside the marsh, and the wheat mirrors.", "tokens": 100}
+{"type": "tool_use", "id": "0e6fc216-0f8a-4df1-9481-e8a7eb1c0146", "ts": "2026-01-26T20:23:46Z", "tool": "clover_circle", "args_bytes": 1179, "ok": true}
+{"type": "tool_use", "id": "7e1cd8cd-eb2b-4b90-bbd0-245cd52fa26f", "ts": "2026-01-26T20:31:34Z", "tool": "pebble_settle", "args_bytes": 2022, "ok": true}
+{"type": "tool_result", "id": "54c41d17-2ced-488f-ac12-c5af7d1e109c", "ts": "2026-01-26T20:46:12Z", "tool_ref": "7e1cd8cd-eb2b-4b90-bbd0-245cd52fa26f", "bytes": 10052}
+{"type": "user", "id": "c6e205e4-c993-4f42-99d0-4a1b76a97e5e", "ts": "2026-01-26T20:57:55Z", "text": "The nimble meadow gathers past the sturdy wheat."}
+{"type": "user", "id": "b5a72632-c572-457f-9e27-a168bb241e4c", "ts": "2026-01-26T20:58:17Z", "text": "The warbler circles beside the lantern, and the lichen mirrors."}
+{"type": "assistant", "id": "e893b701-f8f4-41e8-b45b-db99fcb73fb8", "ts": "2026-01-26T21:03:40Z", "text": "The crisp reed mirrors past the soft thicket.", "tokens": 1193}
+{"type": "user", "id": "b0df55e1-3495-4e7e-8a7f-71d149d4797d", "ts": "2026-01-26T21:07:18Z", "text": "The pale falcon drifts past the fertile atoll."}
+{"type": "user", "id": "5de8b9fb-b96e-42c8-a127-21c1493ff5e0", "ts": "2026-01-26T21:22:00Z", "text": "The hazy tributary wanders past the southern orchard."}
+{"type": "tool_use", "id": "911fbbfa-e24d-42ae-b91f-3fb5c3243eb3", "ts": "2026-01-26T21:22:59Z", "tool": "cedar_follow", "args_bytes": 2592, "ok": true}
+{"type": "user", "id": "d6d44533-5cee-4089-8d31-3cb30240d464", "ts": "2026-01-26T21:35:40Z", "text": "The thicket follows beside the warbler, and the cedar mirrors."}
+{"type": "user", "id": "3f476e92-bb6b-4acb-b9a0-f739d5c97b49", "ts": "2026-01-26T21:37:25Z", "text": "The cedar settles beside the quarry, and the rivulet gathers."}
+{"type": "assistant", "id": "3df9cfac-526c-4cac-b089-d6d4eb8d5fc3", "ts": "2026-01-26T21:51:50Z", "text": "The crisp dune bends past the vast marsh.", "tokens": 1036}
+{"type": "user", "id": "7952e4b2-817d-4bbf-b8fd-a5730ca8dae7", "ts": "2026-01-26T22:06:07Z", "text": "The northern heron listens past the lucid quarry."}
+{"type": "assistant", "id": "f3b092d3-bce3-4cae-b0f4-d678f7ac8407", "ts": "2026-01-26T22:17:51Z", "text": "The arid falcon settles past the soft heron.", "tokens": 3791}
+{"type": "assistant", "id": "f6a9ab88-e4b7-41bd-bcd1-684ba7b8444e", "ts": "2026-01-26T22:20:54Z", "text": "The uneven wheat circles under a lucid estuary near the marsh.", "tokens": 2018}
+{"type": "session_end", "id": "62a71458-f2ad-4687-8520-e034231e3a24", "ts": "2026-01-27T02:27:00Z", "records": 34, "reason": "end"}

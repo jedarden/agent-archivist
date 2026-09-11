@@ -1,0 +1,22 @@
+{"type": "session_start", "id": "eb7c696f-e0b5-4a46-b8a6-53bf44ceb8e7", "ts": "2026-04-11T15:42:28Z", "account": "acct-12d8cd6a", "project": "proj-uneven-ember", "model": "synthetic-estuary-773", "schema": 1}
+{"type": "tool_use", "id": "aa1680ae-34a9-481d-beed-45c310630bd4", "ts": "2026-04-11T15:45:21Z", "tool": "canal_follow", "args_bytes": 2279, "ok": true}
+{"type": "assistant", "id": "dff8d88e-2d4a-41df-81fe-b769d4cfcb81", "ts": "2026-04-11T15:51:54Z", "text": "The tranquil moraine wanders under a hazy quarry near the driftwood.", "tokens": 1062}
+{"type": "assistant", "id": "fd71c6b3-dd90-4fc8-baed-2b54a7283f8f", "ts": "2026-04-11T16:09:38Z", "text": "The rustic kite reaches under a hollow cedar near the marsh.", "tokens": 3361}
+{"type": "user", "id": "80baee5b-0d85-4eee-9387-b8ada0863c01", "ts": "2026-04-11T16:15:08Z", "text": "The crisp pebble drifts past the sturdy thicket."}
+{"type": "tool_use", "id": "696582a5-f123-473a-9d26-eb6ed84009fb", "ts": "2026-04-11T16:18:34Z", "tool": "harbor_mirror", "args_bytes": 2504, "ok": true}
+{"type": "tool_result", "id": "e87d6b09-bc12-44e8-8a3c-881edc254777", "ts": "2026-04-11T16:21:53Z", "tool_ref": "696582a5-f123-473a-9d26-eb6ed84009fb", "bytes": 2615}
+{"type": "assistant", "id": "c0e788ff-30b2-43c4-ba30-806fdd79f926", "ts": "2026-04-11T16:40:42Z", "text": "The boulder crosses beside the warbler, and the reed mirrors.", "tokens": 1411}
+{"type": "tool_use", "id": "7cca6cb4-9f58-4bc9-a2d0-82d76f2802c4", "ts": "2026-04-11T16:58:31Z", "tool": "dune_drift", "args_bytes": 602, "ok": true}
+{"type": "user", "id": "16ccb24a-e274-49c6-8900-e8e049b888eb", "ts": "2026-04-11T17:11:50Z", "text": "The estuary drifts beside the savanna, and the canyon drifts."}
+{"type": "user", "id": "5788fa25-e065-429f-a4c2-e1e941987773", "ts": "2026-04-11T17:24:01Z", "text": "The prairie circles beside the dune, and the thicket gathers."}
+{"type": "tool_result", "id": "90792eeb-1c2b-4938-8dae-59656e24698c", "ts": "2026-04-11T17:43:36Z", "tool_ref": "7cca6cb4-9f58-4bc9-a2d0-82d76f2802c4", "bytes": 388}
+{"type": "tool_use", "id": "ffbf4585-ab9d-4e78-acb8-a4d3eda47a27", "ts": "2026-04-11T18:02:29Z", "tool": "dune_bend", "args_bytes": 3045, "ok": true}
+{"type": "assistant", "id": "04cdfbf8-1f77-4966-89ff-a70c2a185f9c", "ts": "2026-04-11T18:11:33Z", "text": "The pale estuary wanders past the amber tributary.", "tokens": 654}
+{"type": "assistant", "id": "cbe077b0-36c5-41f0-8e91-742bfc61089b", "ts": "2026-04-11T18:16:53Z", "text": "The fertile dune listens past the hazy kite.", "tokens": 1167}
+{"type": "user", "id": "5ba02f5c-7d7c-4681-bfd7-69a938a5ba00", "ts": "2026-04-11T18:20:53Z", "text": "The twin estuary drifts past the soft fjord."}
+{"type": "tool_result", "id": "b450ab8f-c9cd-48cc-90a6-e793db4fa20d", "ts": "2026-04-11T18:34:27Z", "tool_ref": "ffbf4585-ab9d-4e78-acb8-a4d3eda47a27", "bytes": 11594}
+{"type": "user", "id": "78e7a4e6-5c99-446e-8bb3-475cc855f0c5", "ts": "2026-04-11T18:37:09Z", "text": "The hazy glacier settles past the crisp savanna."}
+{"type": "user", "id": "20476bb1-2d88-4c84-b447-f38723828713", "ts": "2026-04-11T18:53:29Z", "text": "The uneven fjord reaches past the crisp warbler."}
+{"type": "user", "id": "3a58358a-6e83-4512-af1c-279c0503fda1", "ts": "2026-04-11T19:07:03Z", "text": "The dune follows beside the summit, and the thicket returns."}
+{"type": "user", "id": "93f212af-f47b-49b4-9295-a8704e6d2635", "ts": "2026-04-11T19:21:42Z", "text": "The savanna returns beside the meadow, and the clover follows."}
+{"type": "session_end", "id": "38311559-f60f-4655-8077-d91e4e177cde", "ts": "2026-04-11T23:02:50Z", "records": 22, "reason": "limit"}

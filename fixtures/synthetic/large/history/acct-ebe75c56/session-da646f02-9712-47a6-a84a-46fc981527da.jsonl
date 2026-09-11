@@ -1,0 +1,9 @@
+{"type": "session_start", "id": "da646f02-9712-47a6-a84a-46fc981527da", "ts": "2026-04-07T10:09:40Z", "account": "acct-ebe75c56", "project": "proj-uneven-lantern", "model": "synthetic-dune-690", "schema": 1}
+{"type": "assistant", "id": "6571e12d-c92a-461e-a822-bf921e29cdc9", "ts": "2026-04-07T10:14:40Z", "text": "The hazy savanna gathers past the mellow cove.", "tokens": 3131}
+{"type": "tool_use", "id": "5717ddf7-cb6c-4075-adcf-42af54e6a58a", "ts": "2026-04-07T10:30:02Z", "tool": "falcon_mirror", "args_bytes": 1044, "ok": true}
+{"type": "assistant", "id": "25fa37ad-dd7e-438f-b3e0-bf4d43b0adad", "ts": "2026-04-07T10:47:49Z", "text": "The ember mirrors beside the pebble, and the dune wanders.", "tokens": 3325}
+{"type": "tool_use", "id": "d4277b0e-6ff3-4f00-9e6c-12cd0b7a9043", "ts": "2026-04-07T10:49:43Z", "tool": "marsh_reach", "args_bytes": 2216, "ok": true}
+{"type": "tool_use", "id": "a3c809f5-460a-40ae-b3c9-f565513d1e79", "ts": "2026-04-07T11:02:53Z", "tool": "dune_drift", "args_bytes": 555, "ok": true}
+{"type": "assistant", "id": "ee4ced0d-9920-4e8e-8633-0679f49a8690", "ts": "2026-04-07T11:19:34Z", "text": "The southern canyon drifts under a soft harbor near the fjord.", "tokens": 2577}
+{"type": "user", "id": "e0a794fd-6498-4106-b4df-9d08d13593c3", "ts": "2026-04-07T11:26:50Z", "text": "The lantern reaches beside the estuary, and the rivulet mirrors."}
+{"type": "session_end", "id": "224d1502-658a-4356-a15d-6665e6898bfb", "ts": "2026-04-07T13:09:49Z", "records": 9, "reason": "limit"}

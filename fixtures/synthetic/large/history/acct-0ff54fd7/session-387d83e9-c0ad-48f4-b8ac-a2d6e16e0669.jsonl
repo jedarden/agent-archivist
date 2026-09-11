@@ -1,0 +1,21 @@
+{"type": "session_start", "id": "387d83e9-c0ad-48f4-b8ac-a2d6e16e0669", "ts": "2026-03-02T08:29:20Z", "account": "acct-0ff54fd7", "project": "proj-quiet-willow", "model": "synthetic-lichen-691", "schema": 1}
+{"type": "assistant", "id": "2a491be0-7b0b-417c-98b6-f16da5c5ee35", "ts": "2026-03-02T08:31:19Z", "text": "The fertile thicket reaches under a violet canyon near the heron.", "tokens": 503}
+{"type": "system", "id": "d4a8e778-7a35-436a-ad88-e87c74ea1cb7", "ts": "2026-03-02T08:49:30Z", "text": "The twin canal gathers under a southern summit near the willow."}
+{"type": "tool_use", "id": "c800c21a-baab-491d-a2de-824c62251f65", "ts": "2026-03-02T08:54:10Z", "tool": "driftwood_return", "args_bytes": 550, "ok": true}
+{"type": "assistant", "id": "2dd62b1d-2cad-4fac-9585-a743b98a9f80", "ts": "2026-03-02T08:56:17Z", "text": "The amber kite wanders past the sturdy quarry.", "tokens": 1204}
+{"type": "assistant", "id": "2b89fbb8-7de2-4f14-a304-b21ee153404b", "ts": "2026-03-02T09:07:15Z", "text": "The mellow glacier bends under a rustic driftwood near the cove.", "tokens": 2541}
+{"type": "user", "id": "6b2cc999-bdc8-40d9-a5fc-d9d52e85d38e", "ts": "2026-03-02T09:19:19Z", "text": "The lichen reaches beside the marsh, and the harbor returns."}
+{"type": "user", "id": "bb901acb-db45-4758-9918-1c213a1e967e", "ts": "2026-03-02T09:20:41Z", "text": "The solemn pebble drifts under a gentle lichen near the warbler."}
+{"type": "tool_use", "id": "e1fd57c7-1034-4406-adb0-434d945e3c77", "ts": "2026-03-02T09:23:27Z", "tool": "willow_drift", "args_bytes": 3558, "ok": true}
+{"type": "assistant", "id": "79b179f5-436f-49ad-8887-391a7f1fd605", "ts": "2026-03-02T09:26:37Z", "text": "The savanna bends beside the kite, and the fjord wanders.", "tokens": 3254}
+{"type": "tool_use", "id": "470dd69c-4b91-4366-925c-1cda06d9e38a", "ts": "2026-03-02T09:35:44Z", "tool": "ember_wander", "args_bytes": 2687, "ok": true}
+{"type": "assistant", "id": "8e9d6eb4-316d-44fa-abba-8e186675ce08", "ts": "2026-03-02T09:36:34Z", "text": "The slender canyon gathers past the rapid warbler.", "tokens": 1737}
+{"type": "assistant", "id": "3044b89d-0499-4570-91e8-82fadd763296", "ts": "2026-03-02T09:36:49Z", "text": "The slender orchard settles past the soft fjord.", "tokens": 3283}
+{"type": "tool_use", "id": "c805c3b5-32df-414c-bd39-c26f1fc618db", "ts": "2026-03-02T09:45:45Z", "tool": "warbler_follow", "args_bytes": 1093, "ok": false}
+{"type": "assistant", "id": "e56fed8c-e5ce-44b3-80f3-b5910654bfdf", "ts": "2026-03-02T10:03:37Z", "text": "The driftwood follows beside the dune, and the kite returns.", "tokens": 1172}
+{"type": "tool_use", "id": "e6396eb4-119f-4a28-8158-9007d23c5273", "ts": "2026-03-02T10:18:43Z", "tool": "harbor_bend", "args_bytes": 1072, "ok": true}
+{"type": "user", "id": "0e088094-44cf-46ee-8f32-189557e02966", "ts": "2026-03-02T10:21:20Z", "text": "The marsh returns beside the moraine, and the beacon listens."}
+{"type": "user", "id": "67d7df21-a44f-4053-99d2-660ac97d4ec0", "ts": "2026-03-02T10:27:40Z", "text": "The thicket follows beside the fjord, and the wheat settles."}
+{"type": "assistant", "id": "2b9d66b4-6ac4-4da8-bba1-67a238730c11", "ts": "2026-03-02T10:33:21Z", "text": "The violet reed crosses past the solemn lantern.", "tokens": 3424}
+{"type": "user", "id": "39b24d3d-440a-4728-93b6-5a0bc0c5d6dd", "ts": "2026-03-02T10:40:57Z", "text": "The glacier mirrors beside the tributary, and the glacier wanders."}
+{"type": "session_end", "id": "2886b552-bc41-45a0-8e17-179c9ba07f5f", "ts": "2026-03-02T15:29:41Z", "records": 21, "reason": "interrupt"}

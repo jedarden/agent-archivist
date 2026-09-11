@@ -1,0 +1,11 @@
+{"type": "session_start", "id": "d8bf2d28-0267-414b-8bc0-7884ecfc3af7", "ts": "2026-04-06T22:22:47Z", "account": "acct-ebe75c56", "project": "proj-mellow-atoll", "model": "synthetic-clover-538", "schema": 1}
+{"type": "assistant", "id": "62bde26d-b170-45fc-80a1-8cd829cfb30a", "ts": "2026-04-06T22:39:51Z", "text": "The hollow falcon wanders under a hollow canyon near the pebble.", "tokens": 1389}
+{"type": "tool_use", "id": "ee12e39a-b75d-493f-8812-3ee3e04cba90", "ts": "2026-04-06T22:55:29Z", "tool": "orchard_return", "args_bytes": 1485, "ok": true}
+{"type": "tool_result", "id": "5f048985-3c2c-4e57-8cb6-a344cddb688f", "ts": "2026-04-06T23:05:34Z", "tool_ref": "ee12e39a-b75d-493f-8812-3ee3e04cba90", "bytes": 8835}
+{"type": "tool_use", "id": "90264638-4348-47db-a365-094520644455", "ts": "2026-04-06T23:17:49Z", "tool": "driftwood_bend", "args_bytes": 767, "ok": true}
+{"type": "assistant", "id": "f43d3705-62be-4c62-9818-3666b4c8a5bf", "ts": "2026-04-06T23:30:36Z", "text": "The pebble follows beside the wheat, and the heron settles.", "tokens": 1204}
+{"type": "user", "id": "3c214e1f-8ec5-4523-8598-7c55810b8749", "ts": "2026-04-06T23:45:28Z", "text": "The arid driftwood reaches under a gentle meadow near the meadow."}
+{"type": "user", "id": "25813164-1238-44e1-84cc-949273cb71e5", "ts": "2026-04-06T23:53:24Z", "text": "The canal drifts beside the dune, and the cove follows."}
+{"type": "tool_use", "id": "61964b34-4ead-4502-8994-0b3299c649b5", "ts": "2026-04-07T00:03:29Z", "tool": "atoll_return", "args_bytes": 2032, "ok": true}
+{"type": "user", "id": "a07c3cee-b39c-4087-ad43-8180ce3440a4", "ts": "2026-04-07T00:08:23Z", "text": "The solemn moraine follows under a uneven thicket near the reed."}
+{"type": "session_end", "id": "bb9c004d-af1d-412b-b5cc-9329dff44f57", "ts": "2026-04-07T02:02:58Z", "records": 11, "reason": "end"}

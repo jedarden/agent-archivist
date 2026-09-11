@@ -1,0 +1,22 @@
+{"type": "session_start", "id": "719e5512-b617-4efb-89ca-83fd587bfe43", "ts": "2026-02-21T02:31:09Z", "account": "acct-1d192c0a", "project": "proj-slender-heron", "model": "synthetic-summit-291", "schema": 1}
+{"type": "system", "id": "655d103f-eca5-4015-95be-d41b5783d712", "ts": "2026-02-21T02:45:25Z", "text": "The rapid beacon mirrors past the arid lichen."}
+{"type": "user", "id": "c27e8dd9-fa9e-4a13-8a75-d0a704f58a65", "ts": "2026-02-21T02:57:32Z", "text": "The lantern listens beside the atoll, and the fjord follows."}
+{"type": "user", "id": "1606fefe-41e3-4a3a-9226-09bd65e843f7", "ts": "2026-02-21T03:00:26Z", "text": "The rustic canal gathers past the mellow reed."}
+{"type": "user", "id": "771920ae-5843-4aa6-8646-f8a270c629ec", "ts": "2026-02-21T03:06:13Z", "text": "The hazy quarry follows under a tranquil ember near the estuary."}
+{"type": "user", "id": "0b3f04bb-647e-42b0-8de8-adaff07751ce", "ts": "2026-02-21T03:13:17Z", "text": "The savanna settles beside the heron, and the heron crosses."}
+{"type": "user", "id": "b14b2aa1-407d-4035-a63b-a5b013d68b4e", "ts": "2026-02-21T03:22:00Z", "text": "The hazy fjord follows past the rustic cedar."}
+{"type": "user", "id": "3142dedc-4523-4172-bf59-d0582c5021bc", "ts": "2026-02-21T03:25:15Z", "text": "The solemn summit bends past the soft ember."}
+{"type": "assistant", "id": "c78877c4-0f55-4ebd-a348-6433bddb14ce", "ts": "2026-02-21T03:34:13Z", "text": "The rivulet crosses beside the moraine, and the cove bends.", "tokens": 1098}
+{"type": "tool_use", "id": "39fffe9c-3bdf-4928-b5c1-a09a88435732", "ts": "2026-02-21T03:49:10Z", "tool": "kite_gather", "args_bytes": 1440, "ok": true}
+{"type": "user", "id": "2107690f-9050-461c-addc-4dea7391598b", "ts": "2026-02-21T03:49:54Z", "text": "The summit follows beside the kite, and the warbler circles."}
+{"type": "assistant", "id": "f36a3def-ab83-416b-8b4a-ba8c720b8203", "ts": "2026-02-21T04:00:32Z", "text": "The twin cedar listens under a soft moraine near the cove.", "tokens": 317}
+{"type": "assistant", "id": "a30801ce-66ed-42b8-8fd6-77e3c4e4a041", "ts": "2026-02-21T04:07:16Z", "text": "The beacon wanders beside the willow, and the tributary crosses.", "tokens": 1943}
+{"type": "user", "id": "a28e34e4-4424-4816-bedd-e3208d993c14", "ts": "2026-02-21T04:07:27Z", "text": "The rapid warbler crosses under a hollow canyon near the meadow."}
+{"type": "user", "id": "8a0b3a41-5c30-4719-9fa2-7f1621df923a", "ts": "2026-02-21T04:18:25Z", "text": "The gentle willow crosses past the soft summit."}
+{"type": "user", "id": "abba3b1d-a3b4-471c-bac9-5d192cb72986", "ts": "2026-02-21T04:18:43Z", "text": "The meadow gathers beside the marsh, and the thicket drifts."}
+{"type": "assistant", "id": "8366c7d2-e8d8-4605-8f5c-989da115ccbc", "ts": "2026-02-21T04:22:54Z", "text": "The falcon gathers beside the atoll, and the rivulet settles.", "tokens": 1556}
+{"type": "assistant", "id": "2aabae35-5c48-487a-ae82-832d170713fb", "ts": "2026-02-21T04:33:03Z", "text": "The slender lichen returns past the hollow thicket.", "tokens": 810}
+{"type": "assistant", "id": "2fea0385-fbf3-46b4-8201-8090fa15d9ba", "ts": "2026-02-21T04:38:03Z", "text": "The meadow settles beside the estuary, and the lichen wanders.", "tokens": 2070}
+{"type": "assistant", "id": "21c0fa7b-9bee-429c-9374-b56ac750e143", "ts": "2026-02-21T04:48:24Z", "text": "The lucid lantern follows past the mellow cove.", "tokens": 1832}
+{"type": "tool_use", "id": "b8b9c2f7-c272-46f3-bf46-34c0677fce97", "ts": "2026-02-21T04:56:38Z", "tool": "willow_bend", "args_bytes": 1868, "ok": true}
+{"type": "session_end", "id": "d77e5fa8-27b1-40c6-8c1a-73847813be56", "ts": "2026-02-21T08:01:31Z", "records": 22, "reason": "interrupt"}

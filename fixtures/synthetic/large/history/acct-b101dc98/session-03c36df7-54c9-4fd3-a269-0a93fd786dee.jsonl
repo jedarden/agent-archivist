@@ -1,0 +1,14 @@
+{"type": "session_start", "id": "03c36df7-54c9-4fd3-a269-0a93fd786dee", "ts": "2026-04-16T01:45:22Z", "account": "acct-b101dc98", "project": "proj-hollow-warbler", "model": "synthetic-marsh-182", "schema": 1}
+{"type": "tool_use", "id": "ac76c4f6-6fd0-4875-9784-7d05b05bd08b", "ts": "2026-04-16T01:50:44Z", "tool": "rivulet_wander", "args_bytes": 3604, "ok": false}
+{"type": "assistant", "id": "91ff8b92-e2f2-4b06-979a-7576d20350e1", "ts": "2026-04-16T02:02:41Z", "text": "The nimble marsh returns under a uneven tributary near the beacon.", "tokens": 1367}
+{"type": "user", "id": "c78b3a24-1487-4f11-9617-e673fefaa4c1", "ts": "2026-04-16T02:13:59Z", "text": "The hollow tributary returns under a rustic boulder near the cove."}
+{"type": "tool_use", "id": "6bb70a7a-221f-40d2-84d7-273438f27e63", "ts": "2026-04-16T02:27:02Z", "tool": "boulder_mirror", "args_bytes": 1907, "ok": true}
+{"type": "assistant", "id": "eabdae83-04ef-4431-8da4-61d8ca23b301", "ts": "2026-04-16T02:38:13Z", "text": "The amber cove returns under a solemn marsh near the willow.", "tokens": 1175}
+{"type": "assistant", "id": "6e9ebf10-ca09-4f15-a2ba-bd93b835e96d", "ts": "2026-04-16T02:46:22Z", "text": "The savanna follows beside the cedar, and the savanna wanders.", "tokens": 4027}
+{"type": "tool_use", "id": "bde6f9c1-f060-431e-b79c-3c38f8a1f21e", "ts": "2026-04-16T03:04:19Z", "tool": "heron_circle", "args_bytes": 2149, "ok": true}
+{"type": "assistant", "id": "2a92a4cf-ab6b-4a8b-985d-d9d182a84398", "ts": "2026-04-16T03:14:46Z", "text": "The meadow gathers beside the glacier, and the dune drifts.", "tokens": 2375}
+{"type": "user", "id": "9541c6b5-aa5c-4dd6-951e-f3ac071f67aa", "ts": "2026-04-16T03:31:01Z", "text": "The meadow listens beside the marsh, and the quarry crosses."}
+{"type": "user", "id": "f8a87e5f-9457-4954-b69b-8edd471b3c5b", "ts": "2026-04-16T03:38:48Z", "text": "The clover mirrors beside the atoll, and the falcon gathers."}
+{"type": "tool_result", "id": "626e0245-87a5-4871-b675-7a225d3fea8c", "ts": "2026-04-16T03:58:26Z", "tool_ref": "bde6f9c1-f060-431e-b79c-3c38f8a1f21e", "bytes": 15921}
+{"type": "assistant", "id": "8cee8530-b1d5-4909-82b9-e07277d5bab6", "ts": "2026-04-16T04:04:09Z", "text": "The quarry gathers beside the fjord, and the dune follows.", "tokens": 872}
+{"type": "session_end", "id": "2f8dd9b7-16e5-4078-9839-872ad6eab574", "ts": "2026-04-16T06:25:36Z", "records": 14, "reason": "end"}

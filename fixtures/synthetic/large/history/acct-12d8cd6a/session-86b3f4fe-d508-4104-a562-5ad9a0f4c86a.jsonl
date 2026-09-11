@@ -1,0 +1,14 @@
+{"type": "session_start", "id": "86b3f4fe-d508-4104-a562-5ad9a0f4c86a", "ts": "2026-03-12T10:32:06Z", "account": "acct-12d8cd6a", "project": "proj-vast-quarry", "model": "synthetic-dune-698", "schema": 1}
+{"type": "user", "id": "7ddac327-f384-4e09-9c92-140026bb979a", "ts": "2026-03-12T10:33:41Z", "text": "The soft ember wanders under a uneven prairie near the orchard."}
+{"type": "user", "id": "a00106fd-7c58-4a83-b1b4-39dee7515a04", "ts": "2026-03-12T10:39:17Z", "text": "The uneven tributary crosses under a northern ember near the kite."}
+{"type": "tool_use", "id": "4f6fbad3-3086-4f86-900e-1b5dcf0667a1", "ts": "2026-03-12T10:55:21Z", "tool": "moraine_bend", "args_bytes": 555, "ok": false}
+{"type": "tool_result", "id": "aadd1541-9690-4b52-82fa-078cda5c4ffa", "ts": "2026-03-12T11:00:23Z", "tool_ref": "4f6fbad3-3086-4f86-900e-1b5dcf0667a1", "bytes": 12646}
+{"type": "tool_use", "id": "387c8bc5-a1ef-4048-b3ae-fc10b51fe73c", "ts": "2026-03-12T11:07:04Z", "tool": "meadow_follow", "args_bytes": 1865, "ok": true}
+{"type": "user", "id": "958b7376-2d02-411c-874d-4ccaa77b718f", "ts": "2026-03-12T11:14:22Z", "text": "The prairie returns beside the lichen, and the beacon settles."}
+{"type": "user", "id": "19a96dcd-f330-4b87-beb0-ccf6127166bc", "ts": "2026-03-12T11:17:07Z", "text": "The crisp moraine bends past the mellow beacon."}
+{"type": "tool_use", "id": "57333b15-5a94-44b8-a2d6-1cd22b4b1cd4", "ts": "2026-03-12T11:24:34Z", "tool": "cedar_cross", "args_bytes": 618, "ok": true}
+{"type": "user", "id": "976f777f-a19d-465d-b0d0-722c4e6b349b", "ts": "2026-03-12T11:26:38Z", "text": "The moraine listens beside the pebble, and the marsh settles."}
+{"type": "user", "id": "1e9bfa35-c967-4972-baac-bc40b21eeb82", "ts": "2026-03-12T11:45:42Z", "text": "The sturdy quarry wanders under a mellow beacon near the warbler."}
+{"type": "tool_use", "id": "5e743079-4350-4846-aef5-aba13f667b98", "ts": "2026-03-12T11:56:35Z", "tool": "lichen_settle", "args_bytes": 2383, "ok": false}
+{"type": "assistant", "id": "2a98b3c7-f9ed-4cc5-b3dc-8b465e83f94e", "ts": "2026-03-12T12:13:12Z", "text": "The pale moraine reaches under a fertile estuary near the reed.", "tokens": 2404}
+{"type": "session_end", "id": "585a461e-96f1-489c-b8e1-de3904037d06", "ts": "2026-03-12T15:12:20Z", "records": 14, "reason": "end"}
