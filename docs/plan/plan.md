@@ -795,6 +795,9 @@ Deliverables:
   a second source of truth in an ADR directory.
 - Add a deterministic synthetic fixture generator; do not hand-copy real sessions.
 - Establish conventional configuration, error-code, and metrics naming.
+  Error-code naming is defined by `docs/notes/error-codes.md` and enforced by
+  the registry gate in `tools/check-error-codes.py`; configuration and
+  metrics naming remain separate Phase 0 deliverables.
 - Document reproducible local development commands.
 - Add `containers/agent-archivist/{Dockerfile,VERSION}`. The version file contains
   the SemVer image tag and changes in the same commit as a release.

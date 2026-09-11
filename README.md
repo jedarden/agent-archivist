@@ -49,6 +49,10 @@ committed.
   the observations and architectural conclusions behind the design.
 - [System requirements](docs/notes/requirements.md) defines the normative
   behavior expected from the public implementation.
+- [Error-code conventions](docs/notes/error-codes.md) define the versioned
+  error namespace, bounded safe-message rules, retryability, HTTP and process
+  exit mapping, correlation, and stream behavior, backed by the
+  machine-checked registry in `tools/error-codes.toml`.
 
 ## Governance
 

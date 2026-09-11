@@ -1,0 +1,296 @@
+# Machine-readable error-code registry for Agent Archivist.
+#
+# The normative conventions live in docs/notes/error-codes.md; this file is
+# the data they define, and tools/check-error-codes.py (fast lane of
+# scripts/definition-of-done.sh) rejects any entry that violates them.
+#
+# Within registry schema v1 the class table below is FROZEN: classes and
+# their HTTP statuses, retryability, client action, and exit code may not be
+# added, removed, or changed. Codes are append-only: a new code is a
+# compatible change, a redefined or deleted code is a v2 event. The gate
+# enforces both by pinning the frozen attributes in the checker itself, so a
+# registry edit cannot silently redefine a class.
+#
+# Message templates may reference only placeholders from the allowlist in
+# docs/notes/error-codes.md Section 4 (bounded, structural, content-free
+# fields). A template that interpolates anything derived from source or
+# transcript content is a formatting bug the gate exists to reject.
+
+schema = "archivist.error-registry/v1"
+
+# ---------------------------------------------------------------------------
+# Classes: the closed condition taxonomy of plan Section 7.8 plus the
+# client-local conditions that never reach HTTP. Frozen in v1.
+# ---------------------------------------------------------------------------
+
+[classes.request_invalid]
+http = [400, 415]
+retryable = false
+client_action = "quarantine_artifact"
+exit = 65
+description = "The request envelope or its metadata is unusable; quarantine the artifact and continue other sources."
+
+[classes.authorization]
+http = [401, 403]
+retryable = false
+client_action = "pause_for_linking"
+exit = 78
+description = "The uploader is not linked, revoked, or not authorized; pause uploads until linking or rotation completes."
+
+[classes.integrity_conflict]
+http = [409]
+retryable = false
+client_action = "stop_and_page_operator"
+exit = 80
+description = "Existing stored state is incompatible with this submission; stop the affected tenant source and page the operator."
+
+[classes.payload_limit_splittable]
+http = [413]
+retryable = false
+client_action = "rechunk_and_resubmit"
+exit = 65
+description = "The payload exceeds a size or ratio limit that smaller record-boundary chunks satisfy."
+
+[classes.payload_limit_unsplittable]
+http = [413]
+retryable = false
+client_action = "quarantine_and_report_gap"
+exit = 65
+description = "A single record exceeds an unsplittable limit; quarantine it and report the coverage gap."
+
+[classes.throttle]
+http = [408, 425, 429]
+retryable = true
+client_action = "backoff_and_retry"
+exit = 75
+description = "The request was sound but arrived too early, too often, or ran past the deadline; retry with backoff."
+
+[classes.server_failure]
+http = [500, 502, 503, 504]
+retryable = true
+client_action = "backoff_and_retry"
+exit = 75
+description = "A registry, storage, or transient server failure; retry; no receipt is issued."
+
+[classes.network]
+http = []
+retryable = true
+client_action = "retry_identical_envelope"
+exit = 75
+description = "Transport-level failure with no HTTP response; retry the identical envelope with fresh authorization."
+
+[classes.usage]
+http = []
+retryable = false
+client_action = "fix_invocation"
+exit = 64
+description = "The command was invoked incorrectly or lacks a required non-interactive decision."
+
+[classes.lock_contention]
+http = []
+retryable = false
+client_action = "await_mutator_exit"
+exit = 75
+description = "Another process owns the state-directory lock; one mutator at a time."
+
+[classes.resource_exhausted]
+http = []
+retryable = false
+client_action = "restore_disk_floor"
+exit = 75
+description = "A local resource floor or cap was hit; uploading pauses predictably until it is restored."
+
+[classes.local_state]
+http = []
+retryable = false
+client_action = "run_doctor"
+exit = 74
+description = "Local client state failed an I/O or integrity check; diagnose with doctor before mutating state."
+
+[classes.internal]
+http = []
+retryable = false
+client_action = "report_bug"
+exit = 70
+description = "An internal invariant was violated; a defect, not an operational condition."
+
+# ---------------------------------------------------------------------------
+# Codes: stable wire identifiers. Append-only within v1; `deprecated = true`
+# retires a code's use without removing its meaning.
+# ---------------------------------------------------------------------------
+
+[codes."envelope.malformed"]
+class = "request_invalid"
+http = 400
+message = "The request envelope is not valid canonical JSON for the declared schema version."
+description = "Envelope parse or canonical-form failure before schema validation proper."
+
+[codes."envelope.version_unsupported"]
+class = "request_invalid"
+http = 400
+message = "Envelope schema version {version} is not supported by this server."
+description = "Fail-closed rejection of an envelope schema version outside the supported range (VAL-001)."
+
+[codes."envelope.media_type_unsupported"]
+class = "request_invalid"
+http = 415
+message = "Media type {media_type} is not accepted; this path accepts {expected_media_type}."
+description = "Content negotiation failure on the ingestion media type."
+
+[codes."envelope.schema_invalid"]
+class = "request_invalid"
+http = 400
+message = "The envelope fails schema validation at field {field}."
+description = "Identifier syntax or length, range, timestamp-bound, or consistency validation failure (VAL-002)."
+
+[codes."envelope.size_exceeded"]
+class = "request_invalid"
+http = 400
+message = "The canonical envelope exceeds the {limit_bytes} byte limit."
+description = "The serialized envelope itself exceeds the canonical envelope cap; distinct from payload limits."
+
+[codes."auth.unlinked"]
+class = "authorization"
+http = 401
+message = "The client is not linked to a tenant; complete linking before uploading."
+description = "No linked-client record exists for the presenting key."
+
+[codes."auth.revoked"]
+class = "authorization"
+http = 401
+message = "The client authorization has been revoked; a new authorization is required."
+description = "The linked-client record or its key has been revoked."
+
+[codes."auth.authorization_rejected"]
+class = "authorization"
+http = 401
+message = "The authorization proof is stale, altered, or replayed; obtain fresh authorization."
+description = "Proof-of-possession failure other than revocation: expired window, bad signature, replay (ID-007)."
+
+[codes."auth.forbidden"]
+class = "authorization"
+http = 403
+message = "The uploader is not authorized for the declared origin client or tenant."
+description = "Cross-tenant, cross-client, or unauthorized-relay rejection (ID-005)."
+
+[codes."storage.integrity_conflict"]
+class = "integrity_conflict"
+http = 409
+message = "An existing object is incompatible with this submission; the affected source requires operator review."
+description = "Readable existing content or metadata contradicts a would-be commit; never treated as deduplication."
+
+[codes."request.payload_too_large"]
+class = "payload_limit_splittable"
+http = 413
+message = "The payload of {actual_bytes} bytes exceeds the {limit_bytes} byte limit; rechunk at a record boundary and resubmit."
+description = "Compressed or uncompressed payload size limit hit on a splittable chunk."
+
+[codes."request.expansion_ratio_exceeded"]
+class = "payload_limit_splittable"
+http = 413
+message = "The decompression expansion ratio exceeds {max_ratio} to 1; rechunk and resubmit."
+description = "Compressed-to-uncompressed ratio guard hit (VAL-003)."
+
+[codes."request.record_too_large"]
+class = "payload_limit_unsplittable"
+http = 413
+message = "One record of {actual_bytes} bytes exceeds the {limit_bytes} byte unsplittable limit; the coverage gap is reported."
+description = "A single record cannot fit any lawful chunk; quarantined with an explicit coverage gap."
+
+[codes."request.deadline_exceeded"]
+class = "throttle"
+http = 408
+message = "The request exceeded the request deadline; retry the identical envelope."
+description = "Server-side request-duration limit reached before completion."
+
+[codes."request.rate_limited"]
+class = "throttle"
+http = 429
+message = "The per-client request rate was exceeded; retry after the indicated interval."
+description = "Token-bucket guard on new requests per client."
+
+[codes."request.too_early"]
+class = "throttle"
+http = 425
+message = "The server is not ready to accept this request yet; retry after the indicated interval."
+description = "Reusable early-rejection status reserved for ordered-arrival guards."
+
+[codes."server.internal"]
+class = "server_failure"
+http = 500
+message = "An internal server error occurred; the request was not committed."
+description = "Unexpected server-side fault; committed nothing, issued no receipt."
+
+[codes."server.storage_failure"]
+class = "server_failure"
+http = 502
+message = "The storage backend rejected or failed the operation; the request was not committed."
+description = "Storage-tier error surfaced as a retryable upstream failure."
+
+[codes."server.unavailable"]
+class = "server_failure"
+http = 503
+message = "The service is temporarily unable to handle the request; retry the identical envelope."
+description = "Overload or shutdown drain; no receipt is issued."
+
+[codes."server.partial_commit"]
+class = "server_failure"
+http = 503
+message = "The request committed partially and no receipt was issued; retry the identical envelope to repair it."
+description = "Blob- or occurrence-only commit; the identical retry repairs the occurrence and attestation (RCPT-005)."
+
+[codes."server.upstream_timeout"]
+class = "server_failure"
+http = 504
+message = "The storage backend timed out; the commit result is unknown; retry the identical envelope."
+description = "Storage timeout with unknown physical outcome; logical repair by retry."
+
+[codes."transport.connection_failed"]
+class = "network"
+message = "The connection could not be established or ended early; retry the identical envelope with fresh authorization."
+description = "No HTTP response exists; DNS, connect, or mid-request transport failure."
+
+[codes."transport.response_lost"]
+class = "network"
+message = "The response was lost before completion; retry the identical envelope with fresh authorization."
+description = "Request may have been processed; the identical retry converges (STO-004)."
+
+[codes."cli.usage_error"]
+class = "usage"
+message = "The command was invoked with invalid arguments or an ambiguous combination."
+description = "Argument parsing or combination validation failure."
+
+[codes."cli.decision_missing"]
+class = "usage"
+message = "Non-interactive mode requires the {field} decision; provide it by flag or configuration."
+description = "A missing decision or configuration field in non-interactive mode (plan Phase 5, exit 64)."
+
+[codes."client.lock_held"]
+class = "lock_contention"
+message = "Another process owns the state directory lock; only one mutator may run at a time."
+description = "The OS advisory lock on the state directory is held by a second mutator (plan Section 7.9, exit 75)."
+
+[codes."client.spool_high_water"]
+class = "resource_exhausted"
+message = "The spool reached its {limit_bytes} byte cap; uploading is paused until the free-space floor is restored."
+description = "Predictable degradation at the spool cap or disk floor (OPS-003), not data loss."
+
+[codes."client.state_io"]
+class = "local_state"
+message = "A local state or spool I/O operation failed; run doctor to diagnose."
+description = "Filesystem or SQLite I/O error on client-local state."
+
+[codes."client.state_corrupt"]
+class = "local_state"
+message = "Local state failed validation; run doctor before mutating state."
+description = "Integrity check failure in SQLite or spool structures."
+
+[codes."client.clock_skew"]
+class = "local_state"
+message = "The local clock is outside the accepted skew window; correct it before uploading."
+description = "Clock sanity failure detected by doctor or at authorization time."
+
+[codes."client.internal_error"]
+class = "internal"
+message = "An internal invariant was violated; report this as a bug with the correlation identifier."
+description = "Client-side invariant failure; a defect rather than an operational condition."

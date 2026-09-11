@@ -6,8 +6,8 @@
 #
 # Lanes:
 #   - Fast:  fmt, build, clippy (-D warnings), rustdoc, stub scan, crate
-#     graph, license gate, secret scan of the working tree (seconds, offline;
-#     safe as a gate)
+#     graph, license gate, error-code registry gate, secret scan of the
+#     working tree (seconds, offline; safe as a gate)
 #   - Slow:  the workspace test suite
 #   - Audit: dependency audit (cargo audit; fetches the public RustSec
 #     advisory database — network, but no credentials) and a secret scan of
@@ -102,6 +102,7 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   run_check "stub scan"            stub_scan
   run_check "crate graph"          python3 tools/check-crate-graph.py
   run_check "license gate"         python3 tools/check-licenses.py
+  run_check "error-code registry"  python3 tools/check-error-codes.py --self-test
   # .gitleaks.toml (extend-default + never-committed path exclusions) is
   # picked up automatically from the repository root.
   require_tool gitleaks "gitleaks >= 8.19 (dir mode, --redact); see CONTRIBUTING.md" \

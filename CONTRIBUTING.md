@@ -58,6 +58,7 @@ cargo test --workspace                             # unit tests
 cargo doc --workspace --no-deps                    # docs; broken links deny
 python3 tools/check-crate-graph.py                 # crate purpose + cycle check
 python3 tools/check-licenses.py                    # dependency license gate
+python3 tools/check-error-codes.py --self-test     # error-code registry gate
 gitleaks dir --redact .                            # secret scan, working tree
 gitleaks detect --redact                           # secret scan, git history
 cargo audit --file Cargo.lock --deny warnings      # dependency audit
@@ -66,8 +67,8 @@ cargo audit --file Cargo.lock --deny warnings      # dependency audit
 The script's lanes keep per-change gating cheap:
 
 - `--fast` (default; what automation runs per change): fmt, build, Clippy,
-  rustdoc, stub scan, crate graph, license gate, working-tree secret scan —
-  seconds, fully offline.
+  rustdoc, stub scan, crate graph, license gate, error-code registry gate,
+  working-tree secret scan — seconds, fully offline.
 - `--slow`: the workspace test suite.
 - `--audit`: `cargo audit` and the git-history secret scan. The audit
   downloads the public RustSec advisory database; no credentials are involved.
@@ -86,7 +87,11 @@ warning is a failed check. Secret-scan findings are redacted at the source: a
 finding names the rule, file, and line, never the matched value. The license
 gate requires every third-party lockfile entry to have a recorded SPDX
 identifier in `tools/license-allowlist.toml`, added in the same commit as the
-dependency. The Argo CI workflow that runs this baseline on Forgejo pushes is
+dependency. The error-code registry gate requires every emitted error code to
+be an appended entry in `tools/error-codes.toml` whose class, HTTP status,
+message template, and labels satisfy the
+[error-code conventions](docs/notes/error-codes.md); adding a code is a
+compatible change, redefining one is not. The Argo CI workflow that runs this baseline on Forgejo pushes is
 tracked as separate Phase 0 work; until it lands, run the script locally and
 state in the pull request that it passes.
 
