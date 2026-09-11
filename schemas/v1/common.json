@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:common",
+  "title": "Agent Archivist shared wire vocabulary (v1)",
+  "description": "Primitive shapes, identifier grammars, and the closed v1 enum sets shared by the ingest wire schema family (docs/notes/wire-schemas.md). Every enum here is fail-closed on unknown values per plan Section 7.1; the `x-archivist.bearing` metadata records which enums are security- or identity-bearing. Every numeric shape is an integer: protocol structures contain no floating-point values.",
+  "$defs": {
+    "uuid-v4": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "maxLength": 36,
+      "description": "Random UUID in lowercase canonical text (plan Section 7.4): tenant, client, and adapter-minted synthetic session identifiers.",
+      "x-archivist": {
+        "normalization": "lowercase-canonical-uuid",
+        "bearing": "identity"
+      }
+    },
+    "uuid-v7": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "maxLength": 36,
+      "description": "Time-ordered UUID in lowercase canonical text (plan Section 7.4): generation and request identifiers, frozen when the spool entry is created so retries reproduce them.",
+      "x-archivist": {
+        "normalization": "lowercase-canonical-uuid",
+        "bearing": "identity"
+      }
+    },
+    "sha256-hex": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "maxLength": 64,
+      "description": "Lowercase hexadecimal SHA-256 digest: blob digests, derived identifier hashes, checksums, and key identifiers.",
+      "x-archivist": {
+        "normalization": "lowercase-hex",
+        "bearing": "security"
+      }
+    },
+    "ed25519-signature-hex": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{128}$",
+      "maxLength": 128,
+      "description": "Lowercase hexadecimal Ed25519 signature (64 raw bytes).",
+      "x-archivist": {
+        "normalization": "lowercase-hex",
+        "bearing": "security"
+      }
+    },
+    "ed25519-public-key-hex": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "maxLength": 64,
+      "description": "Lowercase hexadecimal Ed25519 public key (32 raw bytes). Public halves only: verification material travels by value where a record must verify offline (the receipt certificate); private keys never appear in any schema, file, or argument (SEC-006).",
+      "x-archivist": {
+        "normalization": "lowercase-hex",
+        "bearing": "security"
+      }
+    },
+    "key-id": {
+      "$ref": "#/$defs/sha256-hex",
+      "description": "Ed25519 key identifier: the lowercase-hex SHA-256 of the encoded public key. Identifies uploader authorization keys and receipt-signing keys; derivation is pinned so key IDs are computable from any published public record."
+    },
+    "short-token": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+      "maxLength": 64,
+      "description": "Bounded lowercase token (plan Section 7.4 harness grammar): harness IDs, adapter IDs, enum-like tokens that become object-key segments.",
+      "x-archivist": {
+        "normalization": "none-rejected-unless-canonical",
+        "bearing": "identity"
+      }
+    },
+    "version-token": {
+      "type": "string",
+      "pattern": "^[0-9A-Za-z._+-]{1,32}$",
+      "maxLength": 32,
+      "description": "Bounded version token (the error-message `version` charset): adapter projection versions and similar software-version labels carried in provenance.",
+      "x-archivist": {
+        "normalization": "none-opaque",
+        "bearing": "provenance"
+      }
+    },
+    "opaque-id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "description": "Opaque UTF-8 identifier (plan Section 7.4): upstream session, adapter artifact, and correlation identifiers. At most 1,024 bytes; never case-folded, never Unicode-normalized, never trimmed — lookalikes stay distinct sessions. `maxLength` is the codepoint superset; the byte bound in `x-archivist.byteMaxLength` is the normative limit.",
+      "x-archivist": {
+        "byteMaxLength": 1024,
+        "normalization": "none-opaque-utf8",
+        "bearing": "identity"
+      }
+    },
+    "rfc3339-utc-timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$",
+      "maxLength": 35,
+      "description": "RFC 3339 timestamp in UTC (`Z` suffix only; plan Section 7.3: persisted timestamps are RFC 3339 UTC and local time is a display choice). Calendar validity and range sanity are server-side validation (VAL-002), not syntax.",
+      "x-archivist": {
+        "normalization": "utc-z-suffix",
+        "bearing": "provenance"
+      }
+    },
+    "u63": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854775807,
+      "description": "Non-negative integer below 2^63. Every wire integer uses this shape: no floats exist anywhere in protocol structures, and values stay renderable by the error-message integer placeholders.",
+      "x-archivist": {
+        "bearing": "structural"
+      }
+    },
+    "artifact-kind": {
+      "type": "string",
+      "enum": ["file-slice", "database-projection"],
+      "description": "Artifact kind (plan Section 7.3): `file-slice` is an exact complete-record byte slice of a file source; `database-projection` is a versioned allowlisted projection of database events. Identity-bearing: the kind is an input to the artifact hash, so an unknown value fails closed.",
+      "x-archivist": {
+        "bearing": "identity",
+        "failClosed": true
+      }
+    },
+    "range-kind": {
+      "type": "string",
+      "enum": ["byte", "event"],
+      "description": "Range coordinate kind (plan Section 7.4 occurrence inputs). `byte` ranges address offsets into a source byte stream; `event` ranges address projected-event ordinals. Identity-bearing: an input to the occurrence hash, so an unknown value fails closed.",
+      "x-archivist": {
+        "bearing": "identity",
+        "failClosed": true
+      }
+    },
+    "id-source": {
+      "type": "string",
+      "enum": ["upstream", "synthetic"],
+      "description": "Origin of the upstream session identifier (plan Section 7.4): `upstream` was read from the harness; `synthetic` is an adapter-minted UUIDv4 standing in for a missing harness session ID, never inferred from a path name. Identity-bearing: an unknown value fails closed.",
+      "x-archivist": {
+        "bearing": "identity",
+        "failClosed": true
+      }
+    },
+    "storage-profile": {
+      "type": "string",
+      "enum": ["zstd-v1"],
+      "description": "Named canonical storage encoder (plan Sections 7.5 and 7.6): `zstd-v1` is Zstandard level 3, single-threaded, no dictionary, content size and checksum enabled, with the encoder dependency pinned for the life of the profile. A new canonical encoder requires a new named profile and prefix; it never rewrites the meaning of `zstd-v1`. Security-bearing: determines stored bytes and key prefixes, so an unknown value fails closed.",
+      "x-archivist": {
+        "bearing": "security",
+        "failClosed": true
+      }
+    },
+    "transport-encoding": {
+      "type": "string",
+      "enum": ["identity", "zstd"],
+      "description": "Declared wire encoding of the payload part (plan Section 7.6: the client may transport canonical bytes raw or with a declared transport encoding; the server decodes exactly one declared encoding per request). `identity` carries the canonical bytes unchanged; `zstd` carries one Zstandard frame of the canonical bytes at any legal level — it is a transport convenience only, distinct from the `zstd-v1` storage profile the server produces. Security-bearing: a misdeclared encoding changes what the server decodes, so an unknown value fails closed.",
+      "x-archivist": {
+        "bearing": "security",
+        "failClosed": true
+      }
+    },
+    "checksum-algorithm": {
+      "type": "string",
+      "enum": ["sha256"],
+      "description": "Algorithm of the envelope's incoming representation checksum. SHA-256 only in v1. Security-bearing: an unknown value fails closed rather than being guessed.",
+      "x-archivist": {
+        "bearing": "security",
+        "failClosed": true
+      }
+    },
+    "storage-outcome": {
+      "type": "string",
+      "enum": ["created", "already_present", "replaced_equivalent", "logically_committed_unknown_physical_result"],
+      "description": "Per-object storage outcome (plan Section 7.7; RCPT-003): exactly what the backend can establish, never stronger. `already_present` requires readable compatible metadata; a writer-only overwrite profile reports the weaker unknown-physical result. Security-bearing: deduplication honesty, so an unknown value fails closed.",
+      "x-archivist": {
+        "bearing": "security",
+        "failClosed": true
+      }
+    },
+    "signature-algorithm": {
+      "type": "string",
+      "enum": ["ed25519"],
+      "description": "Digital signature algorithm for request authorization and receipts. Ed25519 only in v1. Security-bearing: an unknown value fails closed.",
+      "x-archivist": {
+        "bearing": "security",
+        "failClosed": true
+      }
+    },
+    "blob-object-key": {
+      "type": "string",
+      "pattern": "^tenants/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/v1/raw/blobs/zstd-v1/sha256/[0-9a-f]{2}/[0-9a-f]{64}\\.zst$",
+      "maxLength": 512,
+      "description": "Server-derived raw blob key (plan Section 7.5), assembled only from the validated tenant UUID, the pinned profile, and the computed canonical digest. The two-hex segment is the digest shard.",
+      "x-archivist": {
+        "bearing": "security"
+      }
+    },
+    "occurrence-object-key": {
+      "type": "string",
+      "pattern": "^tenants/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/v1/raw/occurrences/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[a-z0-9][a-z0-9._-]{0,63}/[0-9a-f]{2}/[0-9a-f]{64}/[0-9a-f]{64}\\.json$",
+      "maxLength": 512,
+      "description": "Server-derived occurrence key (plan Section 7.5): tenant, origin client, harness, session shard, session hash, occurrence hash. Raw upstream identifiers are hashed in, never embedded. The two-hex segment is the session-hash shard.",
+      "x-archivist": {
+        "bearing": "security"
+      }
+    },
+    "attestation-object-key": {
+      "type": "string",
+      "pattern": "^tenants/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/v1/raw/attestations/[0-9a-f]{2}/[0-9a-f]{64}/[0-9a-f]{64}\\.json$",
+      "maxLength": 512,
+      "description": "Server-derived upload-attestation key (plan Section 7.5): tenant, occurrence shard, occurrence hash, attestation hash.",
+      "x-archivist": {
+        "bearing": "security"
+      }
+    }
+  }
+}
