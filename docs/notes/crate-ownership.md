@@ -43,6 +43,12 @@ layer 2  archivist-adapter-{claude,codex,opencode,pi} → archivist-adapter-sdk
 
 ## Ownership
 
+The Layer column uses the same zero-based topological numbering that
+`tools/check-crate-graph.py` prints: a crate's layer is one above the highest
+layer of its internal dependencies. `archivist-server` therefore sits at
+layer 2 — its dependencies (`protocol`, `auth`, `storage`) all resolve at
+layer 1 — not on a tier of its own above the client engine.
+
 | Crate | Layer | Purpose | Owning phase | Internal dependencies |
 |---|---|---|---|---|
 | `archivist-protocol` | 0 | Versioned wire types, validation, deterministic identifiers and object-key derivation, RFC 8785 canonical serialization | 1 | none |
@@ -55,8 +61,8 @@ layer 2  archivist-adapter-{claude,codex,opencode,pi} → archivist-adapter-sdk
 | `archivist-adapter-codex` | 2 | Codex: JSONL complete-record capture, sidecars, generation detection | 6A | adapter-sdk |
 | `archivist-adapter-opencode` | 2 | OpenCode: read-only allowlisted database projection | 6B | adapter-sdk |
 | `archivist-adapter-pi` | 2 | Pi: configured-root discovery, durable session formats, coverage gaps | 6C | adapter-sdk |
-| `archivist-server` | 3 | Stateless HTTP data plane: `/v1/ingest`, health, metrics, bounded middleware, commit ordering, signed receipts | 4 | protocol, auth, storage |
-| `archivist-cli` | 4 | `archivist` binary: collect, serve, link, admin, status; selects backend and adapters | 3, 5, 6, 7 | all of the above |
+| `archivist-server` | 2 | Stateless HTTP data plane: `/v1/ingest`, health, metrics, bounded middleware, commit ordering, signed receipts | 4 | protocol, auth, storage |
+| `archivist-cli` | 3 | `archivist` binary: collect, serve, link, admin, status; selects backend and adapters | 3, 5, 6, 7 | all of the above |
 
 ## Boundary rules
 
