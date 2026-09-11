@@ -1,0 +1,27 @@
+# Gitleaks configuration for Agent Archivist.
+#
+# Runs in two places (scripts/definition-of-done.sh):
+#   - fast lane: `gitleaks dir --redact .` scans the working tree;
+#   - audit lane: `gitleaks detect --redact` scans the full git history.
+#
+# The bundled default rule set is extended, not replaced, so the scan tracks
+# upstream detector improvements. Excluded paths are exactly the trees that are
+# never published: version-control internals (their content is scanned properly
+# by the history mode), build output, and the machine-local bead runtime state
+# (`.beads/beads.db`, `.beads/traces/` — the committed checkpoint under
+# `.beads/checkpoint/` stays in scope). Everything git-tracked is scanned.
+#
+# Output safety: every invocation passes `--redact`, so a finding names the
+# rule, file, and line but never reproduces the matched value.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Trees that are never committed or are scanned through git history instead."
+paths = [
+    '''(^|/)\.git/''',
+    '''^target/''',
+    '''(^|/)\.beads/beads\.db$''',
+    '''(^|/)\.beads/traces/''',
+]

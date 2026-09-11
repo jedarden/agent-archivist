@@ -26,13 +26,17 @@ purpose, its phase, and its dependency boundary.
 
 ## Workspace
 
+One command runs the whole verification baseline:
+
 ```sh
-cargo fmt --check                                  # formatting
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace                             # unit tests
-cargo doc --workspace --no-deps                    # docs; broken links deny
-python3 tools/check-crate-graph.py                 # crate purpose + cycle check
+scripts/definition-of-done.sh --all
 ```
+
+It covers formatting, Clippy with warnings denied, unit tests, rustdoc, the
+crate purpose/cycle check, the dependency license gate, a redacted secret scan
+of the working tree and the git history, and a `cargo audit` dependency audit.
+The fast subset (`--fast`) is what the automation gate runs per change. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the lane layout and prerequisites.
 
 Rust 1.97.1 (edition 2024) is pinned in `rust-toolchain.toml`; `Cargo.lock` is
 committed.

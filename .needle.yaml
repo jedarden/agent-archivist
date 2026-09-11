@@ -3,8 +3,9 @@ bead_cli:
 
 # NEEDLE validation gate: Definition of Done (fast lane).
 # The SAME command a developer and CI run, so "is this work acceptable?" has a
-# single source of truth. The fast lane is fmt, build, clippy, rustdoc and the
-# no-placeholder stub scan — seconds, safe to run on every dispatch.
+# single source of truth. The fast lane is fmt, build, clippy, rustdoc, the
+# no-placeholder stub scan, the crate graph, the license gate, and a redacted
+# working-tree secret scan — seconds, offline, safe to run on every dispatch.
 gates:
   - type: command
     commands:

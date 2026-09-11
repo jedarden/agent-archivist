@@ -41,11 +41,15 @@ sight, even if the data looks harmless.
   promises an older minimum supported Rust version.
 - `Cargo.lock` is committed; dependency changes belong in the same commit as
   the code that needs them.
-- The verification baseline needs no external credentials or services.
+- The verification baseline needs no external credentials or services. The
+  only network it touches is the public RustSec advisory database fetched by
+  `cargo audit`.
 
 ## Verification baseline
 
-Every change must pass all of these on the same commit:
+`scripts/definition-of-done.sh` is the single entry point; a developer runs it
+with `--all` before pushing. It expresses the same baseline as the individual
+commands:
 
 ```sh
 cargo fmt --check                                  # formatting
@@ -53,13 +57,38 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace                             # unit tests
 cargo doc --workspace --no-deps                    # docs; broken links deny
 python3 tools/check-crate-graph.py                 # crate purpose + cycle check
+python3 tools/check-licenses.py                    # dependency license gate
+gitleaks dir --redact .                            # secret scan, working tree
+gitleaks detect --redact                           # secret scan, git history
+cargo audit --file Cargo.lock --deny warnings      # dependency audit
 ```
+
+The script's lanes keep per-change gating cheap:
+
+- `--fast` (default; what automation runs per change): fmt, build, Clippy,
+  rustdoc, stub scan, crate graph, license gate, working-tree secret scan —
+  seconds, fully offline.
+- `--slow`: the workspace test suite.
+- `--audit`: `cargo audit` and the git-history secret scan. The audit
+  downloads the public RustSec advisory database; no credentials are involved.
+- `--all`: every lane.
+
+A missing prerequisite tool is reported as a failure, never skipped: the gate
+does not pass because a scanner was absent. Prerequisites beyond the pinned
+Rust toolchain and `python3` are `gitleaks` (>= 8.19, for `dir` mode and
+redacted findings; see `.gitleaks.toml`) and `cargo-audit`
+(`cargo install cargo-audit --locked`).
 
 `unsafe_code` is forbidden, `missing_docs` and the Clippy `pedantic` set warn,
 and the rustdoc build fails on a broken intra-doc link (all configured in the
-workspace `Cargo.toml`). The Argo CI workflow that runs this baseline on Forgejo
-pushes is tracked as separate Phase 0 work; until it lands, run the commands
-locally and state in the pull request that they pass.
+workspace `Cargo.toml`); the Clippy invocation denies all warnings, so a
+warning is a failed check. Secret-scan findings are redacted at the source: a
+finding names the rule, file, and line, never the matched value. The license
+gate requires every third-party lockfile entry to have a recorded SPDX
+identifier in `tools/license-allowlist.toml`, added in the same commit as the
+dependency. The Argo CI workflow that runs this baseline on Forgejo pushes is
+tracked as separate Phase 0 work; until it lands, run the script locally and
+state in the pull request that it passes.
 
 ## Workspace rules
 

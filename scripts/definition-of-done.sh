@@ -5,19 +5,29 @@
 # a developer at a terminal, by CI, and by the NEEDLE validation gate.
 #
 # Lanes:
-#   - Fast: fmt, build, clippy, rustdoc, stub scan (seconds; safe as a gate)
-#   - Slow: the workspace test suite
+#   - Fast:  fmt, build, clippy (-D warnings), rustdoc, stub scan, crate
+#     graph, license gate, secret scan of the working tree (seconds, offline;
+#     safe as a gate)
+#   - Slow:  the workspace test suite
+#   - Audit: dependency audit (cargo audit; fetches the public RustSec
+#     advisory database — network, but no credentials) and a secret scan of
+#     the full git history
 #
 # Usage:
-#   scripts/definition-of-done.sh [--fast|--slow|--all]
+#   scripts/definition-of-done.sh [--fast|--slow|--audit|--all]
 #
 #   --fast   Fast lane only (default; this is what the NEEDLE gate runs)
 #   --slow   Test suite only
-#   --all    Both lanes
+#   --audit  Dependency audit + history secret scan only
+#   --all    Every lane; what a developer runs before pushing
 #
 # Behaviour: aggregates failures rather than aborting on the first one, so a
 # single run reports everything that is wrong. Exits non-zero if any check
-# failed.
+# failed or a prerequisite tool is missing.
+#
+# Output safety: every check reports names, paths, and identifiers only.
+# Secret-scanning findings are redacted at the source (`gitleaks --redact`),
+# so a finding names the rule, file, and line but never the matched value.
 #
 # The stub scan enforces the plan's no-placeholder rule: crate skeletons carry
 # documented purposes, never `todo!()`/`unimplemented!()` bodies. See
@@ -33,6 +43,7 @@ while [ $# -gt 0 ]; do
   case $1 in
     --fast) LANE="fast" ;;
     --slow) LANE="slow" ;;
+    --audit) LANE="audit" ;;
     --all)  LANE="all" ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -56,6 +67,18 @@ run_check() {
   rm -f /tmp/dod-$$.log
 }
 
+# A missing prerequisite is a failure, never a silent skip: the gate must not
+# pass because a scanner was absent.
+require_tool() {
+  local tool="$1" hint="$2"
+  if command -v "$tool" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "  FAIL prerequisite: ${tool} is not installed (${hint})"
+  FAILURES+=("prerequisite: ${tool}")
+  return 1
+}
+
 # The stub scan is a grep whose SUCCESS is "no matches", so it cannot go
 # through run_check directly.
 stub_scan() {
@@ -74,13 +97,26 @@ echo "NEEDLE_VERIFICATION_GATE: definition-of-done"
 if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   run_check "cargo fmt --check"    cargo fmt --check --all
   run_check "cargo build"          cargo build --workspace
-  run_check "cargo clippy"         cargo clippy --workspace --all-targets
+  run_check "cargo clippy"         cargo clippy --workspace --all-targets -- -D warnings
   run_check "cargo doc"            cargo doc --workspace --no-deps
   run_check "stub scan"            stub_scan
+  run_check "crate graph"          python3 tools/check-crate-graph.py
+  run_check "license gate"         python3 tools/check-licenses.py
+  # .gitleaks.toml (extend-default + never-committed path exclusions) is
+  # picked up automatically from the repository root.
+  require_tool gitleaks "gitleaks >= 8.19 (dir mode, --redact); see CONTRIBUTING.md" \
+    && run_check "secret scan (working tree)" gitleaks dir --redact --no-banner .
 fi
 
 if [ "$LANE" = "slow" ] || [ "$LANE" = "all" ]; then
   run_check "cargo test"           cargo test --workspace
+fi
+
+if [ "$LANE" = "audit" ] || [ "$LANE" = "all" ]; then
+  require_tool cargo-audit "cargo install cargo-audit --locked" \
+    && run_check "cargo audit"     cargo audit --file Cargo.lock --deny warnings
+  require_tool gitleaks "gitleaks >= 8.19 (dir mode, --redact); see CONTRIBUTING.md" \
+    && run_check "secret scan (git history)" gitleaks detect --redact --no-banner
 fi
 
 echo

@@ -1,0 +1,13 @@
+# Reviewed third-party dependency licenses for Agent Archivist.
+#
+# One entry per third-party package that appears in Cargo.lock, recording the
+# SPDX license identifier published for that crate at the time it was adopted.
+# `tools/check-licenses.py` fails when a lockfile package has no entry (an
+# unreviewed dependency) or when an entry outlives its dependency (a stale
+# record), so adding a dependency is always a deliberate license review.
+#
+# The workspace is dependency-free at present; the table is intentionally
+# empty and grows only when the first external crate is adopted.
+
+[approved]
+# crate-name = "SPDX identifier as published by the crate"
