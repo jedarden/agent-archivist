@@ -1,0 +1,231 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:ingest-envelope",
+  "title": "Agent Archivist canonical ingest envelope (envelope_version 1)",
+  "description": "The immutable, client-frozen metadata part of POST /v1/ingest (plan Sections 7.2 and 7.3). Serialized as RFC 8785 canonical JSON with no floating-point values, bounded to 65,536 canonical bytes. The envelope excludes server commit time, per-attempt authorization epoch/key/timestamp, the per-attempt signature, and any server attempt correlation: those live in the request signature parameters and the signed receipt, so a retry outside the authorization window changes nothing about occurrence or attestation identity. Unknown optional fields are retained inside signed bytes and their semantics ignored (plan Section 7.1); the reserved names below are rejected outright because freezing per-attempt or server material in the envelope would break that exact property.",
+  "type": "object",
+  "x-archivist": {
+    "mediaType": "application/vnd.agent-archivist.envelope+json;version=1",
+    "mediaTypeVersionParameter": "tracks envelope_version: the media-type parameter and the field must agree, so a v2 envelope is framed as version=2 and an old server rejects at the framing layer before parsing the body — part of the fail-closed major rule (plan Section 7.1)",
+    "canonicalization": "rfc8785",
+    "canonicalMaxBytes": 65536,
+    "floats": false,
+    "unknownFields": "retain-ignore",
+    "reservedFields": [
+      "authorization_epoch",
+      "authorization_key_id",
+      "authorization_timestamp",
+      "commit_time",
+      "correlation_id",
+      "signature"
+    ],
+    "signedBy": "ingest-attempt-v1 signature parameters over the whole request (schemas/v1/ingest-request.json); the envelope itself never carries per-attempt material"
+  },
+  "required": [
+    "adapter_artifact_id",
+    "adapter_id",
+    "adapter_projection_version",
+    "artifact_kind",
+    "attestation_id",
+    "blob_digest",
+    "capture_time",
+    "compressed_size",
+    "envelope_creation_time",
+    "envelope_version",
+    "generation",
+    "harness",
+    "id_source",
+    "incoming_checksum",
+    "incoming_checksum_algorithm",
+    "occurrence_id",
+    "origin_client_id",
+    "protocol_version",
+    "range_end",
+    "range_kind",
+    "range_start",
+    "request_id",
+    "storage_profile",
+    "tenant_id",
+    "transport_encoding",
+    "uncompressed_size",
+    "upstream_session_id",
+    "uploader_client_id"
+  ],
+  "properties": {
+    "protocol_version": {
+      "const": 1,
+      "description": "Wire protocol family of the route (plan Section 7.1). Integer, currently 1; an unknown major fails closed.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+    },
+    "envelope_version": {
+      "const": 1,
+      "description": "Envelope schema major version (plan Section 7.1). Integer, currently 1; an unknown major fails closed. New optional fields land inside v1; new required or redefined fields require v2.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+    },
+    "tenant_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "Issuer-created tenant identifier (plan Section 7.4).",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "origin_client_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "Installation that captured the source. The session namespace is scoped by tenant and origin client, so cloned harness UUIDs never merge (plan Section 7.4; EC-03).",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "uploader_client_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "Installation presenting this request. May differ from the origin client when a relay or mirror uploads on the origin's behalf (plan Sections 7.4 and 7.5; EC-05A).",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "harness": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/short-token",
+      "description": "Harness identifier matching [a-z0-9][a-z0-9._-]{0,63} (plan Section 7.4).",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "upstream_session_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/opaque-id",
+      "description": "The harness's own session identifier, or the adapter-minted stand-in when `id_source` is `synthetic`. Opaque UTF-8, at most 1,024 bytes, never case-folded or Unicode-normalized; hashed into identity, never embedded in object keys.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "id_source": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/id-source",
+      "description": "Whether `upstream_session_id` came from the harness or was adapter-minted for a missing harness session ID (plan Section 7.4; a synthetic ID is never inferred from a path name).",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "artifact_kind": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/artifact-kind",
+      "description": "Kind of source artifact this occurrence projects (plan Section 7.3).",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "adapter_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/short-token",
+      "description": "Identifier of the adapter that projected the artifact; an input to the artifact hash (plan Section 7.4).",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "adapter_projection_version": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/version-token",
+      "description": "Version of the adapter's projection; preserved in provenance and an input to the artifact hash (plan Sections 7.1 and 7.4).",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "adapter_artifact_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/opaque-id",
+      "description": "The adapter's opaque identifier for the source artifact; an input to the artifact hash (plan Section 7.4).",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "generation": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v7",
+      "description": "Source generation of this artifact snapshot (plan Sections 7.3 and 7.4): replacement, truncation, or incompatible rewrite starts a fresh UUIDv7 generation and preserves both histories (EC-02). An input to the occurrence hash.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "range_kind": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/range-kind",
+      "description": "Whether the range coordinates are byte offsets or event ordinals (plan Section 7.4).",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "range_start": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+      "description": "Inclusive start coordinate of this chunk in the generation's source stream. `range_start` at most `range_end` and consistency with the declared sizes are server-side validation (VAL-002), not schema syntax.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "range_end": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+      "description": "Inclusive end coordinate of this chunk in the generation's source stream. Ranges sit inside the occurrence identity (plan Section 7.4), so overlapping, gapped, or re-declared ranges produce distinct deterministic occurrences (PI-05).",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "blob_digest": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "SHA-256 of the canonical uncompressed payload bytes (plan Section 7.4). The one digest that names a blob (STO-001); the server always recomputes it while streaming (VAL-004).",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "incoming_checksum": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "Checksum of the payload bytes as transported — the incoming representation, after the declared transport encoding (plan Section 7.3). A secondary integrity check, never promoted to content identity (PI-02).",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "incoming_checksum_algorithm": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/checksum-algorithm",
+      "description": "Algorithm of `incoming_checksum`; SHA-256 only in v1.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "storage_profile": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/storage-profile",
+      "description": "Named canonical storage encoder the server must produce for this occurrence's blob (plan Sections 7.5 and 7.6). Declared in the envelope so the stored form is pinned per occurrence.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "transport_encoding": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/transport-encoding",
+      "description": "Wire encoding of the payload part of this request (plan Section 7.6). The server decodes exactly one declared encoding; a misdeclaration makes the decoded canonical bytes diverge and the request fails (PI-01).",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "compressed_size": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+      "description": "Size in bytes of the payload as transported under `transport_encoding`. Equals `uncompressed_size` when the encoding is `identity`. Policy limits (VAL-003) bound the value at commit time; the schema bound is the no-float integer discipline.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "uncompressed_size": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+      "description": "Size in bytes of the canonical uncompressed payload. Enforced against the bytes the decoder actually produces (VAL-003; PI-03).",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "source_time": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "Optional UTC timestamp embedded in or derived from the source itself, when one exists (plan Section 7.5). Omitted, never nulled, when the source carries none. Uploader-asserted provenance (PI-07).",
+      "x-archivist": { "bearing": "provenance", "compat": "optional-additive-v1" }
+    },
+    "capture_time": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "UTC time the client captured (discovered and spooled) this chunk. Uploader-asserted provenance (plan Section 7.3; PI-07).",
+      "x-archivist": { "bearing": "provenance", "compat": "required-v1" }
+    },
+    "envelope_creation_time": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "UTC time the client froze this envelope (plan Section 7.3). Frozen with the spool entry; retries reuse the same bytes and this same timestamp.",
+      "x-archivist": { "bearing": "provenance", "compat": "required-v1" }
+    },
+    "occurrence_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "Deterministic occurrence identifier (plan Section 7.4): H(\"occurrence-v1\", session_hash, artifact_hash, generation, range_kind, range_start, range_end, blob_digest). The server re-derives and refuses a mismatch.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "attestation_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "Deterministic upload-attestation identifier (plan Section 7.4): H(\"attestation-v1\", occurrence_id, uploader_client, request_id). Reproduced by retries of the same frozen request; distinct for a distinct uploader or request.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "request_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v7",
+      "description": "The frozen upload request identifier (plan Sections 7.3 and 7.4): a UUIDv7 generated when the spool entry is created, reused across every retry, and bound into the envelope, attestation, receipt, and error bodies (ERR-025). A correlation handle, not a security identity.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "parent_session_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/opaque-id",
+      "description": "Optional upstream identifier of the parent session, within the same harness (plan Section 7.3). Correlation only: never an identity-hash input.",
+      "x-archivist": { "bearing": "correlation", "compat": "optional-additive-v1" }
+    },
+    "orchestrator_attempt_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/opaque-id",
+      "description": "Optional orchestrator attempt correlation identifier (plan Section 7.3; joined exactly, never inferred, per EC-13).",
+      "x-archivist": { "bearing": "correlation", "compat": "optional-additive-v1" }
+    },
+    "trace_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/opaque-id",
+      "description": "Optional provider trace correlation identifier (plan Section 7.3; CAP-008).",
+      "x-archivist": { "bearing": "correlation", "compat": "optional-additive-v1" }
+    },
+    "inference_request_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/opaque-id",
+      "description": "Optional inference-request correlation identifier (plan Section 7.3; Phase 9 consumes it).",
+      "x-archivist": { "bearing": "correlation", "compat": "optional-additive-v1" }
+    }
+  },
+  "not": {
+    "anyOf": [
+      { "required": ["authorization_epoch"] },
+      { "required": ["authorization_key_id"] },
+      { "required": ["authorization_timestamp"] },
+      { "required": ["commit_time"] },
+      { "required": ["correlation_id"] },
+      { "required": ["signature"] }
+    ]
+  }
+}

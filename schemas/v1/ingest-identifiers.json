@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:ingest-identifiers",
+  "title": "Agent Archivist deterministic identifier, object-key, and signature constructions (v1)",
+  "description": "The byte-exact construction of every derived value in the ingest wire family (plan Sections 7.2, 7.4, and 7.8): the domain-separated identity hashes, the plain canonical payload digest, the server-derived object-key segments, and the Ed25519 signing constructions for ingest attempts, receipts, and the receipt-key certificate. This document is a construction registry, not an instance shape: no instance ever carries these derivations as fields — they are reproducible from the fields named here, which is exactly what makes a lost-response retry converge on the same occurrence, attestation, and keys (STO-004) and what lets a standalone verifier reproduce signatures without importing the protocol crate. Golden vectors over these constructions arrive with the language-neutral conformance corpus; this file pins what they must agree with.",
+  "x-archivist": {
+    "floats": false,
+    "hash": "SHA-256",
+    "hashOutput": "64 lowercase hexadecimal characters (the derived identifier value on the wire)",
+    "labelEncoding": "UTF-8 bytes of the domain label followed by one 0x00 byte",
+    "fieldEncoding": "each field: 8-byte unsigned big-endian byte length followed by exactly that many field bytes",
+    "fieldKinds": {
+      "text": "UTF-8 bytes of the canonical wire text of an identifier, enum token, or UUID (identifiers hash as their canonical lowercase text, never as decoded binary)",
+      "u63": "8-byte unsigned big-endian rendering of the non-negative integer",
+      "digest": "the 32 raw bytes a 64-character lowercase hex digest names",
+      "bytes": "the raw bytes themselves (canonical payload only)"
+    },
+    "derivations": [
+      {
+        "id": "session_hash",
+        "label": "session-v1",
+        "fields": ["tenant_id", "origin_client_id", "harness", "upstream_session_id"],
+        "fieldKinds": ["text", "text", "text", "text"],
+        "source": "schemas/v1/ingest-envelope.json",
+        "description": "Namespaces a logical session by tenant, origin client, harness, and upstream session ID (plan Section 7.4; SID-001). Hostname never enters (mutable provenance); origin-client scope contains cloned harness UUIDs (SID-002)."
+      },
+      {
+        "id": "artifact_hash",
+        "label": "artifact-v1",
+        "fields": ["session_hash", "artifact_kind", "adapter_id", "adapter_projection_version", "adapter_artifact_id"],
+        "fieldKinds": ["digest", "text", "text", "text", "text"],
+        "source": "schemas/v1/ingest-envelope.json",
+        "description": "Identifies the artifact inside the session namespace, including the adapter and projection version so an adapter change is a different artifact, not a rewrite (plan Section 7.4)."
+      },
+      {
+        "id": "blob_digest",
+        "label": null,
+        "fields": ["canonical_uncompressed_bytes"],
+        "fieldKinds": ["bytes"],
+        "source": "payload part after transport decoding",
+        "description": "SHA-256 over the canonical uncompressed payload bytes with no domain label (plan Section 7.4). The one digest that names a blob (STO-001); the server recomputes it while streaming (VAL-004)."
+      },
+      {
+        "id": "occurrence_id",
+        "label": "occurrence-v1",
+        "fields": ["session_hash", "artifact_hash", "generation", "range_kind", "range_start", "range_end", "blob_digest"],
+        "fieldKinds": ["digest", "digest", "text", "text", "u63", "u63", "digest"],
+        "source": "schemas/v1/ingest-envelope.json",
+        "description": "Deterministic occurrence identity (plan Section 7.4; SID-005): session namespace, artifact identity, generation, range, and blob digest. Overlapping, gapped, or re-declared ranges produce distinct occurrences (PI-05); uploader and request never enter, so concurrent authorized uploaders converge on one key (STO-004)."
+      },
+      {
+        "id": "attestation_id",
+        "label": "attestation-v1",
+        "fields": ["occurrence_id", "uploader_client_id", "request_id"],
+        "fieldKinds": ["digest", "text", "text"],
+        "source": "schemas/v1/ingest-envelope.json",
+        "description": "Deterministic upload-attestation identity (plan Section 7.4; STO-013): the occurrence plus who uploaded it under which frozen request. Retries of one frozen request reproduce it; a distinct authorized uploader or request stays separately auditable."
+      }
+    ],
+    "objectKeys": [
+      {
+        "prefix": "tenants/<tenant_id>/v1/raw/blobs",
+        "segments": ["storage_profile", "sha256", "<blob_digest first 2 hex>", "<blob_digest>.zst"],
+        "pattern": "schemas/v1/common.json#/$defs/blob-object-key",
+        "description": "Blob key: pinned storage-profile prefix, digest shard, full digest (plan Section 7.5)."
+      },
+      {
+        "prefix": "tenants/<tenant_id>/v1/raw/occurrences",
+        "segments": ["<origin_client_id>", "<harness>", "<session_hash first 2 hex>", "<session_hash>", "<occurrence_id>.json"],
+        "pattern": "schemas/v1/common.json#/$defs/occurrence-object-key",
+        "description": "Occurrence key: raw upstream identifiers only ever appear as the hashed session and occurrence values, never as themselves (plan Section 7.5)."
+      },
+      {
+        "prefix": "tenants/<tenant_id>/v1/raw/attestations",
+        "segments": ["<occurrence_id first 2 hex>", "<occurrence_id>", "<attestation_id>.json"],
+        "pattern": "schemas/v1/common.json#/$defs/attestation-object-key",
+        "description": "Attestation key: occurrence shard, occurrence, attestation (plan Section 7.5)."
+      }
+    ],
+    "signatures": [
+      {
+        "id": "ingest-attempt-v1",
+        "algorithm": "ed25519",
+        "key": "the linked uploader client key (plan Section 7.2)",
+        "covered": [
+          "http_method",
+          "route",
+          "content_type",
+          "request_content_digest",
+          "envelope_digest",
+          "payload_canonical_digest",
+          "payload_transport_digest",
+          "uploader_key_id",
+          "authorization_epoch",
+          "authorization_timestamp"
+        ],
+        "coveredEncodings": ["text", "text", "text", "digest", "digest", "digest", "digest", "digest", "u63", "text"],
+        "source": "schemas/v1/ingest-request.json",
+        "description": "The per-attempt Ed25519 HTTP message signature (plan Section 7.2). Each covered value is encoded per fieldEncoding in the pinned order under the ingest-attempt-v1 label; the signature value and its algorithm are not covered (the algorithm is pinned by the closed v1 enum and the linked-key record, whose key ID is covered)."
+      },
+      {
+        "id": "receipt-v1",
+        "algorithm": "ed25519",
+        "key": "the tenant-scoped server receipt key named by the embedded certificate (plan Section 7.8)",
+        "covered": ["canonical receipt bytes minus the `signature` member"],
+        "coveredEncodings": ["bytes"],
+        "source": "schemas/v1/ingest-receipt.json",
+        "description": "The receipt signature covers the RFC 8785 canonicalization of the receipt object with the `signature` member removed — unknown additive fields are retained inside the signed bytes (plan Section 7.1). The algorithm is pinned by the certificate, so it travels verified rather than trusted."
+      },
+      {
+        "id": "receipt-key-v1",
+        "algorithm": "ed25519",
+        "key": "the tenant authority key the client pinned during linking (plan Sections 7.4 and 7.8; ID-009)",
+        "covered": ["canonical certificate bytes minus the `authority_signature` member"],
+        "coveredEncodings": ["bytes"],
+        "source": "schemas/v1/ingest-receipt.json",
+        "description": "The tenant-authority signature over the receipt-key certificate record with its `authority_signature` member removed (the member name is pinned by the certificate definition in the receipt schema). This is the chain an offline client verifies: pinned authority root signs the certificate, certificate key signs the receipt, and rotation stays non-invalidating because old records verify indefinitely."
+      }
+    ]
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:ingest-error",
+  "title": "Agent Archivist stable error body (archivist.error/v1)",
+  "description": "The wire shape of every error every producer emits (plan Sections 7.1 and 7.8; requirements VAL-001 and VAL-007): the ingestion server's HTTP responses, the client daemon and CLI diagnostics, adapter failures, and verification tooling. The body is closed — no field beyond these six exists, because an unbounded detail field is an unbounded disclosure surface (ERR-003, ERR-033). The code vocabulary and its class taxonomy live in tools/error-codes.toml and are gated by tools/check-error-codes.py; this schema pins the body those codes travel in. Unknown security-bearing values fail closed: an unrecognized namespace is not an archivist error, and a consumer MUST stop rather than guess. A well-formed but unregistered code is tolerated on purpose (ERR-037): codes are append-only, so a new code must reach old consumers as a parseable body whose retryable boolean stays authoritative.",
+  "type": "object",
+  "x-archivist": {
+    "mediaType": "application/vnd.agent-archivist.error+json",
+    "namespace": "archivist.error/v1",
+    "namespaceField": "schema",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "responseHeaders": {
+      "x-archivist-request-id": "the body request_id when known",
+      "x-archivist-correlation-id": "the body correlation_id"
+    },
+    "compatibility": "appending registry codes and rewording templates are compatible (ERR-035); renaming or redefining codes, changing this field set, or a new namespace are v2 events (ERR-036, ERR-038)"
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "code",
+    "retryable",
+    "message",
+    "request_id",
+    "correlation_id"
+  ],
+  "properties": {
+    "schema": {
+      "const": "archivist.error/v1",
+      "description": "The error namespace (ERR-001): appears in every serialized error body, never implied by context. Security-bearing: an unknown namespace is not this format; a consumer fails closed rather than parsing it hopefully (VAL-001). v2 arrives only through the documented transition (ERR-038).",
+      "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+    },
+    "code": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,23}\\.[a-z][a-z0-9_]{0,23}$",
+      "maxLength": 49,
+      "description": "Stable condition code, two lowercase dot-separated segments matching domain.condition (ERR-007). Bounded by pattern, not closed to the registry: codes are append-only within v1 and a consumer that meets an unregistered one falls back to retryable and the HTTP status class, never fails to parse (ERR-037). Provenance-bearing: identifies the condition, never content.",
+      "x-archivist": { "bearing": "provenance", "compat": "required-v1", "normalization": "none-rejected-unless-canonical" }
+    },
+    "retryable": {
+      "type": "boolean",
+      "description": "Whether an identical resubmission of the same frozen envelope could plausibly succeed (ERR-015). Authoritative on the wire (ERR-004): consumers retry solely on this boolean plus transport failure, never by string-matching messages — which is what makes appended codes compatible.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "message": {
+      "type": "string",
+      "pattern": "^[\\x20-\\x7a\\x7c\\x7e]+$",
+      "maxLength": 200,
+      "description": "Rendered safe message: printable ASCII on one line, no brace characters, at most 200 characters (ERR-011, ERR-013). The pattern is the printable-ASCII set 0x20-0x7E minus the braces 0x7B/0x7D (the placeholder-grammar delimiters) — non-ASCII, controls, and DEL fail validation outright rather than being trusted to the producer's discipline. Every interpolable value is charset-constrained before rendering, so truncation cannot introduce content. Advisory only (ERR-014): consumers MUST NOT parse it, and it never carries transcript, path, provider, or identifier content (VAL-007; SEC-004).",
+      "x-archivist": { "bearing": "structural", "compat": "required-v1", "normalization": "truncated-at-200-on-render" }
+    },
+    "request_id": {
+      "anyOf": [
+        { "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v7" },
+        { "type": "null" }
+      ],
+      "description": "The logical upload request this error belongs to (ERR-025): the UUIDv7 frozen when the spool entry was created (plan Section 7.4), reused across every retry, and bound into the envelope, attestation, receipt, and here. Null exactly when no envelope could be parsed or no request exists (client-local conditions; ERR-027) — omitted is not an option, so consumers can always index it.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "correlation_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v7",
+      "description": "Fresh server-assigned (or client-minted, for local diagnostics) identifier of this attempt, so one request_id fans out into per-attempt evidence across replicas (ERR-026). Always present; travels as the x-archivist-correlation-id header too.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    }
+  }
+}

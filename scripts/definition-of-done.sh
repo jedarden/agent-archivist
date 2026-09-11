@@ -104,6 +104,10 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   run_check "crate graph"          python3 tools/check-crate-graph.py
   run_check "license gate"         python3 tools/check-licenses.py
   run_check "error-code registry"  python3 tools/check-error-codes.py --self-test
+  # Wire-schema coherence (docs/notes/wire-schemas.md): refs, fail-closed
+  # enum/version metadata, reserved-name blocks, the construction registry,
+  # and the error-message charset; `--self-test` proves the rejection paths.
+  run_check "wire schema coherence"  python3 tools/check-wire-schemas.py --self-test
   # Byte-exact regeneration from the recorded seed plus the closed-
   # vocabulary content scan (docs/notes/fixtures.md). Output is
   # content-free: counts, bytes, and digests only.

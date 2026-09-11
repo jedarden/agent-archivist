@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:ingest-request",
+  "title": "Agent Archivist ingest request framing and per-attempt signature parameters (v1)",
+  "description": "The wire shape of POST /v1/ingest (plan Section 7.2): a multipart/related request whose first part is the canonical envelope and whose second part is the payload in the encoding the envelope declares. The payload streams and is never base64-embedded in JSON. This schema validates the per-attempt signature-parameter record — the values an Ed25519 HTTP message signature covers — and pins the framing constants in metadata. The parameters are attempt state, never envelope content: a retry mints fresh authorization (new epoch-bound timestamp and signature) while the envelope bytes stay identical.",
+  "type": "object",
+  "x-archivist": {
+    "route": "/v1/ingest",
+    "method": "POST",
+    "wholeRequestMediaType": "multipart/related",
+    "partOneMediaType": "application/vnd.agent-archivist.envelope+json;version=1",
+    "partTwoMediaTypeByTransport": {
+      "identity": "application/octet-stream",
+      "zstd": "application/zstd"
+    },
+    "authorizationWindowSeconds": 300,
+    "preauthorization": "the server MAY pre-authorize uploader_key_id before the body arrives, but commits nothing until the complete signature and payload verify (plan Section 7.2); stale-epoch or window-expired proofs are rejected while an identical authorized retry stays logically idempotent (ID-006, ID-007)",
+    "signingConstruction": "ingest-attempt-v1 domain label over zero-delimited, length-prefixed fields in the pinned covered order (schemas/v1/ingest-identifiers.json); golden vectors arrive with the language-neutral conformance corpus",
+    "floats": false
+  },
+  "additionalProperties": false,
+  "required": [
+    "authorization_epoch",
+    "authorization_timestamp",
+    "content_type",
+    "envelope_digest",
+    "http_method",
+    "payload_canonical_digest",
+    "payload_transport_digest",
+    "request_content_digest",
+    "route",
+    "signature",
+    "signature_algorithm",
+    "uploader_key_id"
+  ],
+  "properties": {
+    "http_method": {
+      "const": "POST",
+      "description": "HTTP method covered by the signature (plan Section 7.2).",
+      "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+    },
+    "route": {
+      "const": "/v1/ingest",
+      "description": "Route covered by the signature (plan Section 7.2); breaking wire changes use a new route major (plan Section 7.1), so an unknown route value fails closed the same way an unknown major does.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+    },
+    "content_type": {
+      "type": "string",
+      "pattern": "^multipart/related; boundary=[0-9A-Za-z'()+_,.:=?-]{1,70}$",
+      "maxLength": 100,
+      "description": "The complete Content-Type header value of the request, including the multipart boundary parameter, covered by the signature (plan Section 7.2).",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "request_content_digest": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "SHA-256 over the whole multipart/related request body (plan Section 7.2). On-path substitution of body or envelope fails this digest (IA-02).",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "envelope_digest": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "SHA-256 over the canonical envelope bytes of part one (plan Section 7.2).",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "payload_canonical_digest": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "The canonical uncompressed payload digest covered by the signature — equals the envelope's `blob_digest` (plan Section 7.2 payload digests).",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "payload_transport_digest": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "The incoming-representation digest covered by the signature — equals the envelope's `incoming_checksum` (plan Section 7.2 payload digests).",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "uploader_key_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id",
+      "description": "The linked uploader key this attempt authorizes under (plan Section 7.2). The server may pre-authorize the key ID before the body arrives, but commits nothing until the complete signature and payload verify.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "authorization_epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807,
+      "description": "Authorization epoch of the uploader key at this attempt (plan Section 7.2): rotations and revocations bump the epoch, and stale-epoch proofs are rejected (ID-006, ID-007).",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "authorization_timestamp": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "Fresh UTC timestamp bound into this attempt's proof (plan Section 7.2). Valid for the five-minute authorization window; a retry after the window re-authorizes without changing occurrence or attestation identity, because none of this enters the envelope.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "signature_algorithm": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/signature-algorithm",
+      "description": "Algorithm of the per-attempt signature; Ed25519 only in v1.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "signature": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/ed25519-signature-hex",
+      "description": "The Ed25519 signature over the covered values in the pinned order and construction (plan Section 7.2).",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    }
+  }
+}

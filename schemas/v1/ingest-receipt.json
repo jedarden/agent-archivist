@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:ingest-receipt",
+  "title": "Agent Archivist authenticated ingest receipt (receipt_version 1)",
+  "description": "The durable acceptance evidence for one successful ingest attempt (plan Sections 7.7 and 7.8; RCPT-002, RCPT-006). Serialized as RFC 8785 canonical JSON signed by a tenant-scoped server Ed25519 receipt key, so a client can retain it as proof of acceptance independently of the current TLS endpoint, replica, or server process (RCPT-006). The receipt is the one sanctioned home for per-attempt and server material: the successful authorization key and epoch and the UTC commit time exist here and nowhere else — the envelope, occurrence manifest, and upload attestation all reject those names outright, which is exactly what lets a lost-response retry reproduce byte-identical durable objects while receiving fresh authorization and a fresh receipt. The embedded certificate record carries the receipt-key verification material with its tenant-authority signature, so an offline client verifies the whole chain — pinned authority root signs the certificate, certificate key signs the receipt — without trusting the server transport (ID-009). Unknown optional fields are retained inside the signed bytes and their semantics ignored (plan Section 7.1); the signature covers them, so a server cannot strip or alter what it conveyed.",
+  "type": "object",
+  "x-archivist": {
+    "mediaType": "application/vnd.agent-archivist.receipt+json;version=1",
+    "canonicalization": "rfc8785",
+    "floats": false,
+    "unknownFields": "retain-ignore",
+    "signature": "receipt-v1 (schemas/v1/ingest-identifiers.json): Ed25519 over the RFC 8785 canonicalization of this object with the `signature` member removed. The embedded certificate, including its own authority signature, is inside the covered bytes, so certificate substitution fails the receipt signature before the authority chain is even consulted.",
+    "noReceiptCases": "any blob-only or blob-plus-occurrence partial commit returns HTTP 503 with an archivist.error/v1 body and no receipt (plan Section 7.8; RCPT-005) — the next identical attempt repairs the same occurrence and attestation; quarantined poison input (plan Section 7.8 error matrix) reports through the error body only and never produces a receipt",
+    "retryConvergence": "a retry of the same frozen request after a successful commit receives a fresh receipt whose identity fields are identical and whose per-object outcomes are `already_present` or `replaced_equivalent` — deterministic identities make the retry converge (STO-004), the outcomes keep the report honest (RCPT-003, RCPT-004)",
+    "acknowledgement": "the client acknowledges — advances its cursor and releases the spool entry — only after verifying the authority chain, the receipt signature, and every identity field against the frozen spool entry (plan Section 7.8; CAP-006): tenant, request, occurrence, attestation, blob digest, and each server-derived object key re-derived from them (VAL-002-style cross-field checks, not schema syntax)",
+    "reservedFields": [],
+    "reservedFieldsNote": "none: this record is the sanctioned home of per-attempt authorization and server commit material, so unlike the envelope, occurrence manifest, and upload attestation it rejects no names"
+  },
+  "required": [
+    "attestation_id",
+    "attestation_object_key",
+    "attestation_outcome",
+    "authorization_epoch",
+    "authorization_key_id",
+    "blob_digest",
+    "blob_object_key",
+    "blob_outcome",
+    "certificate",
+    "commit_time",
+    "occurrence_id",
+    "occurrence_object_key",
+    "occurrence_outcome",
+    "receipt_key_id",
+    "receipt_version",
+    "request_id",
+    "signature",
+    "signature_algorithm",
+    "tenant_id"
+  ],
+  "$defs": {
+    "receipt-key-certificate": {
+      "type": "object",
+      "description": "The tenant-authority-signed verification-key record for one server receipt key (plan Section 7.8; ID-009). Embedded by value in every receipt the key signs and stored durably at `tenants/<tenant>/v1/control/receipt-keys/<key-id>.json` (plan Section 7.5), so verification never depends on reaching the server. The receipt-key-v1 construction (schemas/v1/ingest-identifiers.json) signs the RFC 8785 canonicalization of this record with the `authority_signature` member removed, under the tenant authority key the client pinned during linking.",
+      "x-archivist": {
+        "authorityMember": "authority_signature",
+        "objectKey": "tenants/<tenant_id>/v1/control/receipt-keys/<key_id>.json",
+        "keyRotationDays": 30,
+        "signingOverlapDays": 7,
+        "verification": "old public records remain readable indefinitely: a receipt verifies for as long as its certificate is retained, so rotation never invalidates retained receipts (ID-009). A client checks the signing window (`valid_from` <= commit_time <= `valid_until`) at verification time and treats a mismatch as a verification failure, not as damage to the evidence.",
+        "privateKey": "the private half enters the server only through a secret reference (SEC-006); the public half here is the only value that ever appears in any record, file, or argument"
+      },
+      "required": [
+        "authority_key_id",
+        "authority_signature",
+        "certificate_version",
+        "key_algorithm",
+        "key_id",
+        "public_key",
+        "tenant_id",
+        "valid_from",
+        "valid_until"
+      ],
+      "properties": {
+        "certificate_version": {
+          "const": 1,
+          "description": "Receipt-key certificate schema major version (plan Section 7.1 version axis; the control trust family consumes this record as its receipt-key member). Integer, currently 1; readers retain old-version support. An unknown major fails closed — a certificate a consumer cannot interpret is a verification failure, never a skip.",
+          "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+        },
+        "tenant_id": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+          "description": "Tenant the receipt key serves; must equal the enclosing receipt's `tenant_id` — cross-field equality is verification step three, not schema syntax (VAL-002).",
+          "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+        },
+        "key_id": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id",
+          "description": "Identifier of this receipt key: the lowercase-hex SHA-256 of the encoded public key, so the ID is computable from the record itself. Must equal the enclosing receipt's `receipt_key_id` (VAL-002 cross-field check).",
+          "x-archivist": { "bearing": "security", "compat": "required-v1" }
+        },
+        "key_algorithm": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/signature-algorithm",
+          "description": "Algorithm of `public_key`; Ed25519 only in v1. The receipt's signature algorithm is pinned by this closed enum inside the authority-signed record, so it travels verified rather than trusted (plan Section 7.8).",
+          "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+        },
+        "public_key": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/ed25519-public-key-hex",
+          "description": "The receipt key's public half, lowercase hex. The value an offline verifier uses for the receipt-v1 construction after the authority chain verifies this record.",
+          "x-archivist": { "bearing": "security", "compat": "required-v1" }
+        },
+        "valid_from": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+          "description": "UTC start of this key's signing window. Keys rotate every 30 days with a seven-day old/new signing overlap (plan Section 7.8), so a replacement key begins signing before its predecessor stops.",
+          "x-archivist": { "bearing": "security", "compat": "required-v1" }
+        },
+        "valid_until": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+          "description": "UTC end of this key's signing window; `valid_from` <= `valid_until` is a VAL-002 cross-field check. Expiry bounds signing only — verification of retained receipts never expires (ID-009).",
+          "x-archivist": { "bearing": "security", "compat": "required-v1" }
+        },
+        "authority_key_id": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id",
+          "description": "Identifier of the tenant authority key that signed this record — the root the client pinned during linking (plan Sections 7.4 and 7.8; ID-009). Names which pinned key (or authority record, when the authority itself rotates) verifies `authority_signature`.",
+          "x-archivist": { "bearing": "security", "compat": "required-v1" }
+        },
+        "authority_signature": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/ed25519-signature-hex",
+          "description": "The tenant authority's Ed25519 signature over this record with the `authority_signature` member removed (receipt-key-v1, schemas/v1/ingest-identifiers.json). The authority member is the one field the authority itself cannot cover.",
+          "x-archivist": { "bearing": "security", "compat": "required-v1" }
+        }
+      }
+    }
+  },
+  "properties": {
+    "receipt_version": {
+      "const": 1,
+      "description": "Receipt schema major version (plan Section 7.1 version axis `receipt_version`). Integer, currently 1; readers retain old-version support. New optional fields land inside v1 and stay inside the signed bytes; new required fields, redefined fields, or a changed bound field set require v2. An unknown major fails closed — an unverifiable receipt is never acknowledged.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+    },
+    "tenant_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "The tenant this receipt was issued under (RCPT-002). Must equal the envelope's, the occurrence's, and the attestation's tenant, and the certificate's (VAL-002 cross-field checks).",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "request_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v7",
+      "description": "The frozen upload request this receipt accepts (RCPT-002; ERR-025): the UUIDv7 the client minted when the spool entry was created and bound into the envelope, attestation, and every error body for the same request. The client checks it against its spool entry before acknowledging — a receipt for any other request is not evidence for this one.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "occurrence_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "The occurrence durably committed (RCPT-002): re-derived by the server from the envelope's session, artifact, generation, range, and blob digest (occurrence-v1, schemas/v1/ingest-identifiers.json) and checked by the client against its frozen value — the client verifies every identity field, not just the signature.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "attestation_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "The upload attestation durably committed for this (uploader, request) pair (RCPT-002): attestation-v1 over the occurrence, uploader, and frozen request. Present exactly when RCPT-001's success precondition held — blob, occurrence manifest, and attestation all durable before any receipt is issued.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "blob_digest": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "The canonical uncompressed payload digest the server verified while streaming and committed (RCPT-002; VAL-004): the one digest that names a blob (STO-001). Must equal the envelope's `blob_digest`.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "blob_object_key": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/blob-object-key",
+      "description": "Server-derived key the blob was committed to (RCPT-002; plan Section 7.5). The client re-derives it from tenant and `blob_digest` — object keys are server-derived by contract (ID-008) and the receipt reports, never delegates, them.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "occurrence_object_key": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/occurrence-object-key",
+      "description": "Server-derived key of the canonical occurrence manifest (RCPT-002; plan Section 7.5), re-derivable from tenant, origin, harness, session hash, and occurrence ID.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "attestation_object_key": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/attestation-object-key",
+      "description": "Server-derived key of the upload attestation (RCPT-002; plan Section 7.5), re-derivable from tenant, occurrence ID, and attestation ID.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "blob_outcome": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/storage-outcome",
+      "description": "What the backend established for the blob (RCPT-003): exactly one of created, already_present, replaced_equivalent, logically_committed_unknown_physical_result. `already_present` is reported only when readable compatible metadata established it; a writer-only overwrite profile reports the weaker unknown-physical result rather than claiming deduplication it cannot prove (RCPT-004).",
+      "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+    },
+    "occurrence_outcome": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/storage-outcome",
+      "description": "What the backend established for the occurrence manifest (RCPT-003). Deterministic canonical bytes make an overwrite logically idempotent; the outcome still reports the physical truth the profile can establish.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+    },
+    "attestation_outcome": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/storage-outcome",
+      "description": "What the backend established for the upload attestation (RCPT-003). A retry of one frozen request rewrites its identical attestation object — `replaced_equivalent` under a versioned backend, `already_present` where readable metadata says so.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+    },
+    "authorization_key_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id",
+      "description": "The uploader key whose authorization succeeded for the attempt this receipt covers (plan Section 7.8). Recorded here only: the durable envelope, occurrence manifest, and attestation all reject this name, so authorization evidence never makes retries diverge.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "authorization_epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807,
+      "description": "The epoch of `authorization_key_id` at the successful attempt (plan Section 7.8): rotations and revocations bump the epoch, and this records which epoch actually authorized the commit — audit evidence, replayable against the control records.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "commit_time": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "UTC time the commit became complete — blob, occurrence, and attestation all durable (RCPT-002). Server material, existing only here: the envelope, manifest, and attestation reject the name outright. The client also checks it against the certificate's signing window.",
+      "x-archivist": { "bearing": "provenance", "compat": "required-v1" }
+    },
+    "receipt_key_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id",
+      "description": "The server receipt key that signed this receipt (plan Section 7.8). Must equal `certificate.key_id` — bound outside the certificate as well, so the embedded certificate cannot be swapped to a different key without breaking the receipt signature.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "certificate": {
+      "$ref": "#/$defs/receipt-key-certificate",
+      "description": "The signer's verification-key record, embedded by value with its tenant-authority signature (plan Section 7.8): the chain an offline client walks — pinned authority root over the certificate, certificate key over the receipt — without trusting the server transport (ID-009; RCPT-006).",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "signature_algorithm": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/signature-algorithm",
+      "description": "Algorithm of `signature`; Ed25519 only in v1. Duplicated from the certificate's `key_algorithm` for self-description — a mismatch between the two is a VAL-002 cross-field failure, and the closed enum keeps an unknown algorithm from being guessed.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+    },
+    "signature": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/ed25519-signature-hex",
+      "description": "The receipt key's Ed25519 signature over the RFC 8785 canonicalization of this object with the `signature` member removed (receipt-v1, schemas/v1/ingest-identifiers.json) — every other member, the embedded certificate included, is covered.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    }
+  }
+}
