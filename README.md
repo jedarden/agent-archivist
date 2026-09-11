@@ -56,6 +56,12 @@ committed.
   error namespace, bounded safe-message rules, retryability, HTTP and process
   exit mapping, correlation, and stream behavior, backed by the
   machine-checked registry in `tools/error-codes.toml`.
+- [Configuration conventions](docs/notes/configuration.md) define the
+  configuration-key naming, precedence, type, default, path, non-interactive,
+  and secret-reference rules for every setting the public crates and
+  commands read, backed by the machine-checked registry in
+  `tools/config-keys.toml` and a tree scan that rejects literal values
+  assigned to secret-reference settings.
 - [Synthetic fixtures](docs/notes/fixtures.md) define the deterministic,
   seeded generator behind the `fixtures/synthetic/` corpus — normal,
   malformed, rewritten, and large synthetic sessions — its byte-exact

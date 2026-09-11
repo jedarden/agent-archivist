@@ -6,9 +6,10 @@
 #
 # Lanes:
 #   - Fast:  fmt, build, clippy (-D warnings), rustdoc, stub scan, crate
-#     graph, license gate, error-code registry gate, synthetic-fixture
-#     regeneration and content scan, verification-register gate,
-#     secret scan of the working tree (seconds, offline; safe as a gate)
+#     graph, license gate, error-code registry gate, config-key registry
+#     gate, synthetic-fixture regeneration and content scan,
+#     verification-register gate, secret scan of the working tree
+#     (seconds, offline; safe as a gate)
 #   - Slow:  the workspace test suite
 #   - Audit: dependency audit (cargo audit; fetches the public RustSec
 #     advisory database — network, but no credentials) and a secret scan of
@@ -104,6 +105,11 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   run_check "crate graph"          python3 tools/check-crate-graph.py
   run_check "license gate"         python3 tools/check-licenses.py
   run_check "error-code registry"  python3 tools/check-error-codes.py --self-test
+  # Configuration-key registry (docs/notes/configuration.md): naming,
+  # precedence, types/bounds, secret-reference grammar, and a tree scan
+  # that rejects literal values assigned to *_ref settings; `--self-test`
+  # proves the rejection paths.
+  run_check "config registry"     python3 tools/check-config.py --self-test
   # Wire-schema coherence (docs/notes/wire-schemas.md): refs, fail-closed
   # enum/version metadata, reserved-name blocks, the construction registry,
   # and the error-message charset; `--self-test` proves the rejection paths.

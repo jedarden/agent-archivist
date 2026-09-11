@@ -1,0 +1,273 @@
+# Machine-readable configuration-key registry for Agent Archivist.
+#
+# The normative conventions live in docs/notes/configuration.md; this file is
+# the data they define, and tools/check-config.py (fast lane of
+# scripts/definition-of-done.sh) rejects any entry that violates them.
+#
+# Within registry schema v1 the key set is append-only: a new key is a
+# compatible change; renaming, deleting, or redefining any declared attribute
+# of an existing key is a v2 event. Defaults trace to the plan section or
+# requirement that pinned them and change only with that source.
+#
+# Every entry carries an example that validates as the key's type. Secret
+# keys are type reference, end in _ref, and expose no flag tier; their
+# examples are well-formed references, never literal values (CFG-032).
+
+schema = "archivist.config-registry/v1"
+
+# ---------------------------------------------------------------------------
+# Client engine (plan Section 7.9, Phase 5) — owner archivist-client-core
+# ---------------------------------------------------------------------------
+
+[keys."client.state_dir"]
+owner = "archivist-client-core"
+type = "path"
+tiers = ["flag", "env", "file"]
+secret = false
+default = "${XDG_STATE_HOME}/archivist"
+description = "Root of the client state directory: SQLite state, spool, receipts, and the advisory mutator lock (plan Section 7.9)."
+example = "/var/lib/archivist"
+
+[keys."spool.max_bytes"]
+owner = "archivist-client-core"
+type = "integer"
+tiers = ["flag", "env", "file"]
+secret = false
+default = 2147483648
+description = "High-water cap on total spool bytes; at the cap the client stops materializing payloads and degrades visibly (OPS-003)."
+example = 1073741824
+
+[keys."spool.free_floor_bytes"]
+owner = "archivist-client-core"
+type = "integer"
+tiers = ["flag", "env", "file"]
+secret = false
+default = 5368709120
+description = "Filesystem free-space floor; below it new payloads stop and degraded status is reported (plan Section 7.9)."
+example = 10737418240
+
+[keys."spool.resume_percent"]
+owner = "archivist-client-core"
+type = "integer"
+tiers = ["flag", "env", "file"]
+secret = false
+default = 80
+description = "Cap utilization to fall back below before resuming normal materialization after a high-water pause."
+example = 90
+
+[keys."schedule.interval_seconds"]
+owner = "archivist-client-core"
+type = "integer"
+tiers = ["flag", "env", "file"]
+secret = false
+default = 900
+description = "Daemon scheduling loop period; cycles never overlap and carry jitter (plan Section 7.9)."
+example = 300
+
+[keys."schedule.jitter_percent"]
+owner = "archivist-client-core"
+type = "integer"
+tiers = ["flag", "env", "file"]
+secret = false
+default = 10
+description = "Maximum jitter applied to each scheduling cycle, as a percentage of the interval."
+example = 5
+
+[keys."schedule.backfill_quantum_bytes"]
+owner = "archivist-client-core"
+type = "integer"
+tiers = ["flag", "env", "file"]
+secret = false
+default = 268435456
+description = "Largest per-source byte quantum one scheduling round gives a backfill source (plan Phase 5)."
+example = 134217728
+
+[keys."ingest.endpoint_url"]
+owner = "archivist-client-core"
+type = "string"
+tiers = ["flag", "env", "file"]
+secret = false
+required = true
+description = "Base URL of the ingestion service the client uploads to; the scheme selects TLS."
+example = "https://ingest.example.invalid"
+
+# ---------------------------------------------------------------------------
+# Storage backend (plan Phase 2, SEC-002, SEC-005) — owner archivist-storage-s3
+# ---------------------------------------------------------------------------
+
+[keys."storage.endpoint_url"]
+owner = "archivist-storage-s3"
+type = "string"
+tiers = ["flag", "env", "file"]
+secret = false
+required = true
+description = "S3-compatible endpoint URL for raw and control writes and reads."
+example = "https://s3.example.invalid"
+
+[keys."storage.region"]
+owner = "archivist-storage-s3"
+type = "string"
+tiers = ["flag", "env", "file"]
+secret = false
+required = true
+description = "Region string the S3 endpoint expects."
+example = "us-east-1"
+
+[keys."storage.path_style"]
+owner = "archivist-storage-s3"
+type = "enum"
+values = ["virtual_hosted", "path"]
+tiers = ["flag", "env", "file"]
+secret = false
+default = "path"
+description = "Bucket addressing style for the S3 endpoint; the path-style default matches the MinIO reference profile."
+example = "virtual_hosted"
+
+[keys."storage.encryption"]
+owner = "archivist-storage-s3"
+type = "enum"
+values = ["s3_sse", "armor", "client_envelope"]
+tiers = ["flag", "env", "file"]
+secret = false
+required = true
+description = "At-rest encryption mechanism required by configuration validation before writes (SEC-002)."
+example = "s3_sse"
+
+[keys."storage.raw_bucket"]
+owner = "archivist-storage-s3"
+type = "string"
+tiers = ["flag", "env", "file"]
+secret = false
+required = true
+description = "Bucket for content-addressed raw blobs and occurrences with server-derived keys."
+example = "archivist-raw-example"
+
+[keys."storage.control_bucket"]
+owner = "archivist-storage-s3"
+type = "string"
+tiers = ["flag", "env", "file"]
+secret = false
+required = true
+description = "Bucket for control-plane records: linking, revocation, and receipt keys."
+example = "archivist-control-example"
+
+[keys."storage.raw_write_credentials_ref"]
+owner = "archivist-storage-s3"
+type = "reference"
+tiers = ["env", "file"]
+secret = true
+required = true
+description = "Reference to credentials limited to raw-prefix writes; a separate identity from control reads."
+example = "file:/etc/archivist/storage/raw-write-credentials"
+
+[keys."storage.control_read_credentials_ref"]
+owner = "archivist-storage-s3"
+type = "reference"
+tiers = ["env", "file"]
+secret = true
+required = true
+description = "Reference to credentials limited to control-prefix reads; a separate identity from raw writes."
+example = "file:/etc/archivist/storage/control-read-credentials"
+
+# ---------------------------------------------------------------------------
+# Ingestion server (plan Phase 4) — owner archivist-server
+# ---------------------------------------------------------------------------
+
+[keys."server.listen_address"]
+owner = "archivist-server"
+type = "string"
+tiers = ["flag", "env", "file"]
+secret = false
+required = true
+description = "Socket address the stateless ingestion server listens on."
+example = "127.0.0.1:8087"
+
+[keys."server.request_deadline_seconds"]
+owner = "archivist-server"
+type = "integer"
+tiers = ["flag", "env", "file"]
+secret = false
+default = 900
+description = "Server-side request deadline before a throttle-class rejection (plan Phase 4)."
+example = 60
+
+[keys."server.envelope_max_bytes"]
+owner = "archivist-server"
+type = "integer"
+tiers = ["flag", "env", "file"]
+secret = false
+default = 65536
+description = "Maximum canonical envelope size accepted on the wire (plan Phase 4, 64 KiB)."
+example = 131072
+
+[keys."server.record_max_bytes"]
+owner = "archivist-server"
+type = "integer"
+tiers = ["flag", "env", "file"]
+secret = false
+default = 268435456
+description = "Maximum uncompressed record size; a single larger record is unsplittable-limited (VAL-003)."
+example = 134217728
+
+[keys."server.max_expansion_ratio"]
+owner = "archivist-server"
+type = "integer"
+tiers = ["flag", "env", "file"]
+secret = false
+default = 100
+description = "Maximum decompression expansion ratio, written as integer N of N to 1 (VAL-003)."
+example = 50
+
+[keys."server.multipart_part_bytes"]
+owner = "archivist-server"
+type = "integer"
+tiers = ["flag", "env", "file"]
+secret = false
+default = 8388608
+description = "Multipart part size for streamed storage commits (plan Phase 4, 8 MiB)."
+example = 16777216
+
+[keys."server.max_inflight_upload_count"]
+owner = "archivist-server"
+type = "integer"
+tiers = ["flag", "env", "file"]
+secret = false
+default = 16
+description = "Total in-flight uploads one server process allows before rejecting (plan Phase 4)."
+example = 8
+
+[keys."server.max_inflight_per_client_count"]
+owner = "archivist-server"
+type = "integer"
+tiers = ["flag", "env", "file"]
+secret = false
+default = 4
+description = "In-flight uploads one client may occupy of the process total (plan Phase 4)."
+example = 2
+
+[keys."server.rate_per_minute_count"]
+owner = "archivist-server"
+type = "integer"
+tiers = ["flag", "env", "file"]
+secret = false
+default = 60
+description = "Token-bucket refill of new requests per minute per client; a resource guard, not a quota."
+example = 120
+
+[keys."server.rate_burst_count"]
+owner = "archivist-server"
+type = "integer"
+tiers = ["flag", "env", "file"]
+secret = false
+default = 8
+description = "Token-bucket burst depth for the per-client request guard."
+example = 16
+
+[keys."server.shutdown_drain_seconds"]
+owner = "archivist-server"
+type = "integer"
+tiers = ["flag", "env", "file"]
+secret = false
+default = 30
+description = "Graceful-shutdown drain window before aborting unfinished multipart uploads (plan Phase 4)."
+example = 10

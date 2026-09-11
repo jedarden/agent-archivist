@@ -96,7 +96,13 @@ dependency. The error-code registry gate requires every emitted error code to
 be an appended entry in `tools/error-codes.toml` whose class, HTTP status,
 message template, and labels satisfy the
 [error-code conventions](docs/notes/error-codes.md); adding a code is a
-compatible change, redefining one is not. The synthetic-fixture gate
+compatible change, redefining one is not. The configuration-key registry gate
+requires every deployment-settable setting to be an appended entry in
+`tools/config-keys.toml` whose name, owner, type, tiers, default, and
+secret-reference spelling satisfy the
+[configuration conventions](docs/notes/configuration.md); it also rejects
+committed configuration-bearing files that assign a literal value to a
+`*_ref` setting, so examples and fixtures carry references only. The synthetic-fixture gate
 regenerates the corpus from the seed recorded in
 `fixtures/synthetic/manifest.json` and byte-compares it against the working
 tree; after changing the generator, run
