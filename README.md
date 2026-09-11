@@ -33,8 +33,9 @@ scripts/definition-of-done.sh --all
 ```
 
 It covers formatting, Clippy with warnings denied, unit tests, rustdoc, the
-crate purpose/cycle check, the dependency license gate, byte-exact
-regeneration and a content scan of the synthetic fixture corpus, a redacted
+crate purpose/cycle check, the dependency license gate, the error-code
+registry gate, byte-exact regeneration and a content scan of the synthetic
+fixture corpus, the requirement-verification register gate, a redacted
 secret scan of the working tree and the git history, and a `cargo audit`
 dependency audit.
 The fast subset (`--fast`) is what the automation gate runs per change. See
@@ -60,6 +61,12 @@ committed.
   malformed, rewritten, and large synthetic sessions — its byte-exact
   regeneration gate, and the closed-vocabulary content scan that keeps
   private material out.
+- [Requirement verification](docs/notes/verification.md) defines the stable
+  requirement-to-test and operational-verification IDs, the
+  machine-readable register mapping every normative requirement to its
+  verifications, and the commit-keyed verification manifest whose absent,
+  stale, cross-commit, or incomplete evidence is rejected for any
+  requirement marked implemented.
 
 ## Governance
 

@@ -2,5 +2,12 @@
 # commits its lockfile (implementation plan, Section 4).
 /target
 
+# Python bytecode from running the tools/ gates — machine-local.
+__pycache__/
+
+# Emitted by `tools/verification-manifest.py emit` — a run artifact CI
+# retains, never committed (docs/notes/verification.md, Section 3).
+/verification-manifest.json
+
 # NEEDLE per-dispatch snapshot — machine-local, never committed.
 .needle-predispatch-sha

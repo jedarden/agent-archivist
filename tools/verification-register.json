@@ -1,0 +1,1283 @@
+{
+  "register_version": 1,
+  "requirements": {
+    "ARCH-001": {
+      "status": "planned",
+      "verifications": [
+        "T-ARCH-001"
+      ]
+    },
+    "ARCH-002": {
+      "status": "planned",
+      "verifications": [
+        "T-ARCH-002"
+      ]
+    },
+    "ARCH-003": {
+      "status": "planned",
+      "verifications": [
+        "T-ARCH-003"
+      ]
+    },
+    "ARCH-004": {
+      "status": "planned",
+      "verifications": [
+        "T-ARCH-004"
+      ]
+    },
+    "ARCH-005": {
+      "status": "planned",
+      "verifications": [
+        "T-ARCH-005"
+      ]
+    },
+    "ARCH-006": {
+      "status": "planned",
+      "verifications": [
+        "T-ARCH-006"
+      ]
+    },
+    "ARCH-007": {
+      "status": "planned",
+      "verifications": [
+        "T-ARCH-007"
+      ]
+    },
+    "CAP-001": {
+      "status": "planned",
+      "verifications": [
+        "T-CAP-001"
+      ]
+    },
+    "CAP-002": {
+      "status": "planned",
+      "verifications": [
+        "T-CAP-002"
+      ]
+    },
+    "CAP-003": {
+      "status": "planned",
+      "verifications": [
+        "T-CAP-003"
+      ]
+    },
+    "CAP-004": {
+      "status": "planned",
+      "verifications": [
+        "T-CAP-004"
+      ]
+    },
+    "CAP-005": {
+      "status": "planned",
+      "verifications": [
+        "T-CAP-005"
+      ]
+    },
+    "CAP-006": {
+      "status": "planned",
+      "verifications": [
+        "T-CAP-006"
+      ]
+    },
+    "CAP-007": {
+      "status": "planned",
+      "verifications": [
+        "T-CAP-007"
+      ]
+    },
+    "CAP-008": {
+      "status": "planned",
+      "verifications": [
+        "T-CAP-008"
+      ]
+    },
+    "CAP-009": {
+      "status": "planned",
+      "verifications": [
+        "T-CAP-009"
+      ]
+    },
+    "CAP-010": {
+      "status": "planned",
+      "verifications": [
+        "T-CAP-010"
+      ]
+    },
+    "ID-001": {
+      "status": "planned",
+      "verifications": [
+        "T-ID-001"
+      ]
+    },
+    "ID-002": {
+      "status": "planned",
+      "verifications": [
+        "T-ID-002"
+      ]
+    },
+    "ID-003": {
+      "status": "planned",
+      "verifications": [
+        "T-ID-003"
+      ]
+    },
+    "ID-004": {
+      "status": "planned",
+      "verifications": [
+        "T-ID-004"
+      ]
+    },
+    "ID-005": {
+      "status": "planned",
+      "verifications": [
+        "T-ID-005"
+      ]
+    },
+    "ID-006": {
+      "status": "planned",
+      "verifications": [
+        "T-ID-006"
+      ]
+    },
+    "ID-007": {
+      "status": "planned",
+      "verifications": [
+        "T-ID-007"
+      ]
+    },
+    "ID-008": {
+      "status": "planned",
+      "verifications": [
+        "T-ID-008"
+      ]
+    },
+    "ID-009": {
+      "status": "planned",
+      "verifications": [
+        "T-ID-009"
+      ]
+    },
+    "OPS-001": {
+      "status": "planned",
+      "verifications": [
+        "T-OPS-001"
+      ]
+    },
+    "OPS-002": {
+      "status": "planned",
+      "verifications": [
+        "T-OPS-002"
+      ]
+    },
+    "OPS-003": {
+      "status": "planned",
+      "verifications": [
+        "T-OPS-003"
+      ]
+    },
+    "OPS-004": {
+      "status": "planned",
+      "verifications": [
+        "T-OPS-004"
+      ]
+    },
+    "OPS-005": {
+      "status": "planned",
+      "verifications": [
+        "T-OPS-005"
+      ]
+    },
+    "OPS-006": {
+      "status": "planned",
+      "verifications": [
+        "T-OPS-006"
+      ]
+    },
+    "OPS-007": {
+      "status": "planned",
+      "verifications": [
+        "T-OPS-007"
+      ]
+    },
+    "OPS-008": {
+      "status": "planned",
+      "verifications": [
+        "T-OPS-008",
+        "OV-OPS-008"
+      ]
+    },
+    "OPS-009": {
+      "status": "planned",
+      "verifications": [
+        "T-OPS-009"
+      ]
+    },
+    "PUB-001": {
+      "status": "planned",
+      "verifications": [
+        "T-PUB-001",
+        "OV-PUB-001"
+      ]
+    },
+    "PUB-002": {
+      "status": "planned",
+      "verifications": [
+        "T-PUB-002",
+        "OV-PUB-002"
+      ]
+    },
+    "PUB-003": {
+      "status": "planned",
+      "verifications": [
+        "T-PUB-003"
+      ]
+    },
+    "PUB-004": {
+      "status": "planned",
+      "verifications": [
+        "T-PUB-004"
+      ]
+    },
+    "PUB-005": {
+      "status": "planned",
+      "verifications": [
+        "T-PUB-005"
+      ]
+    },
+    "RCPT-001": {
+      "status": "planned",
+      "verifications": [
+        "T-RCPT-001"
+      ]
+    },
+    "RCPT-002": {
+      "status": "planned",
+      "verifications": [
+        "T-RCPT-002"
+      ]
+    },
+    "RCPT-003": {
+      "status": "planned",
+      "verifications": [
+        "T-RCPT-003"
+      ]
+    },
+    "RCPT-004": {
+      "status": "planned",
+      "verifications": [
+        "T-RCPT-004"
+      ]
+    },
+    "RCPT-005": {
+      "status": "planned",
+      "verifications": [
+        "T-RCPT-005"
+      ]
+    },
+    "RCPT-006": {
+      "status": "planned",
+      "verifications": [
+        "T-RCPT-006"
+      ]
+    },
+    "SCH-001": {
+      "status": "planned",
+      "verifications": [
+        "T-SCH-001"
+      ]
+    },
+    "SCH-002": {
+      "status": "planned",
+      "verifications": [
+        "T-SCH-002"
+      ]
+    },
+    "SCH-003": {
+      "status": "planned",
+      "verifications": [
+        "T-SCH-003"
+      ]
+    },
+    "SCH-004": {
+      "status": "planned",
+      "verifications": [
+        "T-SCH-004"
+      ]
+    },
+    "SCH-005": {
+      "status": "planned",
+      "verifications": [
+        "T-SCH-005"
+      ]
+    },
+    "SCH-006": {
+      "status": "planned",
+      "verifications": [
+        "T-SCH-006"
+      ]
+    },
+    "SEC-001": {
+      "status": "planned",
+      "verifications": [
+        "T-SEC-001"
+      ]
+    },
+    "SEC-002": {
+      "status": "planned",
+      "verifications": [
+        "T-SEC-002"
+      ]
+    },
+    "SEC-003": {
+      "status": "planned",
+      "verifications": [
+        "T-SEC-003"
+      ]
+    },
+    "SEC-004": {
+      "status": "planned",
+      "verifications": [
+        "T-SEC-004"
+      ]
+    },
+    "SEC-005": {
+      "status": "planned",
+      "verifications": [
+        "T-SEC-005"
+      ]
+    },
+    "SEC-006": {
+      "status": "planned",
+      "verifications": [
+        "T-SEC-006"
+      ]
+    },
+    "SEC-007": {
+      "status": "planned",
+      "verifications": [
+        "T-SEC-007"
+      ]
+    },
+    "SEC-008": {
+      "status": "planned",
+      "verifications": [
+        "T-SEC-008"
+      ]
+    },
+    "SEC-009": {
+      "status": "planned",
+      "verifications": [
+        "T-SEC-009"
+      ]
+    },
+    "SEC-010": {
+      "status": "planned",
+      "verifications": [
+        "T-SEC-010"
+      ]
+    },
+    "SID-001": {
+      "status": "planned",
+      "verifications": [
+        "T-SID-001"
+      ]
+    },
+    "SID-002": {
+      "status": "planned",
+      "verifications": [
+        "T-SID-002"
+      ]
+    },
+    "SID-003": {
+      "status": "planned",
+      "verifications": [
+        "T-SID-003"
+      ]
+    },
+    "SID-004": {
+      "status": "planned",
+      "verifications": [
+        "T-SID-004"
+      ]
+    },
+    "SID-005": {
+      "status": "planned",
+      "verifications": [
+        "T-SID-005"
+      ]
+    },
+    "SID-006": {
+      "status": "planned",
+      "verifications": [
+        "T-SID-006"
+      ]
+    },
+    "STO-001": {
+      "status": "planned",
+      "verifications": [
+        "T-STO-001"
+      ]
+    },
+    "STO-002": {
+      "status": "planned",
+      "verifications": [
+        "T-STO-002"
+      ]
+    },
+    "STO-003": {
+      "status": "planned",
+      "verifications": [
+        "T-STO-003"
+      ]
+    },
+    "STO-004": {
+      "status": "planned",
+      "verifications": [
+        "T-STO-004"
+      ]
+    },
+    "STO-005": {
+      "status": "planned",
+      "verifications": [
+        "T-STO-005"
+      ]
+    },
+    "STO-006": {
+      "status": "planned",
+      "verifications": [
+        "T-STO-006"
+      ]
+    },
+    "STO-007": {
+      "status": "planned",
+      "verifications": [
+        "T-STO-007"
+      ]
+    },
+    "STO-008": {
+      "status": "planned",
+      "verifications": [
+        "T-STO-008"
+      ]
+    },
+    "STO-009": {
+      "status": "planned",
+      "verifications": [
+        "T-STO-009"
+      ]
+    },
+    "STO-010": {
+      "status": "planned",
+      "verifications": [
+        "T-STO-010"
+      ]
+    },
+    "STO-011": {
+      "status": "planned",
+      "verifications": [
+        "T-STO-011"
+      ]
+    },
+    "STO-012": {
+      "status": "planned",
+      "verifications": [
+        "T-STO-012"
+      ]
+    },
+    "STO-013": {
+      "status": "planned",
+      "verifications": [
+        "T-STO-013"
+      ]
+    },
+    "VAL-001": {
+      "status": "planned",
+      "verifications": [
+        "T-VAL-001"
+      ]
+    },
+    "VAL-002": {
+      "status": "planned",
+      "verifications": [
+        "T-VAL-002"
+      ]
+    },
+    "VAL-003": {
+      "status": "planned",
+      "verifications": [
+        "T-VAL-003"
+      ]
+    },
+    "VAL-004": {
+      "status": "planned",
+      "verifications": [
+        "T-VAL-004"
+      ]
+    },
+    "VAL-005": {
+      "status": "planned",
+      "verifications": [
+        "T-VAL-005"
+      ]
+    },
+    "VAL-006": {
+      "status": "planned",
+      "verifications": [
+        "T-VAL-006"
+      ]
+    },
+    "VAL-007": {
+      "status": "planned",
+      "verifications": [
+        "T-VAL-007"
+      ]
+    },
+    "VAL-008": {
+      "status": "planned",
+      "verifications": [
+        "T-VAL-008"
+      ]
+    }
+  },
+  "verifications": {
+    "OV-OPS-008": {
+      "evidence": [
+        "pilot_evidence"
+      ],
+      "kind": "operational",
+      "lane": "release",
+      "operational_kind": "restore-drill",
+      "owner": "operations-exercises"
+    },
+    "OV-PUB-001": {
+      "evidence": [
+        "pilot_evidence"
+      ],
+      "kind": "operational",
+      "lane": "release",
+      "operational_kind": "review-record",
+      "owner": "release-audit"
+    },
+    "OV-PUB-002": {
+      "evidence": [
+        "pilot_evidence"
+      ],
+      "kind": "operational",
+      "lane": "release",
+      "operational_kind": "review-record",
+      "owner": "release-audit"
+    },
+    "T-ARCH-001": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "stateless-replacement"
+    },
+    "T-ARCH-002": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "stateless-replacement"
+    },
+    "T-ARCH-003": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "stateless-replacement"
+    },
+    "T-ARCH-004": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "stateless-replacement"
+    },
+    "T-ARCH-005": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "stateless-replacement"
+    },
+    "T-ARCH-006": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "stateless-replacement"
+    },
+    "T-ARCH-007": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "stateless-replacement"
+    },
+    "T-CAP-001": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "adapter-suites"
+    },
+    "T-CAP-002": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "adapter-suites"
+    },
+    "T-CAP-003": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "adapter-suites"
+    },
+    "T-CAP-004": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "adapter-suites"
+    },
+    "T-CAP-005": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "adapter-suites"
+    },
+    "T-CAP-006": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "adapter-suites"
+    },
+    "T-CAP-007": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "adapter-suites"
+    },
+    "T-CAP-008": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "adapter-suites"
+    },
+    "T-CAP-009": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "adapter-suites"
+    },
+    "T-CAP-010": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "adapter-suites"
+    },
+    "T-ID-001": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "auth-conformance"
+    },
+    "T-ID-002": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "auth-conformance"
+    },
+    "T-ID-003": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "auth-conformance"
+    },
+    "T-ID-004": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "auth-conformance"
+    },
+    "T-ID-005": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "auth-conformance"
+    },
+    "T-ID-006": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "auth-conformance"
+    },
+    "T-ID-007": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "auth-conformance"
+    },
+    "T-ID-008": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "auth-conformance"
+    },
+    "T-ID-009": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "auth-conformance"
+    },
+    "T-OPS-001": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "operations-exercises"
+    },
+    "T-OPS-002": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "operations-exercises"
+    },
+    "T-OPS-003": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "operations-exercises"
+    },
+    "T-OPS-004": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "operations-exercises"
+    },
+    "T-OPS-005": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "operations-exercises"
+    },
+    "T-OPS-006": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "operations-exercises"
+    },
+    "T-OPS-007": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "operations-exercises"
+    },
+    "T-OPS-008": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "operations-exercises"
+    },
+    "T-OPS-009": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "operations-exercises"
+    },
+    "T-PUB-001": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "release-audit"
+    },
+    "T-PUB-002": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "release-audit"
+    },
+    "T-PUB-003": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "release-audit"
+    },
+    "T-PUB-004": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "release-audit"
+    },
+    "T-PUB-005": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "release-audit"
+    },
+    "T-RCPT-001": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "fault-injection"
+    },
+    "T-RCPT-002": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "fault-injection"
+    },
+    "T-RCPT-003": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "fault-injection"
+    },
+    "T-RCPT-004": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "fault-injection"
+    },
+    "T-RCPT-005": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "fault-injection"
+    },
+    "T-RCPT-006": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "fault-injection"
+    },
+    "T-SCH-001": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "scheduler-simulation"
+    },
+    "T-SCH-002": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "scheduler-simulation"
+    },
+    "T-SCH-003": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "scheduler-simulation"
+    },
+    "T-SCH-004": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "scheduler-simulation"
+    },
+    "T-SCH-005": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "scheduler-simulation"
+    },
+    "T-SCH-006": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "scheduler-simulation"
+    },
+    "T-SEC-001": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "security-scans"
+    },
+    "T-SEC-002": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "security-scans"
+    },
+    "T-SEC-003": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "security-scans"
+    },
+    "T-SEC-004": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "security-scans"
+    },
+    "T-SEC-005": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "security-scans"
+    },
+    "T-SEC-006": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "security-scans"
+    },
+    "T-SEC-007": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "security-scans"
+    },
+    "T-SEC-008": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "security-scans"
+    },
+    "T-SEC-009": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "security-scans"
+    },
+    "T-SEC-010": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "security-scans"
+    },
+    "T-SID-001": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "golden-ids"
+    },
+    "T-SID-002": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "golden-ids"
+    },
+    "T-SID-003": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "golden-ids"
+    },
+    "T-SID-004": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "golden-ids"
+    },
+    "T-SID-005": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "golden-ids"
+    },
+    "T-SID-006": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "golden-ids"
+    },
+    "T-STO-001": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "compatibility-matrix"
+    },
+    "T-STO-002": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "compatibility-matrix"
+    },
+    "T-STO-003": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "compatibility-matrix"
+    },
+    "T-STO-004": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "compatibility-matrix"
+    },
+    "T-STO-005": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "compatibility-matrix"
+    },
+    "T-STO-006": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "compatibility-matrix"
+    },
+    "T-STO-007": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "compatibility-matrix"
+    },
+    "T-STO-008": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "compatibility-matrix"
+    },
+    "T-STO-009": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "compatibility-matrix"
+    },
+    "T-STO-010": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "compatibility-matrix"
+    },
+    "T-STO-011": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "compatibility-matrix"
+    },
+    "T-STO-012": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "compatibility-matrix"
+    },
+    "T-STO-013": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "compatibility-matrix"
+    },
+    "T-VAL-001": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "protocol-corpus"
+    },
+    "T-VAL-002": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "protocol-corpus"
+    },
+    "T-VAL-003": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "protocol-corpus"
+    },
+    "T-VAL-004": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "protocol-corpus"
+    },
+    "T-VAL-005": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "protocol-corpus"
+    },
+    "T-VAL-006": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "protocol-corpus"
+    },
+    "T-VAL-007": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "protocol-corpus"
+    },
+    "T-VAL-008": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "owner": "protocol-corpus"
+    }
+  }
+}

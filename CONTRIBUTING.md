@@ -61,6 +61,8 @@ python3 tools/check-licenses.py                    # dependency license gate
 python3 tools/check-error-codes.py --self-test     # error-code registry gate
 python3 tools/fixturegen.py --verify               # synthetic fixtures: byte-exact
                                                    # regeneration + content scan
+python3 tools/verification-manifest.py check       # this tree's verification register
+python3 tools/verification-manifest.py self-test   # verification map rejection paths
 gitleaks dir --redact .                            # secret scan, working tree
 gitleaks detect --redact                           # secret scan, git history
 cargo audit --file Cargo.lock --deny warnings      # dependency audit
@@ -70,8 +72,8 @@ The script's lanes keep per-change gating cheap:
 
 - `--fast` (default; what automation runs per change): fmt, build, Clippy,
   rustdoc, stub scan, crate graph, license gate, error-code registry gate,
-  synthetic-fixture regeneration and content scan, working-tree secret
-  scan — seconds, fully offline.
+  synthetic-fixture regeneration and content scan, verification-register
+  gate, working-tree secret scan — seconds, fully offline.
 - `--slow`: the workspace test suite.
 - `--audit`: `cargo audit` and the git-history secret scan. The audit
   downloads the public RustSec advisory database; no credentials are involved.
@@ -100,9 +102,17 @@ regenerates the corpus from the seed recorded in
 tree; after changing the generator, run
 `python3 tools/fixturegen.py --generate fixtures/synthetic` and commit the
 tool, corpus, and manifest together (see
-[docs/notes/fixtures.md](docs/notes/fixtures.md)). The Argo CI workflow that runs this baseline on Forgejo pushes is
-tracked as separate Phase 0 work; until it lands, run the script locally and
-state in the pull request that it passes.
+[docs/notes/fixtures.md](docs/notes/fixtures.md)). The verification-register
+gate keeps every normative requirement mapped to stable verification IDs and
+a verification owner
+([docs/notes/verification.md](docs/notes/verification.md)); a requirement
+marked implemented must have its mapped checks located in the evaluated
+commit, and a verification manifest recording absent, stale, cross-commit,
+or incomplete evidence for it is rejected.
+
+The Argo CI workflow that runs this baseline on Forgejo pushes is tracked as
+separate Phase 0 work; until it lands, run the script locally and state in
+the pull request that it passes.
 
 ## Workspace rules
 

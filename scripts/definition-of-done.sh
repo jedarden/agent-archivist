@@ -7,8 +7,8 @@
 # Lanes:
 #   - Fast:  fmt, build, clippy (-D warnings), rustdoc, stub scan, crate
 #     graph, license gate, error-code registry gate, synthetic-fixture
-#     regeneration and content scan, secret scan of the
-#     working tree (seconds, offline; safe as a gate)
+#     regeneration and content scan, verification-register gate,
+#     secret scan of the working tree (seconds, offline; safe as a gate)
 #   - Slow:  the workspace test suite
 #   - Audit: dependency audit (cargo audit; fetches the public RustSec
 #     advisory database — network, but no credentials) and a secret scan of
@@ -108,6 +108,13 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # vocabulary content scan (docs/notes/fixtures.md). Output is
   # content-free: counts, bytes, and digests only.
   run_check "synthetic fixtures"   python3 tools/fixturegen.py --verify
+  # Requirement-to-verification mapping (docs/notes/verification.md):
+  # `check` validates this tree's register (consistency with the
+  # requirements document plus the located-check rule for anything marked
+  # implemented); `self-test` proves the manifest rejection paths. Both are
+  # register-only mode: offline, content-free.
+  run_check "verification register"  python3 tools/verification-manifest.py check
+  run_check "verification map"       python3 tools/verification-manifest.py self-test
   # .gitleaks.toml (extend-default + never-committed path exclusions) is
   # picked up automatically from the repository root.
   require_tool gitleaks "gitleaks >= 8.19 (dir mode, --redact); see CONTRIBUTING.md" \
