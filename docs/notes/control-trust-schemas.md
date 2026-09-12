@@ -2,13 +2,15 @@
 
 Authority: the implementation plan, Section 5 (control-plane boundary),
 Section 7.1 (version axes), Section 7.2 (wire authentication), and
-Section 7.5 (object keys); requirements ID-001, ID-003, ID-006, ID-008,
-ID-009, and SEC-006. The family is:
+Section 7.5 (object keys); requirements ID-001, ID-003, ID-005, ID-006,
+ID-008, ID-009, and SEC-006. The family is:
 
 | File | Role |
 |---|---|
 | [`schemas/v1/control-envelope.json`](../../schemas/v1/control-envelope.json) | The shared conventions registry and member library: the `archivist.control/v1` namespace, the wrapper member set, the two write classes, the named timing-constants registry, the `control-record-v1` signing construction, the record-type registry, and the control object-key patterns. |
 | [`schemas/v1/control-client.json`](../../schemas/v1/control-client.json) | The linked-client record (plan Section 7.5 `tenants/<tenant>/v1/control/clients/<client>.json`): client identity, Ed25519 public key, base scopes, and the current authorization epoch. |
+| [`schemas/v1/control-delegation.json`](../../schemas/v1/control-delegation.json) | The delegation record (`tenants/<tenant>/v1/control/delegations/<relay>/<origin>.json`): the relay grant — one uploader client authorized to present one origin client's occurrences, as the conjunction of tenant, origin, harness, and operation scopes. |
+| [`schemas/v1/control-rotation.json`](../../schemas/v1/control-rotation.json) | The key-rotation record (`tenants/<tenant>/v1/control/rotations/<client>/<epoch>.json`): the durable evidence of one client key rotation — both public halves and the 24-hour overlap during which either verifies. |
 | [`schemas/v1/control-revocation.json`](../../schemas/v1/control-revocation.json) | The revocation record (plan Section 7.5 `tenants/<tenant>/v1/control/revocations/<client>/<epoch>.json`): the append-only, epoch-addressed revocation of one client's authorization at one epoch. |
 
 Control records are what the control-plane boundary runs on: objects
@@ -16,9 +18,9 @@ below `tenants/<tenant>/v1/control/`, written only by the offline
 `ControlAdminStore` (which can put nothing but validated,
 tenant-authority-signed control objects), read by every ingestion replica
 when it authenticates an uploader, and cacheable for at most 60 seconds
-(plan Section 5). Receipt-key, delegation, and authority-rotation record
-types arrive as later schema changes composed from the same envelope —
-the decision list below is what binds them.
+(plan Section 5). Receipt-key and authority-rotation record types arrive
+as later schema changes composed from the same envelope — the decision
+list below is what binds them.
 
 ## The envelope: decisions every record type follows
 
@@ -78,10 +80,15 @@ them is wrong, not a variation:
    requires publishing another higher-epoch record, never repointing to an
    older one. The epoch is required for current-pointer records and carried
    by immutable types only when it is part of their identity — the
-   revocation record is the shipped type that does, because its object key
-   names the revoked epoch (the registry's `keyMembers` names the members
-   the store derives each type's key from, and the gate proves every one
-   is a required property of the shipped record).
+   revocation and rotation records are the shipped types that do, because
+   their object keys name their epochs, the revoked and the established
+   (the registry's `keyMembers` names the members the store derives each
+   type's key from, and the gate proves every one is a required property
+   of the shipped record). Monotonicity is per subject, and a subject is
+   a client or a relation: the linked-client pointer's epoch only
+   increases, a delegation record's epoch is its (relay, origin)
+   relation's own sequence, and the immutable types permanently fix the
+   rungs they name.
 6. **One signing construction.** `control-record-v1`: Ed25519 by the tenant
    authority key named by `authority_key_id`, over the RFC 8785
    canonicalization of the complete record object with the
@@ -103,12 +110,15 @@ them is wrong, not a variation:
    member names outright, so the property is machine-checked.
 8. **Server-derived object keys.** Keys are derived from the validated
    record type and fields (ID-008): `clients/<client>.json` for the
-   linked-client record and `revocations/<client>/<epoch>.json` for the
-   revocation record, both shipped; `receipt-keys/<key>.json` is pinned in
+   linked-client record, `delegations/<relay>/<origin>.json` for the
+   delegation record, `rotations/<client>/<epoch>.json` for the
+   key-rotation record, and `revocations/<client>/<epoch>.json` for the
+   revocation record, all shipped; `receipt-keys/<key>.json` is pinned in
    the envelope now because plan Section 7.5 fixes the layout, and it stays
    reserved until that record type ships. Key segments must equal the
-   record's own identifiers (`tenant_id`, `client_id`, and, for a
-   revocation, the revoked epoch); the store refuses a mismatch and any
+   record's own identifiers (`tenant_id`; `client_id`; for a delegation
+   the relay and origin in order; and, for a revocation or rotation, the
+   epoch its key names); the store refuses a mismatch and any
    reader can re-make the check. The receipt-key pattern is cross-checked
    against the certificate's documented `objectKey` so the two cannot
    fork.
@@ -135,7 +145,15 @@ them is wrong, not a variation:
     it there as `clockSkewAllowanceSeconds`). Skew is named separately
     from the window because it protects a different clock — the
     verifier's, not the signer's — and two five-minute values must not
-    silently become one ten-minute window.
+    silently become one ten-minute window. The fourth constant is the
+    24-hour rotation verification overlap (plan Section 5: "Key rotation
+    accepts old and new keys for 24 hours"), pinned as
+    `rotationVerificationOverlapHours` and mirrored in the linked-client
+    record — which documents the epoch rule it feeds — and in the
+    rotation record that anchors the window to its `signed_at`. It is
+    hours-valued because the plan pins it in hours; the registry's
+    `unit` field, not the name alone, carries that distinction from the
+    second-valued constants beside it.
 
 ## The linked-client record
 
@@ -154,9 +172,11 @@ attempt fails closed even when its immutable envelope is valid (plan Phase
 3 exit gate); during key rotation the old and new keys both verify for 24
 hours while attempts must present the current epoch, so retries of an
 already-frozen envelope authorize with the current key rather than
-stranding in the spool; a revocation writes the revocation record for the
-named epoch and publishes a higher epoch here, so propagation is bounded
-by the reader's 60-second trust cache, not by anything in this record.
+stranding in the spool (the `control-rotation` record below is where the
+previous half and the window live); a revocation writes the revocation
+record for the named epoch and publishes a higher epoch here, so
+propagation is bounded by the reader's 60-second trust cache, not by
+anything in this record.
 There is deliberately no validity window: the record is current until
 replaced or revoked — unlike the receipt-key certificate, whose
 `valid_from`/`valid_until` bound *signing* while verification of retained
@@ -171,8 +191,9 @@ resolve like this:
   prefix and is valid nowhere else;
 - **origin**: the client itself, for base uploads — this record grants
   nothing for other origins. Relay grants for an origin are delegation
-  records (a later record type), so an approved relay is the conjunction
-  of its own client record and the delegation record, never a union;
+  records (the `control-delegation` record below), so an approved relay
+  is the conjunction of its own client record and the delegation record,
+  never a union;
 - **harness**: the explicit `scopes.harnesses` allowlist (no wildcard
   token in v1 — a new harness is a new epoch, granted as deliberately as
   the first);
@@ -229,6 +250,132 @@ revocation (EC-12: preserve the spool, pause on `401`/`403`, resume only
 after an operator links a valid epoch/key) is a new, higher epoch with a
 new key — never an edit of the revocation.
 
+## The delegation record
+
+The record grants one linked client — the relay, the uploader of the
+plan glossary — authority to present one origin client's frozen
+occurrences (ID-005: the server authorizes an uploader to write for the
+declared origin, and a relay never silently replaces origin identity
+with its own). It is a current-pointer record at
+`tenants/<tenant>/v1/control/delegations/<relay>/<origin>.json`: one
+object per (relay, origin) pair, replaced only by a strictly higher
+signed epoch — grant, revision, and withdrawal are all the same move.
+
+**The grant is the conjunction of four scopes, never their union** (plan
+Section 5), and the shape is what makes it so:
+
+- **tenant**: the record lives under the tenant's control prefix and is
+  valid nowhere else — a relay attempt's declared tenant must equal it
+  exactly;
+- **origin**: the record names the one origin its relay may present, as
+  the second segment of its own object key — a grant for one origin is
+  nothing for any other, and there is exactly one current object per
+  pair, so there is no set of records a reader could union over;
+- **harness**: the explicit `scopes.harnesses` allowlist, intersected
+  with the relay's own linked-client allowlist — never added to it;
+- **operation**: the explicit `scopes.operations` allowlist, intersected
+  the same way (`ingest` only in v1).
+
+So an authorized relay attempt needs every dimension at once: the
+relay's linked-client record (key, current epoch, and its own harness
+and operation allowlists) **and** this record (tenant, pair, and its
+allowlists) **and** the attempt's declared tenant, origin, harness, and
+operation. No wildcard token exists in v1 — the harness grammar rejects
+`*`, and the gate proves it on `["*"]` — so a new harness or origin is a
+new epoch, granted as deliberately as the first. Empty allowlists are
+structurally impossible, exactly as in the client record: a delegation
+with no grants is not an active record with empty arrays, it is a
+withdrawn one.
+
+**Withdrawal** is the one representation the current-pointer shape
+permits: the store has no delete, so withdrawing a grant publishes a
+strictly higher-epoch record at the same key with
+`delegation_state: withdrawn`. A withdrawn record's scopes are inert —
+carried so the record still names the shape of the grant it withdraws —
+and only `active` records grant. The gate proves the withdrawn variant
+validates and that an unknown state token fails closed: a reader must
+never guess whether a grant it cannot interpret is live. Propagation of
+a revision or withdrawal is bounded by the reader's 60-second trust
+cache, like every control record (plan Section 5; EC-09).
+
+**The epoch is the relation's, not a client's.** `authorization_epoch`
+here is the grant's own monotonic sequence — the first grant of a pair
+is epoch 1 and every revision or withdrawal publishes the next epoch of
+the same object. The relay's client epoch is a separate sequence,
+presented by the attempt and checked against the relay's own pointer:
+revoking or rotating the relay does not touch this object, and a revoked
+relay fails closed through its own pointer and revocation record
+regardless of how active its grants are. Self-delegation
+(`relay_client_id` equal to `origin_client_id`) is rejected by the store
+as a VAL-002 cross-field check — the origin's own base grants already
+cover self-upload, so a self-grant is redundant authority at best.
+
+No key material appears anywhere in the record: it grants a relation
+between two linked clients, each of whose keys live in their own
+linked-client records (SEC-006). The relay signs attempts with the
+relay's key and verifies through the relay's record; this record adds
+origin authority, not a second key.
+
+## The key-rotation record
+
+The record is the durable evidence of one client key rotation (plan
+Section 5: key rotation accepts old and new keys for 24 hours; Phase 3:
+key rotation with overlapping verification and monotonic authorization
+epochs). It is an immutable record at
+`tenants/<tenant>/v1/control/rotations/<client>/<epoch>.json`, where the
+epoch segment is the epoch the rotation **establishes** — so a reader
+holding the linked-client pointer at epoch E finds the overlap evidence
+for E's key at exactly `rotations/<client>/E.json`.
+
+Enforcement rides the pointer, evidence rides this record, and the
+split is the same one revocation uses: the rotation is published
+together with the strictly higher-epoch linked-client record naming the
+new key, and that pointer bump is what fails stale-epoch attempts
+closed. The pointer retains no history once it moves, so this record
+preserves what it cannot — the previous epoch, the previous public key,
+and both key IDs under the pinned SHA-256 derivation, each computable
+from the record's own public material.
+
+**The overlap is what keeps retries from stranding.** For
+`rotationVerificationOverlapHours` (24, plan Section 5 — the envelope's
+named constant, mirrored here and in the linked-client record,
+gate-proven equal) from the record's `signed_at`, an attempt presenting
+the current epoch may sign with **either** the previous or the new
+public key. The old half verifies from this record, never from
+server-local state — which is what lets a stateless replica serve the
+window (plan Section 3: the data plane is stateless between requests).
+The overlap widens which key may sign, never which epoch is current: an
+attempt outside the current epoch is stale regardless of key, and after
+the window only the new key verifies. A retry of an already-frozen
+envelope therefore re-authorizes with fresh per-attempt state under
+either half inside the window, and with the current key after it (plan
+Phase 3 exit gate: rotation does not strand already-spooled requests
+inside the documented overlap; EC-12).
+
+Structural rules, all cross-checked by the gate:
+
+- **Epoch-addressed and immutable.** One object per (client,
+  established epoch), written once; the store accepts it only when the
+  established epoch does not exceed the pointer's current signed epoch
+  and the pointer at that epoch carries this record's `public_key` —
+  one cannot pre-date a rotation for an epoch the client has not
+  reached, because a forward-dated rotation would arm its overlap
+  window early. The record and the pointer bump that activates it are
+  one administrative act.
+- **Adjacent epochs only.** `previous_epoch` equals
+  `authorization_epoch` − 1 (VAL-002): every pointer move publishes the
+  next epoch — the link is epoch 1 and each rotation, scope change, or
+  revocation publishes exactly the next one — so a rotation never skips
+  an epoch it would otherwise leave unaccounted for.
+- **Public material only, both halves.** `previous_public_key` and
+  `public_key` are public halves; `previous_key_id` and `key_id` are
+  their pinned derivations, computable from the record itself, and
+  cross-check against the `uploader_key_id` of attempts and the
+  `authorization_key_id` of receipts. The new private half is generated
+  on the client host and never appears in any record, file, or
+  argument; the old private half retires with the rotation (SEC-006,
+  ID-001).
+
 ## Verification
 
 `tools/check-control-schemas.py` proves the family's coherence
@@ -236,21 +383,27 @@ structurally and behaviourally: envelope registry coherence (namespace
 const, closed fail-closed enums, recordTypes/write-class/key-pattern/
 keyMembers agreement), flat wrapper composition against
 `wrapper.requiredByKind` — with every wrapper member a record carries
-referencing the registry's declared source, the revocation's identity
-epoch included — closed shapes at every object level, the banned
-private-member-name grammar, the named timing-constant registry with
-every plan-pinned value and every cross-file agreement proven (envelope
-↔ linked-client TTL ↔ revocation propagation bound; envelope ↔
-ingest-request window and skew allowance), draft 2020-12 validity,
-zero-entropy golden linked-client and revocation records — one coherent
-story: the client at epoch 3, and the revocation of that epoch naming
-that client's key — whose key IDs are computed by the pinned SHA-256
-derivation and whose object keys are re-derived from their own
-identifiers, with the revocation key also checked at the epoch ceiling
-so the 18-digit epoch bound and the key grammar are proven in lockstep,
-twenty-eight behavioural rejections across the two records, and the
-receipt-key pattern cross-check against `ingest-receipt.json`. Its
-`--self-test` proves the rejection paths.
+referencing the registry's declared source, the revocation's and
+rotation's identity epochs included — closed shapes at every object
+level, the banned private-member-name grammar, the named timing-constant
+registry with every plan-pinned value and every cross-file agreement
+proven (envelope ↔ linked-client, delegation, and rotation TTLs ↔
+revocation propagation bound; envelope ↔ ingest-request window and skew
+allowance; envelope ↔ linked-client and rotation overlap), draft
+2020-12 validity, zero-entropy golden linked-client, delegation,
+rotation, and revocation records — one coherent story: the client at
+epoch 3, its key established by the golden rotation from a synthetic
+previous half, the relay grant presenting that client as origin, and
+the revocation of that epoch naming that client's key — whose key IDs
+are computed by the pinned SHA-256 derivation (the rotation's previous
+and current halves both) and whose object keys are re-derived from
+their own identifiers, with the revocation and rotation keys also
+checked at the epoch ceiling so the 18-digit epoch bound and both key
+grammars are proven in lockstep, the delegation record's withdrawn
+variant proven valid (the only withdrawal a current-pointer shape
+permits), sixty-two behavioural rejections across the four records,
+and the receipt-key pattern cross-check against `ingest-receipt.json`.
+Its `--self-test` proves the rejection paths.
 
 ```sh
 tools/check-control-schemas.py             # accept path
@@ -274,9 +427,18 @@ side.
   chained to its predecessor and how clients re-pin — is the first open
   item the envelope's authority-chain rule anticipates; `authority_key_id`
   already names the signer generally enough for it.
-- The **delegation record** (relay grants) follows next, once plan work
-  names its object key; the revocation record it was listed beside has
-  shipped.
+- The **receipt-key record** consumes the flat certificate definition
+  already inside `ingest-receipt.json` (see the
+  [wire schemas note](wire-schemas.md)); its object-key pattern is pinned
+  and cross-checked, and the record type stays reserved until it ships.
+- Plan Section 7.5's object-key list still names only the client,
+  revocation, and receipt-key control keys. The delegation
+  (`delegations/<relay>/<origin>.json`) and rotation
+  (`rotations/<client>/<epoch>.json`) patterns extend that list from the
+  envelope registry; the plan's list should gain the two lines as a
+  documentation follow-up — the plan file was under concurrent edit when
+  these records shipped, so the amendment is deliberately not bundled
+  with them.
 - Whether a scope grant ever needs a per-grant qualifier (expiry, per-origin
   limits inside the client record) — v1 says no: grants change by epoch,
   and anything richer is a new record type's decision, made against the

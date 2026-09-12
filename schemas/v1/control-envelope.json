@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:agent-archivist:schema:v1:control-envelope",
   "title": "Agent Archivist control trust record envelope (archivist.control/v1)",
-  "description": "The shared, versioned conventions every control trust record reuses (plan Section 5 control-plane boundary; docs/notes/control-trust-schemas.md). Control records are the tenant-authority-signed objects below `tenants/<tenant>/v1/control/` (plan Section 7.5): the linked-client and revocation records shipped alongside this file, and the receipt-key, delegation, and authority-rotation record types the control-plane boundary names, each arriving as its own schema composed from this document. This file is a conventions registry and shared member library, not an instance schema — the standing `ingest-identifiers.json` has in the wire family: no control object validates against it alone, and every record-type schema is the complete, closed, flat object (wrapper members from `wrapper.members` below plus the type's payload members, side by side, `additionalProperties: false`). The wrapper is deliberately not a nested envelope-with-record shape: the receipt-key certificate inside `ingest-receipt.json` is already a flat authority-signed control record, and that definition is consumed by this family, not duplicated (docs/notes/wire-schemas.md, open questions).",
+  "description": "The shared, versioned conventions every control trust record reuses (plan Section 5 control-plane boundary; docs/notes/control-trust-schemas.md). Control records are the tenant-authority-signed objects below `tenants/<tenant>/v1/control/` (plan Section 7.5): the linked-client, delegation, and key-rotation records shipped alongside this file, the revocation record beside them, and the receipt-key and authority-rotation record types the control-plane boundary names, each arriving as its own schema composed from this document. This file is a conventions registry and shared member library, not an instance schema — the standing `ingest-identifiers.json` has in the wire family: no control object validates against it alone, and every record-type schema is the complete, closed, flat object (wrapper members from `wrapper.members` below plus the type's payload members, side by side, `additionalProperties: false`). The wrapper is deliberately not a nested envelope-with-record shape: the receipt-key certificate inside `ingest-receipt.json` is already a flat authority-signed control record, and that definition is consumed by this family, not duplicated (docs/notes/wire-schemas.md, open questions).",
   "x-archivist": {
     "namespace": "archivist.control/v1",
     "namespaceField": "schema",
@@ -46,7 +46,7 @@
       }
     },
     "writeClasses": {
-      "immutable": "written once at a record-type-derived key; the ControlAdminStore rejects an overwrite outright unless the bytes are the identical record (plan Section 5: it 'rejects overwrite of an incompatible immutable record'), so a lost-response retry of the same administrative write is an idempotent repair and nothing else can displace the object. No pointer is protected, so the signed epoch is not a wrapper requirement for this class — a type carries it only when the epoch is part of the record's identity (the revocation object key names the revoked epoch, and the shipped revocation record is the type that does)",
+      "immutable": "written once at a record-type-derived key; the ControlAdminStore rejects an overwrite outright unless the bytes are the identical record (plan Section 5: it 'rejects overwrite of an incompatible immutable record'), so a lost-response retry of the same administrative write is an idempotent repair and nothing else can displace the object. No pointer is protected, so the signed epoch is not a wrapper requirement for this class — a type carries it only when the epoch is part of the record's identity (the revocation and rotation object keys name their epochs — the revoked epoch and the established epoch — and those shipped records are the types that do)",
       "current-pointer": "one object per subject at a fixed key, holding the current state; a replacement is accepted only when its signed `authorization_epoch` strictly increases — equal or lower is a stale write and is rejected (plan Section 5). The signature covers the epoch, so replaying an older record cannot displace a newer pointer without the authority key; rollback is therefore impossible by construction, the same property the plan pins for derived-policy pointers (publish another higher-epoch record, never repoint to an older one)"
     },
     "constants": {
@@ -54,8 +54,8 @@
         "value": 60,
         "unit": "seconds",
         "plan": ["Section 5", "Section 7.11 EC-09"],
-        "appliesTo": "every control record an ingestion replica loads while authenticating an uploader (the linked-client and revocation records shipped; delegation, receipt-key, and authority-rotation records when they ship)",
-        "crossRef": "schemas/v1/control-client.json pins this value as x-archivist.trustRecordCacheTtlSeconds; schemas/v1/control-revocation.json pins it as x-archivist.revocationPropagationBoundSeconds; tools/check-control-schemas.py proves all three agree",
+        "appliesTo": "every control record an ingestion replica loads while authenticating an uploader — the linked-client record, a delegation record for relay attempts, a rotation record while an old-key overlap window is being served, a revocation record for the revoked-epoch check (all four shipped; receipt-key and authority-rotation records when they ship)",
+        "crossRef": "schemas/v1/control-client.json, control-delegation.json, and control-rotation.json pin this value as x-archivist.trustRecordCacheTtlSeconds; schemas/v1/control-revocation.json pins it as x-archivist.revocationPropagationBoundSeconds; tools/check-control-schemas.py proves all five agree",
         "description": "The upper bound on how long a reader may serve a cached control record before re-reading the store (plan Section 5: trust records cache for at most 60 seconds; EC-09: a registry outage permits using an unexpired cached record for at most 60 seconds, then readiness comes off with a retryable 503 and no storage writes). Because a revocation takes effect through the reader's view of control state, this constant is also the maximum revocation propagation delay — the same number re-expressed where the revocation record needs it, never a second value."
       },
       "authorizationWindowSeconds": {
@@ -73,6 +73,14 @@
         "appliesTo": "the age comparison at attempt verification: a timestamp within the authorization window is accepted with this much clock-skew tolerance in either direction",
         "crossRef": "schemas/v1/ingest-request.json pins this value as x-archivist.clockSkewAllowanceSeconds; tools/check-control-schemas.py proves the two agree",
         "description": "Clock-skew tolerance applied when checking the attempt timestamp against the authorization window (plan Section 5: valid for five minutes with at most five minutes of clock skew). Client and server clocks are not synchronized; the allowance keeps a legitimately fresh proof from failing on skew alone. It is named separately from the window rather than folded into it, because it protects a different clock — the verifier's, not the signer's — and the plan pins them as two five-minute values that must not silently become one ten-minute window."
+      },
+      "rotationVerificationOverlapHours": {
+        "value": 24,
+        "unit": "hours",
+        "plan": ["Section 5"],
+        "appliesTo": "the old/new-key verification overlap after a client key rotation: both the previous and the new public key verify for this long from the rotation record's signed_at (schemas/v1/control-rotation.json, which anchors the window, applies it)",
+        "crossRef": "schemas/v1/control-client.json and schemas/v1/control-rotation.json pin this value as x-archivist.rotationVerificationOverlapHours; tools/check-control-schemas.py proves all three agree",
+        "description": "How long both the previous and the new client key verify after a rotation (plan Section 5: 'Key rotation accepts old and new keys for 24 hours, and retries authorize the frozen envelope with the current key'). The overlap widens which key may sign, never which epoch is current — attempts present the current authorization epoch throughout — so a retry of an already-frozen envelope re-authorizes with fresh per-attempt state under either half instead of stranding in the spool (plan Phase 3 exit gate; EC-12), and after the window only the new key verifies. Registered in hours, not seconds, because the plan pins it as 24 hours and the constant mirrors the plan's number exactly; the unit field — not the name alone — carries the distinction from the second-valued constants beside it."
       }
     },
     "signatures": [
@@ -105,6 +113,24 @@
         "keyMembers": ["tenant_id", "client_id", "authorization_epoch"],
         "status": "shipped",
         "description": "The revocation record (plan Section 7.5 `tenants/<tenant>/v1/control/revocations/<client>/<epoch>.json`): the append-only, epoch-addressed revocation of one client's authorization at one epoch (plan Section 5; ID-006), written together with a strictly higher-epoch linked-client pointer that is what actually fails stale-epoch attempts closed. `keyMembers` names the members the store derives the object key from — for this type the epoch is identity, not a pointer guard."
+      },
+      {
+        "type": "delegation",
+        "writeClass": "current-pointer",
+        "schema": "schemas/v1/control-delegation.json",
+        "objectKeyPattern": "#/$defs/delegation-object-key",
+        "keyMembers": ["tenant_id", "relay_client_id", "origin_client_id"],
+        "status": "shipped",
+        "description": "The delegation record (plan Section 5: origin/uploader delegation for approved relays; ID-005): the relay grant — one uploader client authorized to present one origin client's frozen occurrences. Relay authority is the conjunction of tenant, origin, harness, and operation scopes, never their union (plan Section 5), and the shape enforces it: one current object per (relay, origin) pair, an explicit harness and operation allowlist intersected with the relay's own, and a closed state member whose `withdrawn` value is the only withdrawal a current-pointer shape permits."
+      },
+      {
+        "type": "rotation",
+        "writeClass": "immutable",
+        "schema": "schemas/v1/control-rotation.json",
+        "objectKeyPattern": "#/$defs/rotation-object-key",
+        "keyMembers": ["tenant_id", "client_id", "authorization_epoch"],
+        "status": "shipped",
+        "description": "The key-rotation record (plan Section 5: key rotation accepts old and new keys for 24 hours; Phase 3: overlapping verification with monotonic authorization epochs): the durable evidence of one client key rotation — the epoch it establishes, the previous epoch, both public halves, and the 24-hour overlap during which both verify so retries of a frozen envelope authorize under either key, read by stateless replicas from this record rather than server-local state. `keyMembers` names the members the store derives the object key from — the established epoch is identity, exactly like the revocation's revoked epoch."
       }
     ]
   },
@@ -120,8 +146,8 @@
     },
     "record-type": {
       "type": "string",
-      "enum": ["linked-client", "revocation"],
-      "description": "Which control record type the object is (plan Section 5: client, delegation, rotation, revocation, and receipt-verification-key records all live under the control prefix). Closed, and appended to only by the change that ships the new type's schema and its readers: v1 ships `linked-client` and `revocation`; receipt-key, delegation, and authority-rotation tokens arrive with their record types and old readers fail closed on them until upgraded — the plan Section 7.1 rule that unknown security-bearing values are never guessed. Each record-type schema pins this member to a const of its own token, so a record of one type can never validate as the other. Security-bearing.",
+      "enum": ["linked-client", "revocation", "delegation", "rotation"],
+      "description": "Which control record type the object is (plan Section 5: client, delegation, rotation, revocation, and receipt-verification-key records all live under the control prefix). Closed, and appended to only by the change that ships the new type's schema and its readers: v1 ships `linked-client`, `revocation`, `delegation`, and `rotation`; receipt-key and authority-rotation tokens arrive with their record types and old readers fail closed on them until upgraded — the plan Section 7.1 rule that unknown security-bearing values are never guessed. Each record-type schema pins this member to a const of its own token, so a record of one type can never validate as the other. Security-bearing.",
       "x-archivist": {
         "bearing": "security",
         "compat": "append-per-record-type",
@@ -142,7 +168,7 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 999999999999999999,
-      "description": "The signed monotonic authorization epoch (plan Section 5: a current-pointer replacement is permitted only when its signed epoch increases; plan Phase 3: monotonic authorization epochs). Required on every current-pointer record; an immutable record type carries it only when the epoch is part of its identity (the revocation object key names the revoked epoch, and the shipped revocation record requires it as the identity member that equals that key segment). The authority signature covers it, so a stale record cannot displace a newer pointer and a revocation cannot be re-dated. Monotonic per client across every record that carries one: the linked-client pointer's epoch only increases, and each revocation record permanently fixes the epoch it revokes, so a client's authorization history is a strictly ascending sequence that no later write reorders — which is why revocation can be append-only. The maximum is the 18-digit canonical decimal the revocation object key can carry — the bound is held in lockstep with that grammar rather than at the raw u63 ceiling, and sits far above any real epoch count. On the wire, an attempt's authorization epoch must equal the current linked-client record's epoch: stale-epoch attempts fail closed (plan Phase 3 exit gate), and the receipt records which epoch actually authorized the commit.",
+      "description": "The signed monotonic authorization epoch (plan Section 5: a current-pointer replacement is permitted only when its signed epoch increases; plan Phase 3: monotonic authorization epochs). Required on every current-pointer record; an immutable record type carries it only when the epoch is part of its identity (the revocation and rotation object keys name their epochs — the revoked and the established — and the shipped records of both types require it as the identity member that equals that key segment). The authority signature covers it, so a stale record cannot displace a newer pointer and a revocation or rotation cannot be re-dated. Monotonic per subject — a client for the client-family records, the (relay, origin) relation for a delegation record: every current-pointer's epoch only increases, each revocation permanently fixes the epoch it revokes, and each rotation permanently fixes the epoch it establishes, so every subject's authorization history is a strictly ascending sequence that no later write reorders — which is why revocation and rotation can be append-only. The maximum is the 18-digit canonical decimal the revocation object key can carry — the bound is held in lockstep with that grammar rather than at the raw u63 ceiling, and sits far above any real epoch count. On the wire, an attempt's authorization epoch must equal the current linked-client record's epoch: stale-epoch attempts fail closed (plan Phase 3 exit gate), and the receipt records which epoch actually authorized the commit.",
       "x-archivist": {
         "bearing": "security",
         "compat": "required-v1"
@@ -162,6 +188,24 @@
       "pattern": "^tenants/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/v1/control/revocations/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[1-9][0-9]{0,17}\\.json$",
       "maxLength": 512,
       "description": "Server-derived revocation record key (plan Section 7.5): tenant, the revoked client, and the revoked authorization epoch in canonical decimal without leading zeros. One immutable object per (client, epoch) — the epoch addressing that makes revocation append-only, since a new revocation can only be a new epoch and no write ever removes or rewrites an old one. The tenant segment must equal the record's `tenant_id`, the client segment its `client_id`, and the epoch segment its signed `authorization_epoch` (VAL-002 cross-field checks at the store and at any reader; ID-008: keys are derived from validated fields, never chosen by a writer). The epoch grammar `[1-9][0-9]{0,17}` and the `authorization-epoch` maximum are held in lockstep — 18 decimal digits at the ceiling — and the gate proves it on the boundary value.",
+      "x-archivist": {
+        "bearing": "security"
+      }
+    },
+    "delegation-object-key": {
+      "type": "string",
+      "pattern": "^tenants/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/v1/control/delegations/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.json$",
+      "maxLength": 512,
+      "description": "Server-derived delegation record key: tenant, the relay (uploader) client, and the origin client — one current-pointer object per (relay, origin) pair, the exact pair a relay grant is the conjunction over. There is one object per pair and never one per client or per grant, so no reader can union grants: the current state of a relay's authority for one origin is always this one object. The tenant segment must equal the record's `tenant_id`, the first client segment its `relay_client_id`, and the second its `origin_client_id` (VAL-002 cross-field checks at the store and at any reader; ID-008). The two client segments are structurally indistinguishable to the pattern — the store's segment-equality checks are what keep a swapped key from being read as the reverse grant, and `relay_client_id` must never equal `origin_client_id` (self-delegation is rejected as a cross-field check, not schema syntax).",
+      "x-archivist": {
+        "bearing": "security"
+      }
+    },
+    "rotation-object-key": {
+      "type": "string",
+      "pattern": "^tenants/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/v1/control/rotations/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[1-9][0-9]{0,17}\\.json$",
+      "maxLength": 512,
+      "description": "Server-derived key-rotation record key: tenant, the rotating client, and the authorization epoch the rotation establishes, in canonical decimal without leading zeros. One immutable object per (client, established epoch) — the epoch addressing that makes the rotation history append-only, addressed by the epoch it establishes so a reader holding the linked-client pointer at epoch E finds the overlap evidence for E's key at exactly `rotations/<client>/E.json`. The tenant segment must equal the record's `tenant_id`, the client segment its `client_id`, and the epoch segment its signed `authorization_epoch` (VAL-002 cross-field checks at the store and at any reader; ID-008). The epoch grammar `[1-9][0-9]{0,17}` and the `authorization-epoch` maximum are held in lockstep — 18 decimal digits at the ceiling — the same lockstep the revocation key's grammar keeps, and the gate proves it on the boundary value for both.",
       "x-archivist": {
         "bearing": "security"
       }

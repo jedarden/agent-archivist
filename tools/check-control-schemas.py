@@ -3,10 +3,10 @@
 
 Validates the ``archivist.control/v1`` family against the internal
 contracts of ``docs/notes/control-trust-schemas.md`` (authority: plan
-Sections 5, 7.1, 7.2, and 7.5; requirements ID-003, ID-006, ID-008,
-ID-009, SEC-006):
+Sections 5, 7.1, 7.2, and 7.5; requirements ID-003, ID-005, ID-006,
+ID-008, ID-009, SEC-006):
 
-1. all three family schemas parse, declare draft 2020-12, and carry the
+1. all five family schemas parse, declare draft 2020-12, and carry the
    ``urn:agent-archivist:schema:v1:<stem>`` id matching the filename, and
    the envelope really is a conventions registry (shared defs plus metadata,
    no instance shape of its own);
@@ -20,41 +20,53 @@ ID-009, SEC-006):
    object-key pattern resolves inside the envelope, and every
    ``keyMembers`` entry is a required property of the shipped record —
    the store derives object keys from exactly those validated fields, so
-   the revocation record must require the epoch its key names;
+   the revocation and rotation records must require the epochs their
+   keys name and the delegation record the relay and origin its key
+   names;
 4. every shipped record schema composes the wrapper flat: each member the
    wrapper registry requires for that record's kind is present, required,
    and references the registry's declared source (a narrowing ``const``
    beside the ``$ref`` is the one allowed difference) — and any other
    property that is a wrapper member references the declared source too,
-   so the identity-carried epoch of the immutable revocation record
-   cannot fork the shared definition — while every object level that
-   declares properties is closed (``additionalProperties: false``);
+   so the identity-carried epochs of the immutable revocation and
+   rotation records cannot fork the shared definition — while every
+   object level that declares properties is closed
+   (``additionalProperties: false``);
 5. no private-key material in any field: member names matching the banned
    grammar (private, secret, seed) are rejected outright, and key-bearing
    members, where a record type carries them, reference the common public
-   shapes (SEC-006);
+   shapes — the rotation record's previous and current halves alike
+   (SEC-006);
 6. the timing constants are named, not prose: the envelope's ``constants``
    registry carries the plan-pinned 60-second trust-record cache TTL
-   (Section 5; EC-09), the 300-second authorization window, and the
-   300-second clock-skew allowance (Sections 5 and 7.2), and each
-   consuming schema pins the same number where it applies — the
-   linked-client TTL, the revocation propagation bound, and the two
-   wire-family pins in ``ingest-request.json`` — with agreement proven
-   mechanically, never assumed;
+   (Section 5; EC-09), the 300-second authorization window, the
+   300-second clock-skew allowance (Sections 5 and 7.2), and the 24-hour
+   rotation verification overlap (Section 5), and each consuming schema
+   pins the same number where it applies — the linked-client TTL and
+   overlap, the delegation and rotation TTLs, the rotation overlap, the
+   revocation propagation bound, and the two wire-family pins in
+   ``ingest-request.json`` — with agreement proven mechanically, never
+   assumed;
 7. behaviourally (draft 2020-12, cross-file refs resolved through a
    referencing registry over ``schemas/v1``): pinned synthetic
-   linked-client and revocation records validate — with key IDs computed
-   by the pinned SHA-256-of-encoded-public-key derivation and object keys
-   re-derived from each record's own identifiers, proving the
+   linked-client, revocation, delegation, and rotation records validate —
+   one coherent authorization history: the client at epoch 3 whose key
+   that epoch's golden rotation established, the relay grant presenting
+   that client as origin, and the revocation of that epoch — with key IDs
+   computed by the pinned SHA-256-of-encoded-public-key derivation and
+   object keys re-derived from each record's own identifiers, proving the
    computable-from-published-records property on the golden instances,
-   and on the revocation key at the epoch ceiling, proving the 18-digit
-   lockstep between the epoch bound and the key grammar — and every
-   mutation of either is rejected (unknown namespace, undeclared member,
-   private-key member, zero, fractional, and above-bound epochs, empty
-   and unknown scope values, unknown kind, wrong or unshipped record
-   type, malformed key material, missing wrapper and identity members).
-   The receipt-key object-key pattern is cross-checked against the
-   certificate's documented object key in ``schemas/v1/ingest-receipt.json``.
+   on the revocation and rotation keys at the epoch ceiling (the 18-digit
+   lockstep between the epoch bound and both key grammars), and on the
+   delegation record's withdrawn variant (the only withdrawal a
+   current-pointer shape permits) — and every mutation of any of the
+   four is rejected (unknown namespace, undeclared member, private-key
+   member, zero, fractional, and above-bound epochs, empty, wildcard,
+   and unknown scope values, unknown delegation state, unknown kind,
+   wrong or unshipped record type, malformed key material, missing
+   wrapper and identity members). The receipt-key object-key pattern is
+   cross-checked against the certificate's documented object key in
+   ``schemas/v1/ingest-receipt.json``.
 
 On success it prints a summary and exits 0. Any failure prints a report
 on stderr and exits 2. A missing ``jsonschema`` module is a failure,
@@ -64,8 +76,8 @@ never a silent skip of the behavioural checks.
 every mutation is rejected, proving the rejection paths (opened shape,
 banned member name, dropped fail-closed metadata, registry/enum drift,
 wrapper drift, epoch-bound drift, public-shape drift, key-pattern drift,
-dropped identity member, unshipped record type, constant drift, and the
-cross-file constant fork) rather than only the accept path.
+dropped identity members, unshipped record types, constant drift, and
+the cross-file constant fork) rather than only the accept path.
 
 Usage::
 
@@ -89,7 +101,8 @@ URN_PREFIX = "urn:agent-archivist:schema:v1:"
 DRAFT = "https://json-schema.org/draft/2020-12/schema"
 
 ENVELOPE_STEM = "control-envelope"
-RECORD_STEMS = ("control-client", "control-revocation")
+RECORD_STEMS = ("control-client", "control-revocation", "control-delegation",
+                "control-rotation")
 
 NAMESPACE = "archivist.control/v1"
 KINDS = ("immutable", "current-pointer")
@@ -99,11 +112,14 @@ ENVELOPE_DEFS = (
     "record-kind",
     "authorization-epoch",
     "client-object-key",
+    "delegation-object-key",
     "revocation-object-key",
+    "rotation-object-key",
     "receipt-key-object-key",
 )
 # Key patterns still awaiting their record type: no shipped type may claim
-# one. The revocation pattern left this set when its record shipped.
+# one. The revocation, delegation, and rotation patterns left this set as
+# their records shipped.
 RESERVED_KEY_DEFS = ("receipt-key-object-key",)
 BANNED_MEMBER = re.compile(r"private|secret|seed", re.IGNORECASE)
 PUBLIC_KEY_REF = URN_PREFIX + "common#/$defs/ed25519-public-key-hex"
@@ -114,6 +130,7 @@ CONSTANT_NAMES = (
     "trustRecordCacheTtlSeconds",
     "authorizationWindowSeconds",
     "clockSkewAllowanceSeconds",
+    "rotationVerificationOverlapHours",
 )
 
 # Plan-pinned constants (Sections 5, 7.2, 7.5, and EC-09). Changing one is
@@ -127,10 +144,16 @@ PINNED = {
                           "authorizationWindowSeconds", "value")): 300,
     ("control-envelope", ("x-archivist", "constants",
                           "clockSkewAllowanceSeconds", "value")): 300,
+    ("control-envelope", ("x-archivist", "constants",
+                          "rotationVerificationOverlapHours", "value")): 24,
     ("control-client", ("x-archivist", "trustRecordCacheTtlSeconds")): 60,
     ("control-client", ("x-archivist", "rotationVerificationOverlapHours")): 24,
     ("control-revocation",
      ("x-archivist", "revocationPropagationBoundSeconds")): 60,
+    ("control-delegation", ("x-archivist", "trustRecordCacheTtlSeconds")): 60,
+    ("control-rotation", ("x-archivist", "trustRecordCacheTtlSeconds")): 60,
+    ("control-rotation", ("x-archivist",
+                          "rotationVerificationOverlapHours")): 24,
     ("ingest-request", ("x-archivist", "authorizationWindowSeconds")): 300,
     ("ingest-request", ("x-archivist", "clockSkewAllowanceSeconds")): 300,
 }
@@ -138,7 +161,9 @@ PINNED = {
 # Named-constant agreement: (left, right) paths whose values must be
 # equal, so the consuming schemas and the envelope registry cannot fork.
 # The revocation propagation bound is deliberately the same number as the
-# cache TTL — propagation is bounded by the cache and by nothing else.
+# cache TTL — propagation is bounded by the cache and by nothing else —
+# and the rotation overlap is hours-valued everywhere it appears, so the
+# agreement is plain equality, never a unit conversion.
 CONSTANT_AGREEMENTS = (
     (("control-envelope", ("x-archivist", "constants",
                            "trustRecordCacheTtlSeconds", "value")),
@@ -148,11 +173,24 @@ CONSTANT_AGREEMENTS = (
      ("control-revocation",
       ("x-archivist", "revocationPropagationBoundSeconds"))),
     (("control-envelope", ("x-archivist", "constants",
+                           "trustRecordCacheTtlSeconds", "value")),
+     ("control-delegation", ("x-archivist", "trustRecordCacheTtlSeconds"))),
+    (("control-envelope", ("x-archivist", "constants",
+                           "trustRecordCacheTtlSeconds", "value")),
+     ("control-rotation", ("x-archivist", "trustRecordCacheTtlSeconds"))),
+    (("control-envelope", ("x-archivist", "constants",
                            "authorizationWindowSeconds", "value")),
      ("ingest-request", ("x-archivist", "authorizationWindowSeconds"))),
     (("control-envelope", ("x-archivist", "constants",
                            "clockSkewAllowanceSeconds", "value")),
      ("ingest-request", ("x-archivist", "clockSkewAllowanceSeconds"))),
+    (("control-envelope", ("x-archivist", "constants",
+                           "rotationVerificationOverlapHours", "value")),
+     ("control-client", ("x-archivist", "rotationVerificationOverlapHours"))),
+    (("control-envelope", ("x-archivist", "constants",
+                           "rotationVerificationOverlapHours", "value")),
+     ("control-rotation",
+      ("x-archivist", "rotationVerificationOverlapHours"))),
 )
 CERTIFICATE_KEY_TEMPLATE = (
     "tenants/<tenant_id>/v1/control/receipt-keys/<key_id>.json"
@@ -163,7 +201,9 @@ CERTIFICATE_KEY_TEMPLATE = (
 # at a glance from secret material — ever sits in this file's source.
 TENANT_ID = "1a2b3c4d-5e6f-4a1b-9c2d-3e4f5a6b7c8d"
 CLIENT_ID = "0f1e2d3c-4b5a-4968-8776-5544332211ff"
+RELAY_CLIENT_ID = "2b1a0f9e-8d7c-4e6b-9a5f-1e2d3c4b5a69"
 CLIENT_PUBLIC_KEY = "cd" * 32
+PREVIOUS_PUBLIC_KEY = "ef" * 32
 AUTHORITY_PUBLIC_KEY = "ab" * 32
 SYNTHETIC_SIGNATURE = "00" * 64
 SIGNED_AT = "2026-09-11T00:00:00Z"
@@ -199,8 +239,8 @@ def golden_client_record() -> dict:
 
 def golden_revocation_record() -> dict:
     """The revocation of the golden client's epoch 3: the same tenant,
-    client, and key the linked-client golden pins, so the two goldens are
-    one coherent control-plane story rather than two unrelated objects."""
+    client, and key the linked-client golden pins, so the goldens are
+    one coherent control-plane story rather than unrelated objects."""
     return {
         "schema": NAMESPACE,
         "record_type": "revocation",
@@ -208,6 +248,57 @@ def golden_revocation_record() -> dict:
         "tenant_id": TENANT_ID,
         "client_id": CLIENT_ID,
         "revoked_key_id": key_id(CLIENT_PUBLIC_KEY),
+        "authorization_epoch": 3,
+        "signed_at": SIGNED_AT,
+        "authority_key_id": key_id(AUTHORITY_PUBLIC_KEY),
+        "authority_signature": SYNTHETIC_SIGNATURE,
+    }
+
+
+def golden_delegation_record() -> dict:
+    """The current grant of the golden relay-for-origin relation: the
+    relay may present the golden client's (the origin's) claude-code
+    sessions. Epoch 2 — the grant was revised once (epoch 1 allowed
+    claude-code and codex; epoch 2 narrowed the harness dimension to
+    claude-code only), which exercises the relation's own epoch sequence
+    rather than either client's."""
+    return {
+        "schema": NAMESPACE,
+        "record_type": "delegation",
+        "record_kind": "current-pointer",
+        "tenant_id": TENANT_ID,
+        "relay_client_id": RELAY_CLIENT_ID,
+        "origin_client_id": CLIENT_ID,
+        "delegation_state": "active",
+        "scopes": {
+            "harnesses": ["claude-code"],
+            "operations": ["ingest"],
+        },
+        "authorization_epoch": 2,
+        "signed_at": SIGNED_AT,
+        "authority_key_id": key_id(AUTHORITY_PUBLIC_KEY),
+        "authority_signature": SYNTHETIC_SIGNATURE,
+    }
+
+
+def golden_rotation_record() -> dict:
+    """The rotation that established the golden client's epoch 3: the new
+    half is the golden linked-client record's own key, the previous half
+    is synthetic, so the rotation, client, and revocation goldens are one
+    authorization history — key A at epoch 2, rotated to key B at
+    epoch 3, and epoch 3 later revoked."""
+    return {
+        "schema": NAMESPACE,
+        "record_type": "rotation",
+        "record_kind": "immutable",
+        "tenant_id": TENANT_ID,
+        "client_id": CLIENT_ID,
+        "previous_epoch": 2,
+        "previous_public_key": PREVIOUS_PUBLIC_KEY,
+        "previous_key_id": key_id(PREVIOUS_PUBLIC_KEY),
+        "key_algorithm": "ed25519",
+        "public_key": CLIENT_PUBLIC_KEY,
+        "key_id": key_id(CLIENT_PUBLIC_KEY),
         "authorization_epoch": 3,
         "signed_at": SIGNED_AT,
         "authority_key_id": key_id(AUTHORITY_PUBLIC_KEY),
@@ -228,7 +319,7 @@ CLIENT_REJECTIONS = [
     ("undeclared scope member", lambda r: r["scopes"].__setitem__("origins", [])),
     ("unknown record kind", lambda r: r.__setitem__("record_kind", "pointer")),
     ("wrong record type token", lambda r: r.__setitem__("record_type", "revocation")),
-    ("unshipped record type token", lambda r: r.__setitem__("record_type", "delegation")),
+    ("unshipped record type token", lambda r: r.__setitem__("record_type", "receipt-key")),
     ("non-canonical public key", lambda r: r.__setitem__("public_key", "CD" * 32)),
     ("malformed authority signature", lambda r: r.__setitem__("authority_signature", "00" * 63)),
     ("missing wrapper member", lambda r: r.pop("signed_at")),
@@ -244,12 +335,54 @@ REVOCATION_REJECTIONS = [
     ("fractional epoch", lambda r: r.__setitem__("authorization_epoch", 1.5)),
     ("unknown record kind", lambda r: r.__setitem__("record_kind", "pointer")),
     ("wrong record type token", lambda r: r.__setitem__("record_type", "linked-client")),
-    ("unshipped record type token", lambda r: r.__setitem__("record_type", "delegation")),
+    ("unshipped record type token", lambda r: r.__setitem__("record_type", "receipt-key")),
     ("non-canonical revoked key ID", lambda r: r.__setitem__("revoked_key_id", "AB" * 32)),
     ("short revoked key ID", lambda r: r.__setitem__("revoked_key_id", "ab" * 31)),
     ("malformed authority signature", lambda r: r.__setitem__("authority_signature", "00" * 63)),
     ("missing wrapper member", lambda r: r.pop("signed_at")),
     ("missing identity member", lambda r: r.pop("client_id")),
+]
+
+DELEGATION_REJECTIONS = [
+    ("unknown namespace", lambda r: r.__setitem__("schema", NAMESPACE + "2")),
+    ("undeclared member", lambda r: r.__setitem__("granted_by", "ops")),
+    ("private-key member", lambda r: r.__setitem__("relay_private_key", "ab" * 32)),
+    ("zero epoch", lambda r: r.__setitem__("authorization_epoch", 0)),
+    ("fractional epoch", lambda r: r.__setitem__("authorization_epoch", 1.5)),
+    ("empty harness allowlist", lambda r: r["scopes"].__setitem__("harnesses", [])),
+    ("wildcard harness token", lambda r: r["scopes"].__setitem__("harnesses", ["*"])),
+    ("unknown operation token", lambda r: r["scopes"].__setitem__("operations", ["export"])),
+    ("undeclared scope member", lambda r: r["scopes"].__setitem__("tenants", [])),
+    ("unknown delegation state", lambda r: r.__setitem__("delegation_state", "suspended")),
+    ("unknown record kind", lambda r: r.__setitem__("record_kind", "pointer")),
+    ("wrong record type token", lambda r: r.__setitem__("record_type", "revocation")),
+    ("unshipped record type token", lambda r: r.__setitem__("record_type", "receipt-key")),
+    ("malformed authority signature", lambda r: r.__setitem__("authority_signature", "00" * 63)),
+    ("missing wrapper member", lambda r: r.pop("signed_at")),
+    ("missing identity member", lambda r: r.pop("origin_client_id")),
+    ("missing state member", lambda r: r.pop("delegation_state")),
+]
+
+ROTATION_REJECTIONS = [
+    ("unknown namespace", lambda r: r.__setitem__("schema", NAMESPACE + "2")),
+    ("undeclared member", lambda r: r.__setitem__("reason", "scheduled")),
+    ("private-key member", lambda r: r.__setitem__("previous_private_key", "ab" * 32)),
+    ("zero epoch", lambda r: r.__setitem__("authorization_epoch", 0)),
+    ("epoch above the 18-digit key-grammar bound",
+     lambda r: r.__setitem__("authorization_epoch", 10 ** 18)),
+    ("fractional epoch", lambda r: r.__setitem__("authorization_epoch", 1.5)),
+    ("zero previous epoch", lambda r: r.__setitem__("previous_epoch", 0)),
+    ("unknown record kind", lambda r: r.__setitem__("record_kind", "pointer")),
+    ("wrong record type token", lambda r: r.__setitem__("record_type", "linked-client")),
+    ("unshipped record type token", lambda r: r.__setitem__("record_type", "receipt-key")),
+    ("non-canonical previous public key",
+     lambda r: r.__setitem__("previous_public_key", "EF" * 32)),
+    ("non-canonical public key", lambda r: r.__setitem__("public_key", "CD" * 32)),
+    ("short key ID", lambda r: r.__setitem__("key_id", "ab" * 31)),
+    ("malformed authority signature", lambda r: r.__setitem__("authority_signature", "00" * 63)),
+    ("missing wrapper member", lambda r: r.pop("signed_at")),
+    ("missing identity member", lambda r: r.pop("client_id")),
+    ("missing previous key material", lambda r: r.pop("previous_public_key")),
 ]
 
 
@@ -621,6 +754,13 @@ def check_record(schemas: dict[str, dict], stem: str) -> list[str]:
         violations.append(
             f"{stem}: public_key must reference the common "
             "ed25519-public-key-hex shape")
+    if ("previous_public_key" in props
+            and props["previous_public_key"].get("$ref") != PUBLIC_KEY_REF):
+        violations.append(
+            f"{stem}: previous_public_key must reference the common "
+            "ed25519-public-key-hex shape — the overlap's old half is "
+            "public material under the same shape, never a second "
+            "convention")
     if ("key_algorithm" in props
             and props["key_algorithm"].get("$ref") != SIGNATURE_ALGORITHM_REF):
         violations.append(
@@ -687,12 +827,26 @@ def check_behaviour(schemas: dict[str, dict]) -> list[str]:
     # computable from published public material, never asserted.
     client = golden_client_record()
     revocation = golden_revocation_record()
+    delegation = golden_delegation_record()
+    rotation = golden_rotation_record()
     if client["key_id"] != key_id(client["public_key"]):
         violations.append("golden client record: key_id is not SHA-256(public_key)")
     if revocation["revoked_key_id"] != key_id(client["public_key"]):
         violations.append(
             "golden revocation record: revoked_key_id is not the "
             "SHA-256(public_key) of the key the revoked epoch held")
+    if rotation["key_id"] != key_id(rotation["public_key"]):
+        violations.append(
+            "golden rotation record: key_id is not SHA-256(public_key)")
+    if rotation["previous_key_id"] != key_id(rotation["previous_public_key"]):
+        violations.append(
+            "golden rotation record: previous_key_id is not "
+            "SHA-256(previous_public_key)")
+    if rotation["public_key"] != client["public_key"]:
+        violations.append(
+            "golden rotation record: the established epoch's new half must "
+            "be the golden linked-client record's own key — one coherent "
+            "authorization history, not unrelated objects")
 
     # Per-type golden behaviour: factory, rejections, key pattern, key
     # derivation from the record's own identifiers, and the near-miss keys
@@ -735,6 +889,49 @@ def check_behaviour(schemas: dict[str, dict]) -> list[str]:
                  f"{r['client_id']}/{r['authorization_epoch']}"),
              "non-canonical tenant segment": (
                  f"tenants/{r['tenant_id'].upper()}/v1/control/revocations/"
+                 f"{r['client_id']}/{r['authorization_epoch']}.json"),
+         }),
+        ("control-delegation", delegation, DELEGATION_REJECTIONS,
+         "delegation-object-key",
+         lambda r: (f"tenants/{r['tenant_id']}/v1/control/delegations/"
+                    f"{r['relay_client_id']}/{r['origin_client_id']}.json"),
+         lambda r: {
+             "another record type's key": (
+                 f"tenants/{r['tenant_id']}/v1/control/clients/"
+                 f"{r['relay_client_id']}.json"),
+             "epoch-addressed delegation key": (
+                 f"tenants/{r['tenant_id']}/v1/control/delegations/"
+                 f"{r['relay_client_id']}/{r['origin_client_id']}/"
+                 f"{r['authorization_epoch']}.json"),
+             "non-canonical tenant segment": (
+                 f"tenants/{r['tenant_id'].upper()}/v1/control/delegations/"
+                 f"{r['relay_client_id']}/{r['origin_client_id']}.json"),
+             "missing .json suffix": (
+                 f"tenants/{r['tenant_id']}/v1/control/delegations/"
+                 f"{r['relay_client_id']}/{r['origin_client_id']}"),
+         }),
+        ("control-rotation", rotation, ROTATION_REJECTIONS,
+         "rotation-object-key",
+         lambda r: (f"tenants/{r['tenant_id']}/v1/control/rotations/"
+                    f"{r['client_id']}/{r['authorization_epoch']}.json"),
+         lambda r: {
+             "leading-zero epoch segment": (
+                 f"tenants/{r['tenant_id']}/v1/control/rotations/"
+                 f"{r['client_id']}/0{r['authorization_epoch']}.json"),
+             "zero epoch segment": (
+                 f"tenants/{r['tenant_id']}/v1/control/rotations/"
+                 f"{r['client_id']}/0.json"),
+             "19-digit epoch segment": (
+                 f"tenants/{r['tenant_id']}/v1/control/rotations/"
+                 f"{r['client_id']}/{10 ** 18}.json"),
+             "revocation key at the same shape": (
+                 f"tenants/{r['tenant_id']}/v1/control/revocations/"
+                 f"{r['client_id']}/{r['authorization_epoch']}.json"),
+             "missing .json suffix": (
+                 f"tenants/{r['tenant_id']}/v1/control/rotations/"
+                 f"{r['client_id']}/{r['authorization_epoch']}"),
+             "non-canonical tenant segment": (
+                 f"tenants/{r['tenant_id'].upper()}/v1/control/rotations/"
                  f"{r['client_id']}/{r['authorization_epoch']}.json"),
          }),
     )
@@ -787,6 +984,39 @@ def check_behaviour(schemas: dict[str, dict]) -> list[str]:
                     "revocation-object-key must accept the epoch-ceiling "
                     "key — 18 canonical digits, exactly the bound "
                     "authorization-epoch carries")
+        if stem == "control-delegation":
+            # Withdrawal is a valid shape: the current-pointer record has
+            # no delete, so a withdrawn grant is a strictly higher-epoch
+            # record at the same key carrying the state member. Its
+            # scopes stay present and inert — that is the withdrawal
+            # representation, and it must validate.
+            withdrawn = copy.deepcopy(record)
+            withdrawn["delegation_state"] = "withdrawn"
+            if not validator.is_valid(withdrawn):
+                violations.append(
+                    "golden delegation record: the withdrawn variant must "
+                    "be schema-valid — withdrawal is a higher-epoch record "
+                    "at the same key, the only representation a "
+                    "current-pointer shape permits")
+        if stem == "control-rotation":
+            # The epoch ceiling is schema-valid and its object key
+            # satisfies the grammar: the same 18-digit lockstep the
+            # revocation key keeps, proven on the rotation key too.
+            ceiling = copy.deepcopy(record)
+            ceiling["authorization_epoch"] = 999999999999999999
+            ceiling["previous_epoch"] = 999999999999999998
+            if not validator.is_valid(ceiling):
+                violations.append(
+                    "golden rotation record: the epoch ceiling "
+                    "999999999999999999 (with the adjacent previous "
+                    "epoch) must be schema-valid — the epoch bound and "
+                    "the key grammar are held in lockstep")
+            if not (isinstance(pattern, str)
+                    and re.match(pattern, derive(ceiling))):
+                violations.append(
+                    "rotation-object-key must accept the epoch-ceiling "
+                    "key — 18 canonical digits, exactly the bound "
+                    "authorization-epoch carries")
     return violations
 
 
@@ -816,7 +1046,7 @@ SELF_TEST_CASES = [
     ("record-kind failClosed dropped", "control-envelope",
      lambda s: s["$defs"]["record-kind"]["x-archivist"].pop("failClosed")),
     ("enum/registry drift", "control-envelope",
-     lambda s: s["$defs"]["record-type"]["enum"].append("delegation")),
+     lambda s: s["$defs"]["record-type"]["enum"].append("receipt-key")),
     ("wrapper member dropped", "control-client",
      lambda s: (s["properties"].pop("authority_signature"),
                 s["required"].remove("authority_signature"))),
@@ -838,6 +1068,14 @@ SELF_TEST_CASES = [
      lambda s: [e.update({"status": "pending", "schema": None})
                 for e in s["x-archivist"]["recordTypes"]
                 if e.get("type") == "revocation"]),
+    ("delegation identity member dropped", "control-delegation",
+     lambda s: (s["properties"].pop("origin_client_id"),
+                s["required"].remove("origin_client_id"))),
+    ("rotation overlap constant dropped", "control-rotation",
+     lambda s: s["x-archivist"].pop("rotationVerificationOverlapHours")),
+    ("rotation key-pattern drift", "control-envelope",
+     lambda s: s["$defs"]["rotation-object-key"].__setitem__(
+         "pattern", "^tenants/.+$")),
     ("constant registry drift", "control-envelope",
      lambda s: s["x-archivist"]["constants"]["trustRecordCacheTtlSeconds"]
      .__setitem__("value", 120)),
@@ -893,7 +1131,8 @@ def main(argv: list[str]) -> int:
     enums = sum(
         1 for doc in (schemas[ENVELOPE_STEM], *(schemas[s] for s in RECORD_STEMS))
         for node, _ in walk(doc) if "enum" in node)
-    rejections = len(CLIENT_REJECTIONS) + len(REVOCATION_REJECTIONS)
+    rejections = (len(CLIENT_REJECTIONS) + len(REVOCATION_REJECTIONS)
+                  + len(DELEGATION_REJECTIONS) + len(ROTATION_REJECTIONS))
     print(f"agent-archivist control trust family: {len(RECORD_STEMS) + 1} schemas")
     print(f"closed enums guarded: {enums}, "
           f"named constants pinned: {len(PINNED)}, "

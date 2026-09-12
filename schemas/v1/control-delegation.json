@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:control-delegation",
+  "title": "Agent Archivist delegation record (archivist.control/v1)",
+  "description": "The tenant-authority-signed relay grant (plan Section 5; Phase 3: origin/uploader delegation for approved relays; ID-005): it authorizes one linked client — the relay, the uploader of the plan glossary — to present one origin client's frozen occurrences. Relay authority is the conjunction of tenant, origin, harness, and operation scopes, never their union (plan Section 5), and this record's shape is what makes that true: it names one origin, carries explicit harness and operation allowlists, lives under exactly one tenant's control prefix, and is the only current object for its (relay, origin) pair — so there is no set of grants a reader could union over and no dimension another grant could satisfy. Stored at `tenants/<tenant>/v1/control/delegations/<relay>/<origin>.json`, written only by the offline ControlAdminStore, read by every ingestion replica when it authenticates a relay attempt (ID-005: the server authorizes an uploader to write for the declared origin, and a relay never silently replaces origin identity with its own). The flat object is the complete record: the eight wrapper members every current-pointer control record carries (schemas/v1/control-envelope.json) plus the four payload members below, closed with `additionalProperties: false` — for control records there is no retain-ignore additive growth inside v1, because a member a reader cannot interpret might carry authorization semantics, and authorization never rests on partially understood evidence (docs/notes/control-trust-schemas.md). Public material only, and stronger: this record carries no key material at all, because it grants a relation between two linked clients, each of whose keys live in their own linked-client records (SEC-006).",
+  "type": "object",
+  "x-archivist": {
+    "namespace": "archivist.control/v1",
+    "namespaceField": "schema",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "canonicalization": "rfc8785",
+    "objectKey": "schemas/v1/control-envelope.json#/$defs/delegation-object-key",
+    "writeClass": "current-pointer",
+    "signature": "control-record-v1 (schemas/v1/control-envelope.json): Ed25519 by the tenant authority named by `authority_key_id` over the RFC 8785 canonicalization of this object with the `authority_signature` member removed. The same construction, key namespace, and verifier core as the linked-client and revocation records; domain separation comes from `record_type`, so a delegation can never be replayed as a client, rotation, or revocation record or the reverse.",
+    "epochRule": "The grant's own monotonic sequence — the subject of this pointer is the (relay, origin) relation, not a client. The first grant of a pair is epoch 1, and every revision or withdrawal publishes the next epoch of the same object; a replacement is accepted only when its signed `authorization_epoch` strictly increases (plan Section 5). The relay's client epoch is a separate sequence presented by the attempt and checked against the relay's own linked-client pointer: revoking or rotating the relay does not touch this object, and a revoked relay fails closed through its own pointer and revocation record regardless of how active its grants are. Withdrawal is the one representation the current-pointer shape permits — the store has no delete, so withdrawing a grant publishes a strictly higher-epoch record at the same key with `delegation_state: withdrawn`, whose scopes are inert.",
+    "trustRecordCacheTtlSeconds": 60,
+    "privateKey": "no key material exists anywhere in this record — it grants a relation, not an identity. The relay signs attempts with the relay's key, verified through the relay's own linked-client record; the origin's identity is carried on occurrences and attestations, verified through the origin's record; this record adds origin authority, never a second key (SEC-006, ID-001). The gate's banned-name grammar plus the closed shape leave no member for material to ride in.",
+    "compatibility": "member additions, redefinitions, and new required members are all v2 namespace events — the closed shape is the compatibility rule for control records (docs/notes/control-trust-schemas.md). The only in-place appends this schema tolerates are new tokens inside already-closed enums (record_type in the envelope; delegation_state and operations below), each shipped together with the readers that understand it"
+  },
+  "additionalProperties": false,
+  "required": [
+    "authority_key_id",
+    "authority_signature",
+    "authorization_epoch",
+    "delegation_state",
+    "origin_client_id",
+    "record_kind",
+    "record_type",
+    "relay_client_id",
+    "schema",
+    "scopes",
+    "signed_at",
+    "tenant_id"
+  ],
+  "properties": {
+    "schema": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/schema-namespace",
+      "description": "The control trust namespace this record belongs to. Pinned by the shared definition; an unknown namespace fails closed before anything else is read.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "record_type": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/record-type",
+      "const": "delegation",
+      "description": "This is a delegation record. Narrowed from the envelope's closed record-type enum to a const of this schema's own token, so this file both names and is the type's complete contract.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "record_kind": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/record-kind",
+      "const": "current-pointer",
+      "description": "The delegation record is a current-pointer record: one object per (relay, origin) pair at the fixed key, replaced only by a strictly higher signed epoch (plan Section 5). Narrowing a grant does not fork history — it publishes the next epoch of this same object — and withdrawal is the same move with `delegation_state: withdrawn`, because a current-pointer object can be replaced but never deleted.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "tenant_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "The tenant whose authority issued this grant (plan Section 5). The tenant dimension of the conjunction: the record lives under this tenant's control prefix and is valid nowhere else, so a relay attempt's declared tenant must equal it exactly. Must equal the tenant segment of the object key — the store derives the key from validated fields and refuses any mismatch (ID-008), and a reader can re-make the check.",
+      "x-archivist": {
+        "bearing": "identity",
+        "compat": "required-v1"
+      }
+    },
+    "relay_client_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "The linked installation granted relay authority — the uploader client of the plan glossary, whose own linked-client record must independently authorize the attempt (key, current epoch, and its own harness and operation allowlists), because this record grants a relation, not an identity. Must equal the first client segment of the object key (VAL-002 cross-field check). Never equals `origin_client_id`: self-delegation is rejected by the store as a cross-field check, because the origin's own base grants already cover self-upload and a self-grant is redundant authority at best. An identity, never a hostname (ID-002).",
+      "x-archivist": {
+        "bearing": "identity",
+        "compat": "required-v1"
+      }
+    },
+    "origin_client_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "The linked client on whose behalf the relay may present frozen occurrences (ID-005). The origin dimension of the conjunction: under `relay`, this is the origin recorded on occurrences and attestations — a relay never replaces origin identity with its own (ID-005; SID-006) — and an attempt's declared origin must equal it exactly. Must equal the second client segment of the object key (VAL-002 cross-field check); the two segments are order-sensitive, and the store's segment-equality checks are what keep a swapped key from being read as the reverse grant.",
+      "x-archivist": {
+        "bearing": "identity",
+        "compat": "required-v1"
+      }
+    },
+    "delegation_state": {
+      "type": "string",
+      "enum": ["active", "withdrawn"],
+      "description": "Whether this record currently grants. `active`: the relay may present the origin's occurrences under exactly this record's scopes. `withdrawn`: the grant is gone — the store has no delete, so withdrawal is a strictly higher-epoch record at the same key carrying this state, and a withdrawn record grants nothing regardless of its scopes, which are inert and retained only so the record still names the shape of the grant it withdraws. Security-bearing: an unknown value fails closed — a reader must never guess whether a grant it cannot interpret is live.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "scopes": {
+      "type": "object",
+      "description": "The harness and operation dimensions of the conjunction (plan Section 5: relay authority is the conjunction of tenant, origin, harness, and operation scopes, never their union). An authorized relay attempt satisfies every dimension at once: the attempt's harness must appear in `harnesses` here AND in the relay's own linked-client allowlist — intersected, never added to — and likewise its operation; the tenant and origin dimensions are the record itself. Never the union, by construction: there is exactly one current object per (relay, origin) pair so no set of grants can be unioned over; a grant for one origin is nothing for any other; and no wildcard token exists in v1, so the harness grammar cannot even express one. Empty allowlists are structurally impossible, exactly as in the linked-client record: a delegation with no grants is not an active record with empty arrays, it is a withdrawn one.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "closedShape": true
+      },
+      "additionalProperties": false,
+      "required": [
+        "harnesses",
+        "operations"
+      ],
+      "properties": {
+        "harnesses": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "description": "Harness IDs whose sessions this relay may present for the named origin, each under the common harness grammar (plan Section 7.4) — a grammar with no wildcard token, so a new harness is a new epoch of this record, granted as deliberately as the first. Intersected with the relay's own linked-client harness allowlist at verification, never unioned with it. Issued lexicographically sorted: RFC 8785 does not sort arrays, so sorted issuance is the writer discipline that makes equivalent grants produce identical canonical bytes (recorded here, not schema syntax).",
+          "x-archivist": {
+            "bearing": "security",
+            "compat": "required-v1",
+            "normalization": "writer-sorted"
+          },
+          "items": {
+            "$ref": "urn:agent-archivist:schema:v1:common#/$defs/short-token"
+          }
+        },
+        "operations": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "description": "Operations this relay may perform for the named origin, intersected with the relay's own allowlist. v1 grants exactly `ingest`, the operation the delegation dimension is defined over (plan Section 5). Issued sorted, like `harnesses`. Inert under `withdrawn`, like the whole scope object.",
+          "x-archivist": {
+            "bearing": "security",
+            "compat": "required-v1",
+            "normalization": "writer-sorted"
+          },
+          "items": {
+            "type": "string",
+            "enum": ["ingest"],
+            "description": "A granted operation. `ingest`: present upload attempts under plan Section 7.2. Appended only by the change that ships the operation's readers; an unknown token fails closed.",
+            "x-archivist": {
+              "bearing": "security",
+              "compat": "append-per-operation",
+              "failClosed": true
+            }
+          }
+        }
+      }
+    },
+    "authorization_epoch": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/authorization-epoch",
+      "description": "This grant's current epoch — the (relay, origin) relation's own monotonic sequence, not a client's. The first grant is epoch 1; every revision and withdrawal publishes the next epoch of this same object; the signed value is what makes pointer replacement safe (plan Section 5). Grant changes therefore never fork history, and propagation of a revision or withdrawal is bounded by the reader's trust-record cache, never by an expiry here (plan Section 5; EC-09).",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    },
+    "signed_at": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "UTC time the tenant authority signed this record — audit evidence for when the grant, revision, or withdrawal was approved. The epoch is the logical order of the relation's history; this is its wall-clock context. No validity window is attached, exactly as in the linked-client record: the grant is current until a higher epoch replaces it, which is why withdrawal propagation is bounded by the reader cache, not by expiry (plan Section 5).",
+      "x-archivist": {
+        "bearing": "provenance",
+        "compat": "required-v1"
+      }
+    },
+    "authority_key_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id",
+      "description": "Identifier of the tenant authority key that signed this record — the root pinned during linking by both the relay and the origin (ID-009). Names which pinned key (or, once authority rotation exists, which authority record's key) verifies `authority_signature`; see the envelope's authority-chain rule. A grant signed by any other key is not a grant.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    },
+    "authority_signature": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/ed25519-signature-hex",
+      "description": "The tenant authority's Ed25519 signature under the control-record-v1 construction (schemas/v1/control-envelope.json): the RFC 8785 canonicalization of this object with this member removed. The one field the authority itself cannot cover, and the reason the relay, origin, state, and scopes are tamper-evident — an attacker holding only the raw-data or control-reader credential cannot forge, widen, or retract a grant.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    }
+  }
+}
