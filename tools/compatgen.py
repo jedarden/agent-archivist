@@ -35,12 +35,16 @@ of why (an old-writer document that the candidate rejects, or a
 committed object whose key a repurposed grammar would move).
 
 Storage-layout coverage: identical identity inputs derive byte-identical
-``v1`` object keys across writer generations; an adapter-projection
-version bump mints a fresh artifact hash, occurrence, and key while the
-old ones stay valid (never overwritten); a hypothetical ``zstd-v2``
-profile renders a *new* key segment rather than rewriting ``zstd-v1``
-meaning; and a derived-pipeline key is rebuildable, versioned, and
-prefix-disjoint from the raw namespace.
+``v1`` object keys across writer generations — every digest segment fully
+rendered and checked against the very pattern ``common.json`` pins for
+its family; an adapter-projection version bump mints a fresh artifact
+hash, occurrence, and key while the old ones stay valid (never
+overwritten), with the bumped projection version preserved verbatim in
+the stored occurrence manifest; a hypothetical ``zstd-v2`` profile
+renders a *new* key segment at the same grammar position rather than
+rewriting ``zstd-v1`` meaning; and a derived-pipeline key is rebuildable
+byte-identically from the raw occurrence, carries pipeline name +
+version, and is prefix-disjoint from the raw namespace.
 
 The old-writer documents are the committed golden baselines of the
 sibling corpora (digest-pinned here): the conformance corpus's
@@ -239,14 +243,8 @@ READER_STEMS = {
 # scenario is green, and the child-5 DoD wiring runs ``--verify
 # --require-complete`` so a deferral can never silently outlive the
 # split. Everything not listed here is verified unconditionally.
-DEFERRED_VERIFICATION = {
-    "adapter-projection-bump":
-        "split-child 3 (storage layouts): the bump doc must carry an "
-        "additive member and mint a fresh occurrence identity and key",
-    "derived-pipeline-isolation":
-        "split-child 3 (storage layouts): the derived keys must stay "
-        "prefix-disjoint from the raw namespace",
-}
+# Split-child 3 emptied it: every storage-layout scenario verifies.
+DEFERRED_VERIFICATION: dict[str, str] = {}
 
 ENVELOPE_MEDIA_TYPE_PIN = "partOneMediaType"
 
@@ -386,7 +384,14 @@ class Registry:
         return fields
 
 
-_SEGMENT_RE = re.compile(r"^<([a-z_0-9]+)( first 2 hex)?(?:\.([a-z0-9.]+))?>$")
+# Grammar token forms: <field>, <field first 2 hex>, and a value suffix
+# either inside the brackets (<digest.zst>) or after them (<digest>.zst —
+# the form the pinned registry segments use). A token naming a member the
+# record does not carry raises KeyError: rendering fails closed rather
+# than silently emitting a placeholder.
+_SEGMENT_RE = re.compile(
+    r"^<([a-z_0-9]+)( first 2 hex)?(?:\.([a-z0-9.]+))?>"
+    r"(?:\.([a-z0-9.]+))?$")
 
 
 def render_segment(token: str, record: dict) -> str:
@@ -395,10 +400,11 @@ def render_segment(token: str, record: dict) -> str:
         # A literal grammar token (e.g. the 'sha256' algorithm segment) or a
         # bare field name (e.g. 'storage_profile').
         return str(record.get(token, token))
-    name, shard, suffix = match.groups()
+    name, shard, inside, outside = match.groups()
     value = str(record[name])
     if shard:
         return value[:2]
+    suffix = inside or outside or ""
     return value + (f".{suffix}" if suffix else "")
 
 
@@ -409,15 +415,58 @@ def render_prefix(prefix: str, record: dict) -> str:
     return rendered
 
 
-def object_keys_for(record: dict, registry: Registry) -> dict[str, str]:
-    """Render every registered object key for one validated record."""
+def object_keys_for(record: dict, registry: Registry,
+                    purposes: set[str] | None = None) -> dict[str, str]:
+    """Render the registered object keys for one validated record. A record
+    carries only the members its own key families need (an occurrence
+    manifest has no attestation id), so pass ``purposes`` to select the
+    grammar families to render; a *selected* grammar naming a member the
+    record lacks still fails closed in ``render_segment``."""
     keys: dict[str, str] = {}
     for entry in registry.object_keys:
         purpose = entry["prefix"].split("/")[-1]
+        if purposes is not None and purpose not in purposes:
+            continue
         keys[purpose] = "/".join(
             [render_prefix(entry["prefix"], record)]
             + [render_segment(t, record) for t in entry["segments"]])
     return keys
+
+
+def key_patterns(registry: Registry) -> dict[str, str]:
+    """The common.json key pattern each registered grammar pins, resolved
+    from the registry's own pointers (never a local copy of the fields)."""
+    common = load_json(COMMON_SCHEMA)
+    patterns: dict[str, str] = {}
+    for entry in registry.object_keys:
+        purpose = entry["prefix"].split("/")[-1]
+        match = re.search(r"#/\$defs/([a-z0-9-]+)$",
+                          entry.get("pattern", ""))
+        if match:
+            patterns[purpose] = common["$defs"][match.group(1)]["pattern"]
+    return patterns
+
+
+DERIVED_DOMAIN = b"derived-object-v1"
+
+
+def derived_object_key(registry: Registry, occurrence: dict,
+                       pipeline: str, version: str) -> str:
+    """The derived-namespace object key for one raw occurrence under a
+    named pipeline + version — plan Section 7.5's
+    ``tenants/<tenant>/v1/derived/<pipeline>/<version>/<partition>/<object>``
+    grammar, with the partition as a domain-separated digest shard. A pure
+    function of pipeline, version, tenant, and the raw occurrence: the
+    rebuildability proof recomputes it byte-identically."""
+    digest = registry.derive("occurrence_id", dict(occurrence))
+    tenant = occurrence["tenant_id"]
+    d = hashlib.sha256(
+        DERIVED_DOMAIN + b"\x00"
+        + _field(pipeline.encode()) + _field(version.encode())
+        + _field(tenant.encode()) + _field(bytes.fromhex(digest))
+    ).hexdigest()
+    return (f"tenants/{tenant}/v1/derived/{pipeline}/{version}/"
+            f"{d[:2]}/{d}.json")
 
 
 # ---------------------------------------------------------------------------
@@ -626,12 +675,6 @@ class Ctx:
     def attestation_identities(self, attestation: dict) -> dict:
         return {"attestation_id": self.registry.derive(
             "attestation_id", dict(attestation))}
-
-
-def writer_envelope(ctx: Ctx, **overrides) -> dict:
-    doc = copy.deepcopy(ctx.baselines["envelope"])
-    doc.update(overrides)
-    return doc
 
 
 def scenario_entry(sid, kind, rules, reads, asserts, **extra) -> dict:
@@ -902,16 +945,42 @@ def build_scenarios(ctx: Ctx) -> tuple[list[dict], dict[str, bytes]]:
         ["the v1.0 and v1.1 writers' envelopes share identical identity "
          "inputs, so all three object keys are byte-identical under the "
          "pinned v1 grammar — an additive envelope field never moves a key",
-         "the additive writer's keys equal the pinned baseline keys"],
+         "the additive writer's keys equal the pinned baseline keys",
+         "every rendered key satisfies the very pattern common.json pins "
+         "for its family ($defs/*-object-key): the proof is byte-level, "
+         "with every digest segment fully rendered — a placeholder "
+         "segment would fail the pattern"],
         writer={"generation": "v1.1",
                 "file": "writers/layout-key-stability.json"},
         keys=env_keys, baseline_keys=base_keys))
 
     # --- adapter projection bump (positive, never overwrites) ------------
-    bumped = writer_envelope(ctx, adapter_projection_version="2")
+    # The v1.1 additive writer re-ingests the same source bytes after its
+    # adapter ships projection 2. Finalize the declared ids against their
+    # own re-derivation (VAL-002): the fresh occurrence feeds the
+    # attestation, so declared ids are minted in dependency order.
+    bumped = copy.deepcopy(additive_env)
+    bumped["adapter_projection_version"] = "2"
+    bumped["occurrence_id"] = ctx.envelope_identities(bumped)[
+        "occurrence_id"]
+    bumped["attestation_id"] = ctx.envelope_identities(bumped)[
+        "attestation_id"]
     bumped_id = ctx.envelope_identities(bumped)
     bumped_keys = object_keys_for(ctx.envelope_record(bumped), ctx.registry)
     put("writers/adapter-projection-bump.json", bumped)
+
+    # The stored occurrence manifest for the same bump: the projection
+    # version is preserved verbatim in provenance (plan Section 7.1 axis
+    # 6; Section 7.5 lists the adapter/projection version among the
+    # canonical occurrence fields), and its declared hashes re-derive.
+    bumped_occ = copy.deepcopy(base_occ)
+    bumped_occ["adapter_projection_version"] = "2"
+    bumped_occ["artifact_hash"] = ctx.manifest_identities(bumped_occ)[
+        "artifact_hash"]
+    bumped_occ["occurrence_id"] = ctx.manifest_identities(bumped_occ)[
+        "occurrence_id"]
+    put("writers/adapter-projection-bump-manifest.json", bumped_occ)
+
     scenarios.append(scenario_entry(
         "adapter-projection-bump", "compatible",
         {"adapter-projection-preserved"},
@@ -921,11 +990,20 @@ def build_scenarios(ctx: Ctx) -> tuple[list[dict], dict[str, bytes]]:
          "artifact-hash input: bumping it (same source bytes) mints a fresh "
          "artifact hash, occurrence, and occurrence key while the blob key "
          "is unchanged",
-         "the baseline occurrence and its key remain valid — the bump adds "
-         "history, it never overwrites (EC-02)",
-         "the bumped envelope's declared ids match their own re-derivation"],
+         "the baseline occurrence and its key remain valid — the fresh "
+         "occurrence key shares the baseline's session directory and "
+         "differs only in its final occurrence-id segment: the bump adds "
+         "a sibling object, it never overwrites or moves one (EC-02)",
+         "the bumped envelope's declared ids match their own re-derivation",
+         "the stored occurrence manifest for the bump is accepted by both "
+         "reader generations and preserves the adapter id and projection "
+         "version 2 verbatim; its declared session_hash is the baseline's "
+         "while its artifact_hash and occurrence_id re-derive fresh "
+         "(plan Section 7.1 axis 6: the version is preserved in "
+         "provenance)"],
         writer={"generation": "v1.1",
                 "file": "writers/adapter-projection-bump.json"},
+        provenance_file="writers/adapter-projection-bump-manifest.json",
         identity=bumped_id, keys=bumped_keys, baseline_keys=base_keys))
 
     # --- a hypothetical new storage profile: new segment, not a rewrite --
@@ -941,7 +1019,9 @@ def build_scenarios(ctx: Ctx) -> tuple[list[dict], dict[str, bytes]]:
          "renders a distinct key segment (.../blobs/zstd-v2/...): a new "
          "canonical encoder is a new named profile, never a rewrite of "
          "zstd-v1's meaning (plan Section 7.5)",
-         "the zstd-v1 key for the same digest is unchanged by the new "
+         "the two keys differ only in the profile segment — the digest "
+         "stays at the same grammar position — and the zstd-v1 key is "
+         "exactly the committed baseline's, unchanged by the new "
          "profile's existence",
          "an envelope actually declaring storage_profile=zstd-v2 is "
          "rejected fail-closed by both readers (see enum-storage-profile): "
@@ -949,20 +1029,8 @@ def build_scenarios(ctx: Ctx) -> tuple[list[dict], dict[str, bytes]]:
         keys={"blobs_zstd_v1": v1_key, "blobs_zstd_v2": v2_key}))
 
     # --- derived pipeline isolation (positive) ----------------------------
-    occ = base_occ
-    tenant = occ["tenant_id"]
-    def derived_key(pipeline: str, version: str) -> str:
-        digest = ctx.registry.derive(
-            "occurrence_id", dict(occ))  # raw input binding, see asserts
-        d = hashlib.sha256(
-            b"derived-object-v1\x00"
-            + _field(pipeline.encode()) + _field(version.encode())
-            + _field(tenant.encode()) + _field(bytes.fromhex(digest))
-        ).hexdigest()
-        return (f"tenants/{tenant}/v1/derived/{pipeline}/{version}/"
-                f"{d[:2]}/{d}.json")
-
-    occ_keys = object_keys_for(dict(occ), ctx.registry)
+    occ_keys = object_keys_for(dict(base_occ), ctx.registry,
+                               {"occurrences"})
     scenarios.append(scenario_entry(
         "derived-pipeline-isolation", "compatible",
         {"derived-pipeline-isolated"},
@@ -971,13 +1039,17 @@ def build_scenarios(ctx: Ctx) -> tuple[list[dict], dict[str, bytes]]:
          "<version>/... and shares no prefix with any raw namespace of the "
          "same occurrence — a pipeline can never overwrite raw data",
          "the derived key is a pure function of pipeline name, version, "
-         "tenant, and the raw occurrence: recomputation is byte-identical "
-         "(rebuildable; plan Section 10 'catalogs rebuild byte-identically')",
-         "bumping the pipeline version or renaming the pipeline mints a new "
-         "key while every raw key is untouched"],
-        keys={"derived_session_index_v3": derived_key("session-index", "3"),
-              "derived_session_index_v4": derived_key("session-index", "4"),
-              "derived_other_pipeline": derived_key("coverage-map", "1"),
+         "tenant, and the raw occurrence: recomputation from the raw "
+         "inputs is byte-identical (rebuildable; plan Section 10 "
+         "'catalogs rebuild byte-identically')",
+         "bumping the pipeline version or renaming the pipeline mints a "
+         "new key while every raw key is untouched"],
+        keys={"derived_session_index_v3": derived_object_key(
+                  ctx.registry, base_occ, "session-index", "3"),
+              "derived_session_index_v4": derived_object_key(
+                  ctx.registry, base_occ, "session-index", "4"),
+              "derived_other_pipeline": derived_object_key(
+                  ctx.registry, base_occ, "coverage-map", "1"),
               "raw_occurrence": occ_keys["occurrences"]}))
 
     # --- illegal projections (negative policy fixtures) -------------------
@@ -1376,6 +1448,7 @@ def verify_bundle(require_complete: bool = False) -> int:
 
     manifest = json.loads(expected["manifest.json"])
     ctx = Ctx()
+    pinned_key_patterns = key_patterns(ctx.registry)
 
     # Baseline digest pins: drift in the sibling corpora is regeneration
     # material, not silent tolerance.
@@ -1518,6 +1591,15 @@ def verify_bundle(require_complete: bool = False) -> int:
                         entry["id"] == "layout-key-stability":
                     failures.append(
                         f"{sid}: additive writer keys must equal baseline")
+                # Byte-level grammar conformance: every rendered key must
+                # satisfy the pattern its family pins in common.json. A
+                # placeholder segment (e.g. a literal '<occurrence_id>.json'
+                # left unrendered) fails its pattern here.
+                for purpose, key in sorted(keys.items()):
+                    if not re.fullmatch(pinned_key_patterns[purpose], key):
+                        failures.append(
+                            f"{sid}: {purpose} key {key!r} does not match "
+                            f"the pinned grammar pattern")
 
         # Policy candidates: finding codes and verdicts must match exactly.
         candidate = entry.get("candidate")
@@ -1575,40 +1657,86 @@ def verify_bundle(require_complete: bool = False) -> int:
         failures.append("repurposed-prefix: the mutated grammar must move "
                         "the committed blob key")
 
-    # derived-pipeline isolation.
-    if "derived-pipeline-isolation" not in DEFERRED_VERIFICATION:
-        iso = by_id["derived-pipeline-isolation"]["keys"]
-        raw_prefix = f"tenants/{base_env['tenant_id']}/v1/raw/"
-        for name, key in iso.items():
-            if key.startswith(raw_prefix):
-                failures.append(f"derived-pipeline-isolation: {name} "
-                                "collides with the raw namespace")
-        if iso["derived_session_index_v3"] == iso["derived_session_index_v4"]:
-            failures.append("derived-pipeline-isolation: version bump must "
-                            "mint a new key")
-        if iso["derived_session_index_v3"] == iso["derived_other_pipeline"]:
-            failures.append("derived-pipeline-isolation: pipeline rename "
-                            "must mint a new key")
-
-    # new-profile segment distinctness.
-    prof = by_id["layout-new-profile-segment"]["keys"]
-    if prof["blobs_zstd_v1"] == prof["blobs_zstd_v2"]:
-        failures.append("layout-new-profile-segment: a new profile must "
-                        "render a distinct key")
-
     # Shared baselines for the writer-generation proofs below (each block
     # is gated independently, so none may define these).
     base_occ = ctx.baselines["occurrence"]
     base_att = ctx.baselines["attestation"]
     base_keys = object_keys_for(ctx.envelope_record(base_env), ctx.registry)
 
+    # derived-pipeline isolation.
+    if "derived-pipeline-isolation" not in DEFERRED_VERIFICATION:
+        iso = by_id["derived-pipeline-isolation"]["keys"]
+        raw_prefix = f"tenants/{base_env['tenant_id']}/v1/raw/"
+        derived_prefix = f"tenants/{base_env['tenant_id']}/v1/derived/"
+        for name, key in iso.items():
+            # raw_occurrence is the control sample: the raw namespace's
+            # own key for the same occurrence, pinned for contrast.
+            if name != "raw_occurrence" and key.startswith(raw_prefix):
+                failures.append(f"derived-pipeline-isolation: {name} "
+                                "collides with the raw namespace")
+        for name in ("derived_session_index_v3",
+                     "derived_session_index_v4",
+                     "derived_other_pipeline"):
+            if not iso[name].startswith(derived_prefix):
+                failures.append(f"derived-pipeline-isolation: {name} must "
+                                "live under the derived prefix")
+        if iso["derived_session_index_v3"] == iso["derived_session_index_v4"]:
+            failures.append("derived-pipeline-isolation: version bump must "
+                            "mint a new key")
+        if iso["derived_session_index_v3"] == iso["derived_other_pipeline"]:
+            failures.append("derived-pipeline-isolation: pipeline rename "
+                            "must mint a new key")
+        # Rebuildability: each pinned derived key is byte-identical to a
+        # fresh recomputation from the raw occurrence (a pure function of
+        # pipeline, version, tenant, and the raw inputs — plan Section
+        # 10's 'catalogs rebuild byte-identically'), and carries its
+        # pipeline name + version in the key itself.
+        for name, pipeline, version in (
+                ("derived_session_index_v3", "session-index", "3"),
+                ("derived_session_index_v4", "session-index", "4"),
+                ("derived_other_pipeline", "coverage-map", "1")):
+            if derived_object_key(ctx.registry, base_occ,
+                                  pipeline, version) != iso[name]:
+                failures.append(f"derived-pipeline-isolation: {name} is "
+                                "not rebuildable byte-identically from the "
+                                "raw occurrence")
+            if f"/v1/derived/{pipeline}/{version}/" not in iso[name]:
+                failures.append(f"derived-pipeline-isolation: {name} must "
+                                "carry its pipeline name + version")
+        # The pinned raw key is the manifest record's own grammar render.
+        raw_render = object_keys_for(dict(base_occ), ctx.registry,
+                                     {"occurrences"})["occurrences"]
+        if iso["raw_occurrence"] != raw_render:
+            failures.append("derived-pipeline-isolation: raw_occurrence "
+                            "must be the occurrence grammar's own render")
+
+    # new-profile segment distinctness.
+    prof = by_id["layout-new-profile-segment"]["keys"]
+    if prof["blobs_zstd_v1"] == prof["blobs_zstd_v2"]:
+        failures.append("layout-new-profile-segment: a new profile must "
+                        "render a distinct key")
+    if prof["blobs_zstd_v1"] != base_keys["blobs"]:
+        failures.append("layout-new-profile-segment: the zstd-v1 key must "
+                        "stay exactly the baseline's")
+    if prof["blobs_zstd_v2"] != \
+            prof["blobs_zstd_v1"].replace("/zstd-v1/", "/zstd-v2/"):
+        failures.append("layout-new-profile-segment: the new profile must "
+                        "be a new segment at the same grammar position — "
+                        "the digest is never moved")
+
     # adapter-projection bump: fresh identity, stable blob, old preserved.
     if "adapter-projection-bump" not in DEFERRED_VERIFICATION:
         bump = json.loads(expected["writers/adapter-projection-bump.json"])
         bump_id = ctx.envelope_identities(bump)
+        if bump["adapter_projection_version"] != "2":
+            failures.append("adapter-projection-bump: the writer must "
+                            "declare projection version 2")
         if bump_id["artifact_hash"] == committed_ids["artifact_hash"]:
             failures.append("adapter-projection-bump: the bump must mint a "
                             "fresh artifact hash")
+        if bump_id["occurrence_id"] == committed_ids["occurrence_id"]:
+            failures.append("adapter-projection-bump: the bump must mint a "
+                            "fresh occurrence id")
         bump_keys = object_keys_for(ctx.envelope_record(bump), ctx.registry)
         if bump_keys["blobs"] != base_keys["blobs"]:
             failures.append("adapter-projection-bump: same source bytes "
@@ -1616,6 +1744,49 @@ def verify_bundle(require_complete: bool = False) -> int:
         if bump_keys["occurrences"] == base_keys["occurrences"]:
             failures.append("adapter-projection-bump: the bump must mint a "
                             "fresh occurrence key")
+        if bump_keys["occurrences"].rsplit("/", 1)[0] != \
+                base_keys["occurrences"].rsplit("/", 1)[0]:
+            failures.append("adapter-projection-bump: the fresh occurrence "
+                            "key must share the baseline's session "
+                            "directory (a new sibling object, never a "
+                            "moved key)")
+        if bump_keys["attestations"] == base_keys["attestations"]:
+            failures.append("adapter-projection-bump: the bump must mint a "
+                            "fresh attestation key")
+        # Provenance preservation (plan Section 7.1 axis 6): the stored
+        # occurrence manifest for the bump is readable by both reader
+        # generations, keeps the adapter id and the bumped projection
+        # version verbatim, and its declared hashes agree with their own
+        # re-derivation — session_hash unmoved, artifact/occurrence fresh.
+        bump_manifest = json.loads(
+            expected[by_id["adapter-projection-bump"]["provenance_file"]])
+        for generation in ("v1.0", "v1.1"):
+            if not make_validator(generation,
+                                  "occurrence-manifest").is_valid(
+                                      bump_manifest):
+                failures.append(f"adapter-projection-bump: {generation} "
+                                "reader rejects the bumped provenance "
+                                "manifest")
+        if bump_manifest["adapter_projection_version"] != "2" or \
+                bump_manifest["adapter_id"] != base_occ["adapter_id"]:
+            failures.append("adapter-projection-bump: the stored manifest "
+                            "must preserve the adapter id and projection "
+                            "version")
+        manifest_ids = ctx.manifest_identities(bump_manifest)
+        baseline_manifest_ids = ctx.manifest_identities(base_occ)
+        for field in ("artifact_hash", "occurrence_id"):
+            if bump_manifest.get(field) != manifest_ids.get(field):
+                failures.append(f"adapter-projection-bump: the manifest's "
+                                f"declared {field} disagrees with its "
+                                "re-derivation (VAL-002)")
+            if manifest_ids[field] == baseline_manifest_ids[field]:
+                failures.append(f"adapter-projection-bump: the bump must "
+                                f"mint a fresh manifest {field}")
+        if manifest_ids["session_hash"] != \
+                baseline_manifest_ids["session_hash"]:
+            failures.append("adapter-projection-bump: the bump must not "
+                            "move the session (session_hash is "
+                            "projection-independent)")
 
     # additive envelope: identity and keys equal the baseline's.
     if "orn-additive-envelope" not in DEFERRED_VERIFICATION:
@@ -1847,6 +2018,36 @@ def self_test() -> int:
     }]
     check("a genuinely new prefix is a legal addition",
           classify_layout(ctx.registry.object_keys, added_prefix) == [])
+
+    # Object-key rendering paths.
+    keyed = {"tenant_id": "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b",
+             "storage_profile": "zstd-v1",
+             "blob_digest": "ab" * 32}
+    check("segment rendering applies outside-bracket suffixes",
+          render_segment("<blob_digest>.zst", keyed) == f"{'ab' * 32}.zst")
+    check("segment rendering shards on request",
+          render_segment("<blob_digest first 2 hex>", keyed) == "ab")
+    try:
+        render_segment("<attestation_id>.json", keyed)
+        check("segment rendering fails closed on a missing member", False)
+    except KeyError:
+        check("segment rendering fails closed on a missing member", True)
+    selected = object_keys_for(keyed, ctx.registry, {"blobs"})
+    check("purpose-selected rendering renders only the selected family",
+          set(selected) == {"blobs"}
+          and selected["blobs"].endswith(f"{'ab' * 32}.zst"))
+    try:
+        object_keys_for(keyed, ctx.registry, {"attestations"})
+        check("a selected grammar still fails closed on missing members",
+              False)
+    except KeyError:
+        check("a selected grammar still fails closed on missing members",
+              True)
+    patterns = key_patterns(ctx.registry)
+    placeholder_key = (f"tenants/{keyed['tenant_id']}/v1/raw/blobs/"
+                       f"zstd-v1/sha256/ab/<blob_digest>.zst")
+    check("a placeholder segment fails its pinned grammar pattern",
+          re.fullmatch(patterns["blobs"], placeholder_key) is None)
 
     # Canonicalizer rejection paths.
     for name, value in [("floats", {"x": 1.5}),
