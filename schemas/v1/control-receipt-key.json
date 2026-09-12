@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:control-receipt-key",
+  "title": "Agent Archivist receipt-key record (archivist.control/v1)",
+  "description": "The tenant-authority-signed certification record for one server receipt key (plan Sections 7.5 and 7.8; ID-009, RCPT-006). Stored at `tenants/<tenant>/v1/control/receipt-keys/<key>.json`, written only by the offline ControlAdminStore, and the authoritative source of the receipt-key certification: the same certification statement travels by value as the certificate embedded in every receipt the key signs (schemas/v1/ingest-receipt.json), whose members are this record's payload members — consumed here, not duplicated, with the gate proving the two definitions cannot fork. The record anchors the offline chain a client walks from public material alone (ID-009): the tenant authority root pinned during linking signs this record, the certified key signs receipts (receipt-v1, schemas/v1/ingest-identifiers.json), and because the record is immutable and retained, verification of retained receipts never expires — certifying a fresh key writes a new object at its own key ID and no operation removes or rewrites a predecessor, so nothing that ever verified stops verifying. Rotation runs on the two named constants the envelope registers (plan Section 7.8): a fresh key is certified every `receiptKeyRotationDays` (30) and each key keeps signing for `receiptKeySigningOverlapDays` (7) past its successor's first signing instant, so a key's signing window is 37 days, successor windows open every 30, and adjacent windows overlap for seven — the signer always holds a valid key, and a receipt issued inside the overlap verifies against whichever key signed it, because each receipt carries its own signer's certificate by value. The flat object is the complete record: the seven wrapper members every immutable control record carries (schemas/v1/control-envelope.json) plus the five certification members, closed with `additionalProperties: false` (docs/notes/control-trust-schemas.md). This immutable type carries no `authorization_epoch` — the envelope's write-class rule: an immutable record carries the epoch exactly when it is part of the record's identity, and this record's identity is the certified key ID its object key names, not an epoch. Public material only (SEC-006): the certified public half, its pinned derivation, the algorithm, and the signing window; the private half enters the server only through a secret reference and appears in no record, file, or argument.",
+  "type": "object",
+  "x-archivist": {
+    "namespace": "archivist.control/v1",
+    "namespaceField": "schema",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "canonicalization": "rfc8785",
+    "objectKey": "schemas/v1/control-envelope.json#/$defs/receipt-key-object-key",
+    "writeClass": "immutable",
+    "signature": "control-record-v1 (schemas/v1/control-envelope.json): Ed25519 by the tenant authority named by `authority_key_id` over the RFC 8785 canonicalization of this object with the `authority_signature` member removed. The same construction, key namespace, and verifier core as the linked-client, revocation, delegation, and rotation records; domain separation comes from `record_type`, so a receipt-key certification can never be replayed as another control record or the reverse. The administrative act that writes this record also produces the second signature the receipt chain needs — receipt-key-v1 (schemas/v1/ingest-identifiers.json) over the bare certificate, the same certification statement as the five payload members plus `certificate_version`, without the control wrapper members — because a receipt's embedded certificate is a data-plane object whose own signed bytes cannot grow the wrapper. The two signed byte ranges are structurally distinct by construction (the envelope's domain-separation rule: every control record's signed bytes contain the `schema` namespace member and no bare certificate's do), and both signatures come from the same pinned authority key, so one key-compromise story covers both.",
+    "rotationRule": "The signing window is the two envelope constants: a fresh key is certified every receiptKeyRotationDays (30, plan Section 7.8) and each key signs for receiptKeySigningOverlapDays (7) past its successor's first signing instant — `valid_until` − `valid_from` equals the two summed, 37 days, and a successor's `valid_from` sits exactly receiptKeyRotationDays after its predecessor's (VAL-002 cross-field checks a reader can re-make from the two records alone). The overlap keeps a valid signing key in hand across every rotation boundary; immutability keeps every retired certificate verifying, so rotation never invalidates a retained receipt (ID-009).",
+    "receiptKeyRotationDays": 30,
+    "receiptKeySigningOverlapDays": 7,
+    "trustRecordCacheTtlSeconds": 60,
+    "certificateSource": "The payload members — `key_id`, `key_algorithm`, `public_key`, `valid_from`, `valid_until` — are the receipt-key certificate definition in schemas/v1/ingest-receipt.json, consumed here: this control-prefix record is the authoritative copy of the certification whose by-value projection rides inside every receipt, and tools/check-control-schemas.py proves the member-for-member agreement, the object-key agreement, and the two named constants, so record and certificate cannot fork. `certificate_version` is deliberately absent: it is the wire certificate's own version axis (plan Section 7.1), not this family's — the control version axis is the namespace member, one axis, no numeric twin (docs/notes/control-trust-schemas.md decision 1).",
+    "privateKey": "the only key material here is the public half — `key_id` is its pinned SHA-256 derivation, computable from this record itself. The private half enters the server only through a secret reference (SEC-006) and appears in no record, file, or argument; the gate's banned-name grammar plus the closed shape leave no member for it to ride in.",
+    "compatibility": "member additions, redefinitions, and new required members are all v2 namespace events — the closed shape is the compatibility rule for control records (docs/notes/control-trust-schemas.md). The only in-place appends this schema tolerates are new tokens inside already-closed enums (record_type in the envelope; key_algorithm through the shared common definition), each shipped together with the readers that understand it"
+  },
+  "additionalProperties": false,
+  "required": [
+    "authority_key_id",
+    "authority_signature",
+    "key_algorithm",
+    "key_id",
+    "public_key",
+    "record_kind",
+    "record_type",
+    "schema",
+    "signed_at",
+    "tenant_id",
+    "valid_from",
+    "valid_until"
+  ],
+  "properties": {
+    "schema": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/schema-namespace",
+      "description": "The control trust namespace this record belongs to. Pinned by the shared definition; an unknown namespace fails closed before anything else is read.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "record_type": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/record-type",
+      "const": "receipt-key",
+      "description": "This is a receipt-key record. Narrowed from the envelope's closed record-type enum to a const of this schema's own token, so this file both names and is the type's complete contract.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "record_kind": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/record-kind",
+      "const": "immutable",
+      "description": "The receipt-key record is an immutable record: written once at the key-addressed key derived from its own identifiers, never overwritten — the store rejects an incompatible overwrite outright, so the only writer-visible repetition is a lost-response retry of identical bytes (the envelope's writeClasses rule). Immutability plus key addressing is what makes rotation non-invalidating: certifying a fresh key writes a new object at its own key ID and no operation removes or rewrites a predecessor, so the certificate for every receipt ever issued stays in the store and keeps verifying (ID-009).",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "tenant_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "The tenant whose receipts this key signs (plan Section 7.8). Must equal the tenant segment of the object key — the store derives the key from validated fields and refuses any mismatch (ID-008), and a reader can re-make the check, so a record served under another tenant's prefix is rejected as a cross-tenant forgery, not a naming oddity.",
+      "x-archivist": {
+        "bearing": "identity",
+        "compat": "required-v1"
+      }
+    },
+    "key_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id",
+      "description": "Identifier of the certified receipt key: the lowercase-hex SHA-256 of the encoded public key under the pinned derivation, computable from this record's own `public_key` (VAL-002). Must equal the key segment of the object key (VAL-002 cross-field check), the `receipt_key_id` of every receipt the key signs, and the `key_id` of the certificate embedded in those receipts (schemas/v1/ingest-receipt.json) — one key identity from certification to receipt. A public identifier only — a hash of a public key, never key material (SEC-006).",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    },
+    "key_algorithm": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/signature-algorithm",
+      "description": "Algorithm of `public_key`; Ed25519 only in v1. The closed enum travels inside the authority-signed record, so the algorithm a verifier applies to the receipt signature is pinned by this certification, never chosen by the receipt body it verifies. An unknown value fails closed before the key is used.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "public_key": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/ed25519-public-key-hex",
+      "description": "The certified Ed25519 public half — the value an offline verifier uses for the receipt-v1 construction after the authority chain verifies this record. This record is the authoritative home of the half; the certificate embedded in each receipt carries the same value by value (schemas/v1/ingest-receipt.json), and the gate proves the two definitions agree member for member. Public material only (SEC-006): the private half enters the server only through a secret reference and never appears in any record, file, or argument.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    },
+    "valid_from": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "UTC start of this key's signing window. Rotation runs on the envelope's two named constants, pinned here and proven equal by the gate: a fresh key is certified every `receiptKeyRotationDays` (30) and each key signs for `receiptKeySigningOverlapDays` (7) beyond its successor's start (plan Section 7.8), so a replacement key begins signing before its predecessor stops. `valid_until` − `valid_from` equals the two constants summed, 37 days (VAL-002 cross-field check).",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    },
+    "valid_until": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "UTC end of this key's signing window; `valid_from` <= `valid_until` is a VAL-002 cross-field check. Expiry bounds signing only — verification of retained receipts never expires, because this immutable record and the certificates embedded in issued receipts keep verifying for as long as they are retained (ID-009): rotation cannot invalidate old evidence. A client checks the signing window at verification time (`valid_from` <= `commit_time` <= `valid_until` against the receipt's commit time) and treats a mismatch as a verification failure, not as damage to the evidence.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    },
+    "signed_at": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "UTC time the tenant authority signed this certification — audit evidence for when the receipt key entered service. This member anchors nothing: the signing window is anchored by `valid_from`, carried signed inside the record, so the window cannot drift from the certification the way a prose timestamp could. `signed_at` never exceeds `valid_from` (VAL-002 cross-field check) — the certification exists before the key starts signing, which is what lets a verifier hold the certificate before the first receipt that needs it.",
+      "x-archivist": {
+        "bearing": "provenance",
+        "compat": "required-v1"
+      }
+    },
+    "authority_key_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id",
+      "description": "Identifier of the tenant authority key that signed this record — the root the verifying client pinned during linking (ID-009). Names which pinned key (or, once authority rotation exists, which authority record's key) verifies `authority_signature`; see the envelope's authority-chain rule. A receipt-key record signed by any other key certifies nothing.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    },
+    "authority_signature": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/ed25519-signature-hex",
+      "description": "The tenant authority's Ed25519 signature under the control-record-v1 construction (schemas/v1/control-envelope.json): the RFC 8785 canonicalization of this object with this member removed. The one field the authority itself cannot cover, and the reason the certified half, its derivation, its algorithm, its window, and its tenant are tamper-evident — an attacker holding only the raw-data or control-reader credential cannot forge a receipt key into existence, extend a signing window, or re-date one after the fact.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    }
+  }
+}

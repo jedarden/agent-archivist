@@ -111,8 +111,10 @@ PINNED = {
     ("ingest-envelope", ("x-archivist", "canonicalMaxBytes")): 65536,
     ("ingest-request", ("x-archivist", "authorizationWindowSeconds")): 300,
     ("ingest-request", ("x-archivist", "clockSkewAllowanceSeconds")): 300,
-    ("ingest-receipt", tuple(CERT_PATH) + ("x-archivist", "keyRotationDays")): 30,
-    ("ingest-receipt", tuple(CERT_PATH) + ("x-archivist", "signingOverlapDays")): 7,
+    ("ingest-receipt", tuple(CERT_PATH) + ("x-archivist",
+                                          "receiptKeyRotationDays")): 30,
+    ("ingest-receipt", tuple(CERT_PATH) + ("x-archivist",
+                                          "receiptKeySigningOverlapDays")): 7,
 }
 
 ERROR_BODY_FIELDS = {"schema", "code", "retryable", "message",

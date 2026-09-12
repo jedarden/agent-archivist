@@ -1,9 +1,10 @@
 # Control trust schemas
 
 Authority: the implementation plan, Section 5 (control-plane boundary),
-Section 7.1 (version axes), Section 7.2 (wire authentication), and
-Section 7.5 (object keys); requirements ID-001, ID-003, ID-005, ID-006,
-ID-008, ID-009, and SEC-006. The family is:
+Section 7.1 (version axes), Section 7.2 (wire authentication),
+Section 7.5 (object keys), and Section 7.8 (receipts); requirements
+ID-001, ID-003, ID-005, ID-006, ID-008, ID-009, RCPT-006, and SEC-006.
+The family is:
 
 | File | Role |
 |---|---|
@@ -12,15 +13,16 @@ ID-008, ID-009, and SEC-006. The family is:
 | [`schemas/v1/control-delegation.json`](../../schemas/v1/control-delegation.json) | The delegation record (`tenants/<tenant>/v1/control/delegations/<relay>/<origin>.json`): the relay grant — one uploader client authorized to present one origin client's occurrences, as the conjunction of tenant, origin, harness, and operation scopes. |
 | [`schemas/v1/control-rotation.json`](../../schemas/v1/control-rotation.json) | The key-rotation record (`tenants/<tenant>/v1/control/rotations/<client>/<epoch>.json`): the durable evidence of one client key rotation — both public halves and the 24-hour overlap during which either verifies. |
 | [`schemas/v1/control-revocation.json`](../../schemas/v1/control-revocation.json) | The revocation record (plan Section 7.5 `tenants/<tenant>/v1/control/revocations/<client>/<epoch>.json`): the append-only, epoch-addressed revocation of one client's authorization at one epoch. |
+| [`schemas/v1/control-receipt-key.json`](../../schemas/v1/control-receipt-key.json) | The receipt-key record (`tenants/<tenant>/v1/control/receipt-keys/<key>.json`, plan Section 7.5): the tenant-authority certification of one server receipt-signing key — the authoritative control-prefix source of the certificate embedded in every receipt (plan Section 7.8). |
 
 Control records are what the control-plane boundary runs on: objects
 below `tenants/<tenant>/v1/control/`, written only by the offline
 `ControlAdminStore` (which can put nothing but validated,
 tenant-authority-signed control objects), read by every ingestion replica
 when it authenticates an uploader, and cacheable for at most 60 seconds
-(plan Section 5). Receipt-key and authority-rotation record types arrive
-as later schema changes composed from the same envelope — the decision
-list below is what binds them.
+(plan Section 5). The authority-rotation record type arrives as a later
+schema change composed from the same envelope — the decision
+list below is what binds it.
 
 ## The envelope: decisions every record type follows
 
@@ -39,11 +41,12 @@ them is wrong, not a variation:
    side, `additionalProperties: false`. The wrapper is deliberately not an
    envelope-with-`record` shape, because the receipt-key certificate inside
    `ingest-receipt.json` is already a flat authority-signed control record —
-   that definition is consumed, not duplicated (the
-   [wire schemas note](wire-schemas.md) open question this family exists to
-   answer). A record type narrows `record_type` and `record_kind` to consts
-   of its own; every other wrapper member references the registry's
-   declared source unchanged.
+   and the receipt-key record type consumes that definition rather than
+   duplicating it (the [wire schemas note](wire-schemas.md) open question
+   this family existed to answer; see the receipt-key section below for
+   how the consumption is proven). A record type narrows `record_type` and
+   `record_kind` to consts of its own; every other wrapper member
+   references the registry's declared source unchanged.
 3. **Closed shapes, rejected unknowns.** `additionalProperties: false` at
    every object level that declares properties. This is a deliberate
    deviation from the plan Section 7.1 retain-ignore rule the ingest
@@ -112,16 +115,16 @@ them is wrong, not a variation:
    record type and fields (ID-008): `clients/<client>.json` for the
    linked-client record, `delegations/<relay>/<origin>.json` for the
    delegation record, `rotations/<client>/<epoch>.json` for the
-   key-rotation record, and `revocations/<client>/<epoch>.json` for the
-   revocation record, all shipped; `receipt-keys/<key>.json` is pinned in
-   the envelope now because plan Section 7.5 fixes the layout, and it stays
-   reserved until that record type ships. Key segments must equal the
+   key-rotation record, `revocations/<client>/<epoch>.json` for the
+   revocation record, and `receipt-keys/<key>.json` for the receipt-key
+   record — all shipped. Key segments must equal the
    record's own identifiers (`tenant_id`; `client_id`; for a delegation
-   the relay and origin in order; and, for a revocation or rotation, the
-   epoch its key names); the store refuses a mismatch and any
-   reader can re-make the check. The receipt-key pattern is cross-checked
-   against the certificate's documented `objectKey` so the two cannot
-   fork.
+   the relay and origin in order; for a revocation or rotation, the
+   epoch its key names; and, for a receipt-key record, the certified
+   key ID under the pinned derivation); the store refuses a mismatch and
+   any reader can re-make the check. The receipt-key pattern is
+   cross-checked against the certificate's documented `objectKey` so the
+   two cannot fork.
 9. **Numeric and timestamp discipline.** RFC 8785 canonical JSON, no
    floats, integers bounded (`authorization_epoch` 1 through
    999999999999999999 — the 18-digit canonical decimal the revocation key
@@ -153,7 +156,14 @@ them is wrong, not a variation:
     rotation record that anchors the window to its `signed_at`. It is
     hours-valued because the plan pins it in hours; the registry's
     `unit` field, not the name alone, carries that distinction from the
-    second-valued constants beside it.
+    second-valued constants beside it. The fifth and sixth constants are
+    the receipt-key rotation and its signing overlap (plan Section 7.8:
+    "Receipt keys rotate every 30 days with seven days of old/new signing
+    overlap"), pinned as `receiptKeyRotationDays` (30) and
+    `receiptKeySigningOverlapDays` (7) in the receipt-key record and —
+    under the same names, so agreement is plain equality — in the
+    certificate definition inside `schemas/v1/ingest-receipt.json`, the
+    one wire-family member of the registry's agreement set.
 
 ## The linked-client record
 
@@ -376,6 +386,75 @@ Structural rules, all cross-checked by the gate:
   argument; the old private half retires with the rotation (SEC-006,
   ID-001).
 
+## The receipt-key record
+
+The record certifies one server receipt-signing key (plan Section 7.8;
+ID-009: a client verifies receipts through a
+tenant-authority-signed server receipt-key record, and rotation never
+invalidates retained receipts). It lives at
+`tenants/<tenant>/v1/control/receipt-keys/<key>.json` (plan Section 7.5),
+where the key segment is the certified key's ID under the pinned
+SHA-256 derivation — key-addressed, the one shipped immutable type that
+carries no `authorization_epoch`, because its identity is the key its
+object key names, not an epoch.
+
+**The record is the authoritative half of a certification that exists in
+two homes.** The same certification statement travels as the certificate
+embedded by value in every receipt the key signs
+(`schemas/v1/ingest-receipt.json`), so an offline client verifies a
+receipt without reaching the store (RCPT-006); this record is the
+durable, control-prefix original the `ControlAdminStore` writes.
+Consumption, not duplication: the record's payload members — `key_id`,
+`key_algorithm`, `public_key`, `valid_from`, `valid_until` — *are* the
+certificate's members under identical shapes, and the gate proves the
+member-for-member agreement in both directions (every certificate member
+except its own `certificate_version` axis appears in the record under the
+same shape; the record adds nothing beyond the wrapper members), re-derives
+the golden record's certificate projection (payload plus
+`certificate_version`, wrapper members dropped by the registry's own
+definition) and validates it against the certificate definition itself,
+and cross-checks the object-key pattern against the certificate's
+documented `objectKey`. `certificate_version` stays wire-only by design:
+it is the certificate's own version axis (plan Section 7.1), while the
+control family's axis is the namespace member — one axis per family, no
+numeric twin inside a control record (decision 1).
+
+**Two signatures, one authority, structurally distinct byte ranges.** The
+administrative act produces both signatures the chain needs:
+`control-record-v1` over this record (the wrapper members in the signed
+bytes), and `receipt-key-v1` over the bare certificate (no wrapper
+members, `certificate_version` in) — because a receipt's embedded
+certificate is a data-plane object whose signed bytes cannot grow the
+wrapper. Domain separation under the one pinned authority key comes from
+the member sets themselves, exactly as the envelope's signing rule
+records: a control record's signed bytes contain the `schema` namespace
+member and no bare certificate's do. The chain a client walks is then
+pure public material — pinned authority root over the certificate,
+certificate key over the receipt (`receipt-v1`) — with no private key
+material anywhere: the certified private half enters the server only
+through a secret reference and appears in no record, file, or argument
+(SEC-006).
+
+**Rotation is non-invalidating by the write class, and the window is the
+named constants.** Certifying a fresh key writes a new immutable object
+at its own key ID; nothing removes or rewrites a predecessor, so every
+certificate ever issued stays in the store and keeps verifying —
+verification of retained receipts never expires (ID-009). The signing
+window runs on the registry's two constants: a fresh key is certified
+every `receiptKeyRotationDays` (30) and each key signs for
+`receiptKeySigningOverlapDays` (7) past its successor's first signing
+instant, so `valid_until` − `valid_from` is exactly the two summed —
+37 days — and a successor's `valid_from` sits exactly 30 days after its
+predecessor's (VAL-002 cross-field checks a reader re-makes from the two
+records alone; the gate proves the 37-day span on the golden instance's
+parsed timestamps). The overlap exists for signing continuity — the
+signer is never without a valid key across a rotation boundary, late or
+on time — and never widens verification, which the immutability above
+already makes permanent. `signed_at` anchors nothing (unlike the
+rotation record's overlap, anchored at its `signed_at`): the window is
+anchored by `valid_from`, carried inside the signed bytes, and the
+certification is signed no later than the window opens.
+
 ## Verification
 
 `tools/check-control-schemas.py` proves the family's coherence
@@ -387,22 +466,30 @@ referencing the registry's declared source, the revocation's and
 rotation's identity epochs included — closed shapes at every object
 level, the banned private-member-name grammar, the named timing-constant
 registry with every plan-pinned value and every cross-file agreement
-proven (envelope ↔ linked-client, delegation, and rotation TTLs ↔
-revocation propagation bound; envelope ↔ ingest-request window and skew
-allowance; envelope ↔ linked-client and rotation overlap), draft
-2020-12 validity, zero-entropy golden linked-client, delegation,
-rotation, and revocation records — one coherent story: the client at
-epoch 3, its key established by the golden rotation from a synthetic
-previous half, the relay grant presenting that client as origin, and
-the revocation of that epoch naming that client's key — whose key IDs
-are computed by the pinned SHA-256 derivation (the rotation's previous
-and current halves both) and whose object keys are re-derived from
-their own identifiers, with the revocation and rotation keys also
-checked at the epoch ceiling so the 18-digit epoch bound and both key
-grammars are proven in lockstep, the delegation record's withdrawn
-variant proven valid (the only withdrawal a current-pointer shape
-permits), sixty-two behavioural rejections across the four records,
-and the receipt-key pattern cross-check against `ingest-receipt.json`.
+proven (envelope ↔ linked-client, delegation, rotation, and receipt-key
+TTLs ↔ revocation propagation bound; envelope ↔ ingest-request window
+and skew allowance; envelope ↔ linked-client and rotation overlap;
+envelope ↔ receipt-key record and certificate rotation and overlap),
+draft 2020-12 validity, zero-entropy golden linked-client, delegation,
+rotation, revocation, and receipt-key records — one coherent story: the
+client at epoch 3, its key established by the golden rotation from a
+synthetic previous half, the relay grant presenting that client as
+origin, the revocation of that epoch naming that client's key, and the
+receipt-key certification the same pinned authority root signs, window
+spanning exactly the rotation and overlap constants summed — whose key
+IDs are computed by the pinned SHA-256 derivation (the rotation's
+previous and current halves and the receipt key's own half) and whose
+object keys are re-derived from their own identifiers, with the
+revocation and rotation keys also checked at the epoch ceiling so the
+18-digit epoch bound and both key grammars are proven in lockstep, the
+delegation record's withdrawn variant proven valid (the only withdrawal
+a current-pointer shape permits), the receipt-key record and the
+certificate in `ingest-receipt.json` proven one certification statement
+(object-key agreement, member-for-member shape agreement, and the
+golden record's certificate projection validating against the
+certificate definition itself), seventy-eight behavioural rejections
+across the five records, and the receipt-key pattern cross-check
+against `ingest-receipt.json`.
 Its `--self-test` proves the rejection paths.
 
 ```sh
@@ -419,18 +506,18 @@ The family shares `schemas/v1/common.json` with the ingest wire and raw
 provenance families (one vocabulary per version directory) and reuses the
 receipt-key certificate definition rather than duplicating it; the
 [wire schemas note](wire-schemas.md) documents that hand-off from its
-side.
+side, and the receipt-key section above records how the consumption is
+proven.
 
 ## Open questions
 
 - The **authority-rotation record** — how a successor authority key is
   chained to its predecessor and how clients re-pin — is the first open
   item the envelope's authority-chain rule anticipates; `authority_key_id`
-  already names the signer generally enough for it.
-- The **receipt-key record** consumes the flat certificate definition
-  already inside `ingest-receipt.json` (see the
-  [wire schemas note](wire-schemas.md)); its object-key pattern is pinned
-  and cross-checked, and the record type stays reserved until it ships.
+  already names the signer generally enough for it, and the receipt-key
+  record and certificate inherit that generality unchanged: both name
+  their signer through `authority_key_id` and defer to the envelope's
+  authority-chain rule wherever they explain it.
 - Plan Section 7.5's object-key list still names only the client,
   revocation, and receipt-key control keys. The delegation
   (`delegations/<relay>/<origin>.json`) and rotation

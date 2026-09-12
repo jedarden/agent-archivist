@@ -172,8 +172,14 @@ member), and the certificate's key signs the receipt (`receipt-v1` over
 the receipt minus its `signature` member). The certificate is embedded by
 value — key ID, public key, algorithm, tenant, signing window, authority
 key ID and signature — and also stored durably under
-`tenants/<tenant>/v1/control/receipt-keys/<key-id>.json`. Keys rotate every
-30 days with a seven-day signing overlap; verification of retained
+`tenants/<tenant>/v1/control/receipt-keys/<key-id>.json`, where the
+control trust family's receipt-key record
+(`schemas/v1/control-receipt-key.json`) is the authoritative source of
+the certification: its payload members are the certificate's members,
+proven member-for-member by that family's gate. Keys rotate every 30
+days with a seven-day signing overlap (the control envelope's
+`receiptKeyRotationDays` and `receiptKeySigningOverlapDays` named
+constants, pinned here under the same names); verification of retained
 receipts never expires, so rotation cannot invalidate old evidence
 (ID-009). The private half reaches the server only through a secret
 reference (SEC-006); only the public half ever appears in a record.
@@ -201,9 +207,13 @@ separately tracked work.
 ## Open questions
 
 - The certificate's authority-rotation story is deliberately minimal:
-  `authority_key_id` names the signer and the client pins the root, but a
-  full authority-key rotation record belongs to the control trust family,
-  which will consume this certificate definition rather than duplicate it.
+  `authority_key_id` names the signer and the client pins the root. The
+  control trust family has consumed this certificate definition rather
+  than duplicating it — its receipt-key record's payload members are the
+  certificate's members, proven member-for-member by
+  `tools/check-control-schemas.py` (see
+  [control trust schemas](control-trust-schemas.md)) — but the
+  authority-rotation record itself remains that family's open item.
 - `media_type` placeholders in error templates are bounded tokens; if a
   future code needs to name a header or boundary value, the placeholder
   allowlist in `docs/notes/error-codes.md` Section 4 must grow first —

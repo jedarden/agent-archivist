@@ -6,7 +6,7 @@ contracts of ``docs/notes/control-trust-schemas.md`` (authority: plan
 Sections 5, 7.1, 7.2, and 7.5; requirements ID-003, ID-005, ID-006,
 ID-008, ID-009, SEC-006):
 
-1. all five family schemas parse, declare draft 2020-12, and carry the
+1. all six family schemas parse, declare draft 2020-12, and carry the
    ``urn:agent-archivist:schema:v1:<stem>`` id matching the filename, and
    the envelope really is a conventions registry (shared defs plus metadata,
    no instance shape of its own);
@@ -40,33 +40,45 @@ ID-008, ID-009, SEC-006):
 6. the timing constants are named, not prose: the envelope's ``constants``
    registry carries the plan-pinned 60-second trust-record cache TTL
    (Section 5; EC-09), the 300-second authorization window, the
-   300-second clock-skew allowance (Sections 5 and 7.2), and the 24-hour
-   rotation verification overlap (Section 5), and each consuming schema
-   pins the same number where it applies — the linked-client TTL and
-   overlap, the delegation and rotation TTLs, the rotation overlap, the
-   revocation propagation bound, and the two wire-family pins in
+   300-second clock-skew allowance (Sections 5 and 7.2), the 24-hour
+   rotation verification overlap (Section 5), and the 30-day receipt-key
+   rotation with its 7-day signing overlap (Section 7.8), and each
+   consuming schema pins the same number where it applies — the
+   linked-client TTL and overlap, the delegation and rotation TTLs, the
+   rotation overlap, the revocation propagation bound, the receipt-key
+   record's rotation, overlap, and TTL, the certificate's rotation and
+   overlap in ``ingest-receipt.json``, and the two wire-family pins in
    ``ingest-request.json`` — with agreement proven mechanically, never
    assumed;
 7. behaviourally (draft 2020-12, cross-file refs resolved through a
    referencing registry over ``schemas/v1``): pinned synthetic
-   linked-client, revocation, delegation, and rotation records validate —
-   one coherent authorization history: the client at epoch 3 whose key
-   that epoch's golden rotation established, the relay grant presenting
-   that client as origin, and the revocation of that epoch — with key IDs
-   computed by the pinned SHA-256-of-encoded-public-key derivation and
-   object keys re-derived from each record's own identifiers, proving the
-   computable-from-published-records property on the golden instances,
-   on the revocation and rotation keys at the epoch ceiling (the 18-digit
-   lockstep between the epoch bound and both key grammars), and on the
-   delegation record's withdrawn variant (the only withdrawal a
-   current-pointer shape permits) — and every mutation of any of the
-   four is rejected (unknown namespace, undeclared member, private-key
-   member, zero, fractional, and above-bound epochs, empty, wildcard,
-   and unknown scope values, unknown delegation state, unknown kind,
-   wrong or unshipped record type, malformed key material, missing
-   wrapper and identity members). The receipt-key object-key pattern is
-   cross-checked against the certificate's documented object key in
-   ``schemas/v1/ingest-receipt.json``.
+   linked-client, revocation, delegation, rotation, and receipt-key
+   records validate — one coherent trust story: the client at epoch 3
+   whose key that epoch's golden rotation established, the relay grant
+   presenting that client as origin, the revocation of that epoch, and
+   the receipt-key certification the same pinned authority root signs
+   (window spanning exactly the rotation and overlap constants summed) —
+   with key IDs computed by the pinned SHA-256-of-encoded-public-key
+   derivation and object keys re-derived from each record's own
+   identifiers, proving the computable-from-published-records property
+   on the golden instances, on the revocation and rotation keys at the
+   epoch ceiling (the 18-digit lockstep between the epoch bound and both
+   key grammars), and on the delegation record's withdrawn variant (the
+   only withdrawal a current-pointer shape permits) — and every mutation
+   of any of the five is rejected (unknown namespace, undeclared member,
+   private-key member, epoch member on the key-addressed record, zero,
+   fractional, and above-bound epochs, empty, wildcard, and unknown
+   scope values, unknown delegation state, unknown kind, wrong or
+   unshipped record type, malformed key material and window timestamps,
+   missing wrapper, identity, and window members). The receipt-key
+   record and the certificate in ``schemas/v1/ingest-receipt.json`` are
+   proven one certification statement: object-key agreement,
+   member-for-member shape agreement (the certificate's members minus
+   its own ``certificate_version`` axis are the record's payload and
+   wrapper-shared members under identical shapes, and the record adds
+   nothing but wrapper members), and the golden record's certificate
+   projection — the payload members plus ``certificate_version`` —
+   validating against the certificate definition itself.
 
 On success it prints a summary and exits 0. Any failure prints a report
 on stderr and exits 2. A missing ``jsonschema`` module is a failure,
@@ -76,8 +88,9 @@ never a silent skip of the behavioural checks.
 every mutation is rejected, proving the rejection paths (opened shape,
 banned member name, dropped fail-closed metadata, registry/enum drift,
 wrapper drift, epoch-bound drift, public-shape drift, key-pattern drift,
-dropped identity members, unshipped record types, constant drift, and
-the cross-file constant fork) rather than only the accept path.
+dropped identity members, unshipped record types, constant drift, the
+cross-file constant fork, and the record/certificate member fork) rather
+than only the accept path.
 
 Usage::
 
@@ -102,7 +115,8 @@ DRAFT = "https://json-schema.org/draft/2020-12/schema"
 
 ENVELOPE_STEM = "control-envelope"
 RECORD_STEMS = ("control-client", "control-revocation", "control-delegation",
-                "control-rotation")
+                "control-rotation", "control-receipt-key")
+CERTIFICATE_PATH = ("$defs", "receipt-key-certificate")
 
 NAMESPACE = "archivist.control/v1"
 KINDS = ("immutable", "current-pointer")
@@ -118,9 +132,10 @@ ENVELOPE_DEFS = (
     "receipt-key-object-key",
 )
 # Key patterns still awaiting their record type: no shipped type may claim
-# one. The revocation, delegation, and rotation patterns left this set as
-# their records shipped.
-RESERVED_KEY_DEFS = ("receipt-key-object-key",)
+# one. The revocation, delegation, rotation, and receipt-key patterns left
+# this set as their records shipped; nothing is reserved until the
+# authority-rotation layout is pinned.
+RESERVED_KEY_DEFS: tuple[str, ...] = ()
 BANNED_MEMBER = re.compile(r"private|secret|seed", re.IGNORECASE)
 PUBLIC_KEY_REF = URN_PREFIX + "common#/$defs/ed25519-public-key-hex"
 SIGNATURE_ALGORITHM_REF = URN_PREFIX + "common#/$defs/signature-algorithm"
@@ -131,6 +146,8 @@ CONSTANT_NAMES = (
     "authorizationWindowSeconds",
     "clockSkewAllowanceSeconds",
     "rotationVerificationOverlapHours",
+    "receiptKeyRotationDays",
+    "receiptKeySigningOverlapDays",
 )
 
 # Plan-pinned constants (Sections 5, 7.2, 7.5, and EC-09). Changing one is
@@ -146,6 +163,10 @@ PINNED = {
                           "clockSkewAllowanceSeconds", "value")): 300,
     ("control-envelope", ("x-archivist", "constants",
                           "rotationVerificationOverlapHours", "value")): 24,
+    ("control-envelope", ("x-archivist", "constants",
+                          "receiptKeyRotationDays", "value")): 30,
+    ("control-envelope", ("x-archivist", "constants",
+                          "receiptKeySigningOverlapDays", "value")): 7,
     ("control-client", ("x-archivist", "trustRecordCacheTtlSeconds")): 60,
     ("control-client", ("x-archivist", "rotationVerificationOverlapHours")): 24,
     ("control-revocation",
@@ -154,16 +175,26 @@ PINNED = {
     ("control-rotation", ("x-archivist", "trustRecordCacheTtlSeconds")): 60,
     ("control-rotation", ("x-archivist",
                           "rotationVerificationOverlapHours")): 24,
+    ("control-receipt-key", ("x-archivist", "trustRecordCacheTtlSeconds")): 60,
+    ("control-receipt-key",
+     ("x-archivist", "receiptKeyRotationDays")): 30,
+    ("control-receipt-key",
+     ("x-archivist", "receiptKeySigningOverlapDays")): 7,
     ("ingest-request", ("x-archivist", "authorizationWindowSeconds")): 300,
     ("ingest-request", ("x-archivist", "clockSkewAllowanceSeconds")): 300,
+    ("ingest-receipt", CERTIFICATE_PATH + ("x-archivist",
+                                           "receiptKeyRotationDays")): 30,
+    ("ingest-receipt", CERTIFICATE_PATH + ("x-archivist",
+                                           "receiptKeySigningOverlapDays")): 7,
 }
 
 # Named-constant agreement: (left, right) paths whose values must be
 # equal, so the consuming schemas and the envelope registry cannot fork.
 # The revocation propagation bound is deliberately the same number as the
 # cache TTL — propagation is bounded by the cache and by nothing else —
-# and the rotation overlap is hours-valued everywhere it appears, so the
-# agreement is plain equality, never a unit conversion.
+# and the rotation overlap is hours-valued and the receipt-key constants
+# days-valued everywhere they appear, so every agreement is plain
+# equality, never a unit conversion.
 CONSTANT_AGREEMENTS = (
     (("control-envelope", ("x-archivist", "constants",
                            "trustRecordCacheTtlSeconds", "value")),
@@ -191,6 +222,24 @@ CONSTANT_AGREEMENTS = (
                            "rotationVerificationOverlapHours", "value")),
      ("control-rotation",
       ("x-archivist", "rotationVerificationOverlapHours"))),
+    (("control-envelope", ("x-archivist", "constants",
+                           "trustRecordCacheTtlSeconds", "value")),
+     ("control-receipt-key", ("x-archivist", "trustRecordCacheTtlSeconds"))),
+    (("control-envelope", ("x-archivist", "constants",
+                           "receiptKeyRotationDays", "value")),
+     ("control-receipt-key", ("x-archivist", "receiptKeyRotationDays"))),
+    (("control-envelope", ("x-archivist", "constants",
+                           "receiptKeySigningOverlapDays", "value")),
+     ("control-receipt-key",
+      ("x-archivist", "receiptKeySigningOverlapDays"))),
+    (("control-envelope", ("x-archivist", "constants",
+                           "receiptKeyRotationDays", "value")),
+     ("ingest-receipt", CERTIFICATE_PATH + ("x-archivist",
+                                            "receiptKeyRotationDays"))),
+    (("control-envelope", ("x-archivist", "constants",
+                           "receiptKeySigningOverlapDays", "value")),
+     ("ingest-receipt", CERTIFICATE_PATH + ("x-archivist",
+                                            "receiptKeySigningOverlapDays"))),
 )
 CERTIFICATE_KEY_TEMPLATE = (
     "tenants/<tenant_id>/v1/control/receipt-keys/<key_id>.json"
@@ -205,8 +254,15 @@ RELAY_CLIENT_ID = "2b1a0f9e-8d7c-4e6b-9a5f-1e2d3c4b5a69"
 CLIENT_PUBLIC_KEY = "cd" * 32
 PREVIOUS_PUBLIC_KEY = "ef" * 32
 AUTHORITY_PUBLIC_KEY = "ab" * 32
+RECEIPT_PUBLIC_KEY = "3c" * 32
 SYNTHETIC_SIGNATURE = "00" * 64
 SIGNED_AT = "2026-09-11T00:00:00Z"
+# The golden receipt key's signing window: 2026-09-04 to 2026-10-11 is
+# exactly 37 days — receiptKeyRotationDays (30) + receiptKeySigningOverlapDays
+# (7) — certified as the window opens, so the gate can prove the window
+# rule on integers, never by trusting the timestamp strings.
+RECEIPT_VALID_FROM = "2026-09-04T00:00:00Z"
+RECEIPT_VALID_UNTIL = "2026-10-11T00:00:00Z"
 
 
 def key_id(public_key_hex: str) -> str:
@@ -214,6 +270,13 @@ def key_id(public_key_hex: str) -> str:
     import hashlib
 
     return hashlib.sha256(bytes.fromhex(public_key_hex)).hexdigest()
+
+
+def parse_timestamp(value: str):
+    """RFC 3339 UTC timestamp (``Z`` suffix) to an aware datetime."""
+    from datetime import datetime
+
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def golden_client_record() -> dict:
@@ -306,6 +369,28 @@ def golden_rotation_record() -> dict:
     }
 
 
+def golden_receipt_key_record() -> dict:
+    """The certification of the golden tenant's receipt key: signed by the
+    same pinned authority root as the four authorization-history goldens,
+    so the record joins their one control-plane story. The window spans
+    exactly the rotation and overlap constants summed — 37 days from
+    2026-09-04 to 2026-10-11 — and is certified as it opens."""
+    return {
+        "schema": NAMESPACE,
+        "record_type": "receipt-key",
+        "record_kind": "immutable",
+        "tenant_id": TENANT_ID,
+        "key_id": key_id(RECEIPT_PUBLIC_KEY),
+        "key_algorithm": "ed25519",
+        "public_key": RECEIPT_PUBLIC_KEY,
+        "valid_from": RECEIPT_VALID_FROM,
+        "valid_until": RECEIPT_VALID_UNTIL,
+        "signed_at": RECEIPT_VALID_FROM,
+        "authority_key_id": key_id(AUTHORITY_PUBLIC_KEY),
+        "authority_signature": SYNTHETIC_SIGNATURE,
+    }
+
+
 # Behavioural mutations of the golden records: label -> must-be-rejected
 # mutation. Each names the acceptance clause it proves.
 CLIENT_REJECTIONS = [
@@ -319,7 +404,8 @@ CLIENT_REJECTIONS = [
     ("undeclared scope member", lambda r: r["scopes"].__setitem__("origins", [])),
     ("unknown record kind", lambda r: r.__setitem__("record_kind", "pointer")),
     ("wrong record type token", lambda r: r.__setitem__("record_type", "revocation")),
-    ("unshipped record type token", lambda r: r.__setitem__("record_type", "receipt-key")),
+    ("unshipped record type token",
+     lambda r: r.__setitem__("record_type", "authority-rotation")),
     ("non-canonical public key", lambda r: r.__setitem__("public_key", "CD" * 32)),
     ("malformed authority signature", lambda r: r.__setitem__("authority_signature", "00" * 63)),
     ("missing wrapper member", lambda r: r.pop("signed_at")),
@@ -335,7 +421,8 @@ REVOCATION_REJECTIONS = [
     ("fractional epoch", lambda r: r.__setitem__("authorization_epoch", 1.5)),
     ("unknown record kind", lambda r: r.__setitem__("record_kind", "pointer")),
     ("wrong record type token", lambda r: r.__setitem__("record_type", "linked-client")),
-    ("unshipped record type token", lambda r: r.__setitem__("record_type", "receipt-key")),
+    ("unshipped record type token",
+     lambda r: r.__setitem__("record_type", "authority-rotation")),
     ("non-canonical revoked key ID", lambda r: r.__setitem__("revoked_key_id", "AB" * 32)),
     ("short revoked key ID", lambda r: r.__setitem__("revoked_key_id", "ab" * 31)),
     ("malformed authority signature", lambda r: r.__setitem__("authority_signature", "00" * 63)),
@@ -356,7 +443,8 @@ DELEGATION_REJECTIONS = [
     ("unknown delegation state", lambda r: r.__setitem__("delegation_state", "suspended")),
     ("unknown record kind", lambda r: r.__setitem__("record_kind", "pointer")),
     ("wrong record type token", lambda r: r.__setitem__("record_type", "revocation")),
-    ("unshipped record type token", lambda r: r.__setitem__("record_type", "receipt-key")),
+    ("unshipped record type token",
+     lambda r: r.__setitem__("record_type", "authority-rotation")),
     ("malformed authority signature", lambda r: r.__setitem__("authority_signature", "00" * 63)),
     ("missing wrapper member", lambda r: r.pop("signed_at")),
     ("missing identity member", lambda r: r.pop("origin_client_id")),
@@ -374,7 +462,8 @@ ROTATION_REJECTIONS = [
     ("zero previous epoch", lambda r: r.__setitem__("previous_epoch", 0)),
     ("unknown record kind", lambda r: r.__setitem__("record_kind", "pointer")),
     ("wrong record type token", lambda r: r.__setitem__("record_type", "linked-client")),
-    ("unshipped record type token", lambda r: r.__setitem__("record_type", "receipt-key")),
+    ("unshipped record type token",
+     lambda r: r.__setitem__("record_type", "authority-rotation")),
     ("non-canonical previous public key",
      lambda r: r.__setitem__("previous_public_key", "EF" * 32)),
     ("non-canonical public key", lambda r: r.__setitem__("public_key", "CD" * 32)),
@@ -383,6 +472,31 @@ ROTATION_REJECTIONS = [
     ("missing wrapper member", lambda r: r.pop("signed_at")),
     ("missing identity member", lambda r: r.pop("client_id")),
     ("missing previous key material", lambda r: r.pop("previous_public_key")),
+]
+
+RECEIPT_KEY_REJECTIONS = [
+    ("unknown namespace", lambda r: r.__setitem__("schema", NAMESPACE + "2")),
+    ("undeclared member", lambda r: r.__setitem__("key_usage", "receipts")),
+    ("private-key member", lambda r: r.__setitem__("private_key", "ab" * 32)),
+    ("epoch member on a key-addressed record",
+     lambda r: r.__setitem__("authorization_epoch", 1)),
+    ("certificate version member on the control record",
+     lambda r: r.__setitem__("certificate_version", 1)),
+    ("unknown record kind", lambda r: r.__setitem__("record_kind", "pointer")),
+    ("wrong record type token",
+     lambda r: r.__setitem__("record_type", "linked-client")),
+    ("unshipped record type token",
+     lambda r: r.__setitem__("record_type", "authority-rotation")),
+    ("non-canonical public key",
+     lambda r: r.__setitem__("public_key", "3C" * 32)),
+    ("non-canonical key ID", lambda r: r.__setitem__("key_id", r["key_id"].upper())),
+    ("short key ID", lambda r: r.__setitem__("key_id", "ab" * 31)),
+    ("malformed authority signature", lambda r: r.__setitem__("authority_signature", "00" * 63)),
+    ("non-UTC window timestamp",
+     lambda r: r.__setitem__("valid_from", "2026-09-04T00:00:00+00:00")),
+    ("missing wrapper member", lambda r: r.pop("signed_at")),
+    ("missing identity member", lambda r: r.pop("key_id")),
+    ("missing window member", lambda r: r.pop("valid_until")),
 ]
 
 
@@ -770,14 +884,18 @@ def check_record(schemas: dict[str, dict], stem: str) -> list[str]:
 
 
 def check_cross_family(schemas: dict[str, dict]) -> list[str]:
-    """The reserved receipt-key pattern agrees with the receipt certificate."""
+    """The receipt-key record and the receipt certificate are one
+    certification statement in two homes: the control-prefix record is
+    the authoritative source, the certificate embedded in every receipt
+    is its by-value projection, and this check proves the two cannot
+    fork — object-key agreement, member-for-member shape agreement, and
+    required-member agreement."""
     violations: list[str] = []
-    pattern = (
-        schemas.get(ENVELOPE_STEM, {}).get("$defs", {})
-        .get("receipt-key-object-key", {}).get("pattern"))
-    cert = (
-        schemas.get("ingest-receipt", {}).get("$defs", {})
-        .get("receipt-key-certificate", {}))
+    envelope = schemas.get(ENVELOPE_STEM, {})
+    pattern = (envelope.get("$defs", {})
+               .get("receipt-key-object-key", {}).get("pattern"))
+    cert = dig(schemas.get("ingest-receipt", {}), CERTIFICATE_PATH) or {}
+    record = schemas.get("control-receipt-key", {})
     template = cert.get("x-archivist", {}).get("objectKey")
     if not isinstance(pattern, str) or not isinstance(template, str):
         violations.append(
@@ -791,10 +909,71 @@ def check_cross_family(schemas: dict[str, dict]) -> list[str]:
             "cross-family: receipt-key-object-key does not match the "
             "certificate's documented object key — the receipt-key record "
             "type must consume the certificate definition, not fork it")
+
+    # Member-for-member agreement: every certificate member except its own
+    # `certificate_version` wire axis appears in the receipt-key record
+    # under the identical shape, and the record adds nothing beyond the
+    # wrapper members the envelope registry declares. The three shared
+    # authority-side members (tenant_id, authority_key_id,
+    # authority_signature) are checked against the same common shapes the
+    # wrapper registry declares for them, so the wrapper-composition rule
+    # and this agreement are one constraint, not two.
+    cert_props = cert.get("properties", {})
+    record_props = record.get("properties", {})
+    wrapper_members = set(
+        envelope.get("x-archivist", {}).get("wrapper", {}).get("members", {}))
+    if not isinstance(cert_props, dict) or not isinstance(record_props, dict):
+        violations.append(
+            "cross-family: the certificate or the receipt-key record has "
+            "no properties to agree on")
+        return violations
+    for member, node in cert_props.items():
+        if member == "certificate_version":
+            # The wire certificate's own version axis (plan Section 7.1);
+            # the control record's axis is its namespace member.
+            if member in record_props:
+                violations.append(
+                    "cross-family: certificate_version must not appear in "
+                    "the receipt-key record — the control family's version "
+                    "axis is the namespace member, one axis, no numeric "
+                    "twin")
+            continue
+        rnode = record_props.get(member)
+        if rnode is None:
+            violations.append(
+                f"cross-family: certificate member {member!r} is missing "
+                "from the receipt-key record — the record is the "
+                "authoritative source of the certification, so it cannot "
+                "certify less than the certificate it projects")
+        elif rnode.get("$ref") != node.get("$ref"):
+            violations.append(
+                f"cross-family: {member!r} must reference the same shape "
+                f"in the certificate ({node.get('$ref')!r}) and the "
+                f"receipt-key record ({rnode.get('$ref')!r}) — a forked "
+                "member is a forked certification")
+    for member in record_props:
+        if member not in cert_props and member not in wrapper_members:
+            violations.append(
+                f"cross-family: receipt-key record member {member!r} is "
+                "neither a certificate member nor a wrapper member — the "
+                "record's payload is the certification statement, nothing "
+                "else rides in it")
+    missing_required = [
+        member for member in cert.get("required", [])
+        if member != "certificate_version"
+        and member not in record.get("required", [])]
+    if missing_required:
+        violations.append(
+            f"cross-family: certificate members {missing_required} must "
+            "be required by the receipt-key record too — optionality "
+            "cannot appear in the projection of a closed certification")
     return violations
 
 
-def build_validator(schemas: dict[str, dict], stem: str):
+def build_validator(schemas: dict[str, dict], stem: str, *, node=None):
+    """A draft 2020-12 validator over ``schemas[stem]`` — or over an
+    explicit ``node`` inside it (a ``$defs`` subschema, say) — with every
+    family ``$id`` resolvable through the referencing registry."""
     try:
         import jsonschema
         from referencing import Registry, Resource
@@ -807,7 +986,8 @@ def build_validator(schemas: dict[str, dict], stem: str):
         (doc["$id"], Resource.from_contents(doc, default_specification=DRAFT202012))
         for doc in schemas.values() if "$id" in doc
     ])
-    return jsonschema.Draft202012Validator(schemas[stem], registry=registry)
+    return jsonschema.Draft202012Validator(
+        node if node is not None else schemas[stem], registry=registry)
 
 
 def check_behaviour(schemas: dict[str, dict]) -> list[str]:
@@ -829,6 +1009,7 @@ def check_behaviour(schemas: dict[str, dict]) -> list[str]:
     revocation = golden_revocation_record()
     delegation = golden_delegation_record()
     rotation = golden_rotation_record()
+    receipt_key = golden_receipt_key_record()
     if client["key_id"] != key_id(client["public_key"]):
         violations.append("golden client record: key_id is not SHA-256(public_key)")
     if revocation["revoked_key_id"] != key_id(client["public_key"]):
@@ -847,6 +1028,14 @@ def check_behaviour(schemas: dict[str, dict]) -> list[str]:
             "golden rotation record: the established epoch's new half must "
             "be the golden linked-client record's own key — one coherent "
             "authorization history, not unrelated objects")
+    if receipt_key["key_id"] != key_id(receipt_key["public_key"]):
+        violations.append(
+            "golden receipt-key record: key_id is not SHA-256(public_key)")
+    if receipt_key["authority_key_id"] != rotation["authority_key_id"]:
+        violations.append(
+            "golden receipt-key record: the pinned authority root that "
+            "certifies the receipt key must be the same root that signs "
+            "the authorization history — one trust story, one root")
 
     # Per-type golden behaviour: factory, rejections, key pattern, key
     # derivation from the record's own identifiers, and the near-miss keys
@@ -934,6 +1123,30 @@ def check_behaviour(schemas: dict[str, dict]) -> list[str]:
                  f"tenants/{r['tenant_id'].upper()}/v1/control/rotations/"
                  f"{r['client_id']}/{r['authorization_epoch']}.json"),
          }),
+        ("control-receipt-key", receipt_key, RECEIPT_KEY_REJECTIONS,
+         "receipt-key-object-key",
+         lambda r: (f"tenants/{r['tenant_id']}/v1/control/receipt-keys/"
+                    f"{r['key_id']}.json"),
+         lambda r: {
+             "non-canonical key segment": (
+                 f"tenants/{r['tenant_id']}/v1/control/receipt-keys/"
+                 f"{r['key_id'].upper()}.json"),
+             "short key segment": (
+                 f"tenants/{r['tenant_id']}/v1/control/receipt-keys/"
+                 f"{r['key_id'][:-2]}.json"),
+             "another record type's key": (
+                 f"tenants/{r['tenant_id']}/v1/control/clients/"
+                 f"{r['tenant_id']}.json"),
+             "epoch-suffixed receipt-key object": (
+                 f"tenants/{r['tenant_id']}/v1/control/receipt-keys/"
+                 f"{r['key_id']}/3.json"),
+             "missing .json suffix": (
+                 f"tenants/{r['tenant_id']}/v1/control/receipt-keys/"
+                 f"{r['key_id']}"),
+             "non-canonical tenant segment": (
+                 f"tenants/{r['tenant_id'].upper()}/v1/control/receipt-keys/"
+                 f"{r['key_id']}.json"),
+         }),
     )
     for stem, record, rejections, pattern_def, derive, near_misses in specs:
         validator = build_validator(schemas, stem)
@@ -1017,6 +1230,58 @@ def check_behaviour(schemas: dict[str, dict]) -> list[str]:
                     "rotation-object-key must accept the epoch-ceiling "
                     "key — 18 canonical digits, exactly the bound "
                     "authorization-epoch carries")
+        if stem == "control-receipt-key":
+            # The window rule the two named constants define, proven on
+            # parsed timestamps rather than trusted strings: the span is
+            # exactly rotation + overlap (37 days), and the certification
+            # is signed no later than the window opens — a verifier can
+            # hold the certificate before the first receipt needs it.
+            window = (parse_timestamp(record["valid_until"])
+                      - parse_timestamp(record["valid_from"]))
+            constants = schemas[ENVELOPE_STEM]["x-archivist"]["constants"]
+            expected_days = (constants["receiptKeyRotationDays"]["value"]
+                             + constants["receiptKeySigningOverlapDays"]
+                             ["value"])
+            if window.days != expected_days or window.seconds:
+                violations.append(
+                    f"golden receipt-key record: the signing window must "
+                    f"span exactly receiptKeyRotationDays + "
+                    f"receiptKeySigningOverlapDays ({expected_days} days) — "
+                    f"found {window}")
+            if (parse_timestamp(record["signed_at"])
+                    > parse_timestamp(record["valid_from"])):
+                violations.append(
+                    "golden receipt-key record: signed_at must not exceed "
+                    "valid_from — the certification exists before the key "
+                    "starts signing")
+            # One certification statement, two homes: the golden record's
+            # certificate projection — payload members plus
+            # certificate_version, every wrapper-only member dropped by
+            # the registry's own definition of the wrapper — validates
+            # against the certificate definition in ingest-receipt.json.
+            cert_node = dig(schemas.get("ingest-receipt", {}),
+                            CERTIFICATE_PATH)
+            cert_validator = (build_validator(schemas, "ingest-receipt",
+                                              node=cert_node)
+                              if isinstance(cert_node, dict) else None)
+            if cert_validator is None:
+                violations.append(
+                    "control-receipt-key: the certificate definition is "
+                    "missing or its validator unavailable")
+            else:
+                wrapper_members = set(dig(
+                    schemas.get(ENVELOPE_STEM, {}),
+                    ("x-archivist", "wrapper", "members")) or {})
+                cert_members = set(dig(
+                    schemas.get("ingest-receipt", {}),
+                    CERTIFICATE_PATH + ("properties",)) or {})
+                projection = {member: value for member, value in record.items()
+                              if member not in wrapper_members - cert_members}
+                projection["certificate_version"] = 1
+                for error in sorted(cert_validator.iter_errors(projection)):
+                    violations.append(
+                        "golden receipt-key certificate projection "
+                        f"rejected: {error.message}")
     return violations
 
 
@@ -1046,7 +1311,7 @@ SELF_TEST_CASES = [
     ("record-kind failClosed dropped", "control-envelope",
      lambda s: s["$defs"]["record-kind"]["x-archivist"].pop("failClosed")),
     ("enum/registry drift", "control-envelope",
-     lambda s: s["$defs"]["record-type"]["enum"].append("receipt-key")),
+     lambda s: s["$defs"]["record-type"]["enum"].append("authority-rotation")),
     ("wrapper member dropped", "control-client",
      lambda s: (s["properties"].pop("authority_signature"),
                 s["required"].remove("authority_signature"))),
@@ -1082,6 +1347,26 @@ SELF_TEST_CASES = [
     ("cross-file constant fork", "ingest-request",
      lambda s: s["x-archivist"].__setitem__(
          "clockSkewAllowanceSeconds", 600)),
+    ("receipt-key rotation constant dropped", "control-receipt-key",
+     lambda s: s["x-archivist"].pop("receiptKeyRotationDays")),
+    ("certificate member forked from the record", "control-receipt-key",
+     lambda s: s["properties"]["valid_from"].__setitem__(
+         "$ref", URN_PREFIX + "common#/$defs/uuid-v4")),
+    ("receipt-key registry unshipped drift", "control-envelope",
+     lambda s: [e.update({"status": "pending", "schema": None})
+                for e in s["x-archivist"]["recordTypes"]
+                if e.get("type") == "receipt-key"]),
+    ("certificate window member dropped from the record",
+     "control-receipt-key",
+     lambda s: (s["properties"].pop("valid_until"),
+                s["required"].remove("valid_until"))),
+    ("certificate version leaking into the record", "control-receipt-key",
+     lambda s: (s["properties"].__setitem__(
+         "certificate_version", {"const": 1}),
+         s["required"].append("certificate_version"))),
+    ("cross-file receipt-key rotation fork", "ingest-receipt",
+     lambda s: s["$defs"]["receipt-key-certificate"]["x-archivist"]
+     .__setitem__("receiptKeyRotationDays", 60)),
 ]
 
 
@@ -1132,7 +1417,8 @@ def main(argv: list[str]) -> int:
         1 for doc in (schemas[ENVELOPE_STEM], *(schemas[s] for s in RECORD_STEMS))
         for node, _ in walk(doc) if "enum" in node)
     rejections = (len(CLIENT_REJECTIONS) + len(REVOCATION_REJECTIONS)
-                  + len(DELEGATION_REJECTIONS) + len(ROTATION_REJECTIONS))
+                  + len(DELEGATION_REJECTIONS) + len(ROTATION_REJECTIONS)
+                  + len(RECEIPT_KEY_REJECTIONS))
     print(f"agent-archivist control trust family: {len(RECORD_STEMS) + 1} schemas")
     print(f"closed enums guarded: {enums}, "
           f"named constants pinned: {len(PINNED)}, "

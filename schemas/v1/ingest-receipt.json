@@ -40,12 +40,13 @@
   "$defs": {
     "receipt-key-certificate": {
       "type": "object",
-      "description": "The tenant-authority-signed verification-key record for one server receipt key (plan Section 7.8; ID-009). Embedded by value in every receipt the key signs and stored durably at `tenants/<tenant>/v1/control/receipt-keys/<key-id>.json` (plan Section 7.5), so verification never depends on reaching the server. The receipt-key-v1 construction (schemas/v1/ingest-identifiers.json) signs the RFC 8785 canonicalization of this record with the `authority_signature` member removed, under the tenant authority key the client pinned during linking.",
+      "description": "The tenant-authority-signed verification-key record for one server receipt key (plan Section 7.8; ID-009). Embedded by value in every receipt the key signs and stored durably at `tenants/<tenant>/v1/control/receipt-keys/<key-id>.json` (plan Section 7.5) under its own control record schema (schemas/v1/control-receipt-key.json), whose payload members are these members — that record is the authoritative source of the certification, this embedded copy is the projection a receipt carries so verification never depends on reaching the server or the store. The receipt-key-v1 construction (schemas/v1/ingest-identifiers.json) signs the RFC 8785 canonicalization of this record with the `authority_signature` member removed, under the tenant authority key the client pinned during linking.",
       "x-archivist": {
         "authorityMember": "authority_signature",
         "objectKey": "tenants/<tenant_id>/v1/control/receipt-keys/<key_id>.json",
-        "keyRotationDays": 30,
-        "signingOverlapDays": 7,
+        "receiptKeyRotationDays": 30,
+        "receiptKeySigningOverlapDays": 7,
+        "record": "the authoritative source of this certification is the control-prefix record (schemas/v1/control-receipt-key.json): its payload members are these members, and tools/check-control-schemas.py proves the member-for-member agreement, the object-key agreement, and the two named constants, so record and certificate cannot fork. `certificate_version` below is this wire object's own version axis (plan Section 7.1); the control record's axis is its namespace member, which is why that member lives there and not here",
         "verification": "old public records remain readable indefinitely: a receipt verifies for as long as its certificate is retained, so rotation never invalidates retained receipts (ID-009). A client checks the signing window (`valid_from` <= commit_time <= `valid_until`) at verification time and treats a mismatch as a verification failure, not as damage to the evidence.",
         "privateKey": "the private half enters the server only through a secret reference (SEC-006); the public half here is the only value that ever appears in any record, file, or argument"
       },
@@ -88,7 +89,7 @@
         },
         "valid_from": {
           "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
-          "description": "UTC start of this key's signing window. Keys rotate every 30 days with a seven-day old/new signing overlap (plan Section 7.8), so a replacement key begins signing before its predecessor stops.",
+          "description": "UTC start of this key's signing window. Keys rotate every `receiptKeyRotationDays` (30) with a `receiptKeySigningOverlapDays` (7) old/new signing overlap (plan Section 7.8; the control envelope's named constants, pinned here and proven equal by the gate), so a replacement key begins signing before its predecessor stops and each window spans the two summed, 37 days.",
           "x-archivist": { "bearing": "security", "compat": "required-v1" }
         },
         "valid_until": {

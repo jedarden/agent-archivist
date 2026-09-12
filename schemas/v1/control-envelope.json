@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:agent-archivist:schema:v1:control-envelope",
   "title": "Agent Archivist control trust record envelope (archivist.control/v1)",
-  "description": "The shared, versioned conventions every control trust record reuses (plan Section 5 control-plane boundary; docs/notes/control-trust-schemas.md). Control records are the tenant-authority-signed objects below `tenants/<tenant>/v1/control/` (plan Section 7.5): the linked-client, delegation, and key-rotation records shipped alongside this file, the revocation record beside them, and the receipt-key and authority-rotation record types the control-plane boundary names, each arriving as its own schema composed from this document. This file is a conventions registry and shared member library, not an instance schema — the standing `ingest-identifiers.json` has in the wire family: no control object validates against it alone, and every record-type schema is the complete, closed, flat object (wrapper members from `wrapper.members` below plus the type's payload members, side by side, `additionalProperties: false`). The wrapper is deliberately not a nested envelope-with-record shape: the receipt-key certificate inside `ingest-receipt.json` is already a flat authority-signed control record, and that definition is consumed by this family, not duplicated (docs/notes/wire-schemas.md, open questions).",
+  "description": "The shared, versioned conventions every control trust record reuses (plan Section 5 control-plane boundary; docs/notes/control-trust-schemas.md). Control records are the tenant-authority-signed objects below `tenants/<tenant>/v1/control/` (plan Section 7.5): the linked-client, delegation, and key-rotation records shipped alongside this file, the revocation and receipt-key records beside them, and the authority-rotation record type the control-plane boundary names, arriving as its own schema composed from this document. This file is a conventions registry and shared member library, not an instance schema — the standing `ingest-identifiers.json` has in the wire family: no control object validates against it alone, and every record-type schema is the complete, closed, flat object (wrapper members from `wrapper.members` below plus the type's payload members, side by side, `additionalProperties: false`). The wrapper is deliberately not a nested envelope-with-record shape: the receipt-key certificate inside `ingest-receipt.json` is already a flat authority-signed control record, and the receipt-key record type consumes that definition — its payload members are the certificate's — rather than duplicating it (docs/notes/wire-schemas.md).",
   "x-archivist": {
     "namespace": "archivist.control/v1",
     "namespaceField": "schema",
@@ -46,7 +46,7 @@
       }
     },
     "writeClasses": {
-      "immutable": "written once at a record-type-derived key; the ControlAdminStore rejects an overwrite outright unless the bytes are the identical record (plan Section 5: it 'rejects overwrite of an incompatible immutable record'), so a lost-response retry of the same administrative write is an idempotent repair and nothing else can displace the object. No pointer is protected, so the signed epoch is not a wrapper requirement for this class — a type carries it only when the epoch is part of the record's identity (the revocation and rotation object keys name their epochs — the revoked epoch and the established epoch — and those shipped records are the types that do)",
+      "immutable": "written once at a record-type-derived key; the ControlAdminStore rejects an overwrite outright unless the bytes are the identical record (plan Section 5: it 'rejects overwrite of an incompatible immutable record'), so a lost-response retry of the same administrative write is an idempotent repair and nothing else can displace the object. No pointer is protected, so the signed epoch is not a wrapper requirement for this class — a type carries it only when the epoch is part of the record's identity (the revocation and rotation object keys name their epochs — the revoked epoch and the established epoch — and of the shipped immutable records those two are the ones that do; the receipt-key record's key names the certified key ID, not an epoch, so it carries no epoch member at all)",
       "current-pointer": "one object per subject at a fixed key, holding the current state; a replacement is accepted only when its signed `authorization_epoch` strictly increases — equal or lower is a stale write and is rejected (plan Section 5). The signature covers the epoch, so replaying an older record cannot displace a newer pointer without the authority key; rollback is therefore impossible by construction, the same property the plan pins for derived-policy pointers (publish another higher-epoch record, never repoint to an older one)"
     },
     "constants": {
@@ -54,8 +54,8 @@
         "value": 60,
         "unit": "seconds",
         "plan": ["Section 5", "Section 7.11 EC-09"],
-        "appliesTo": "every control record an ingestion replica loads while authenticating an uploader — the linked-client record, a delegation record for relay attempts, a rotation record while an old-key overlap window is being served, a revocation record for the revoked-epoch check (all four shipped; receipt-key and authority-rotation records when they ship)",
-        "crossRef": "schemas/v1/control-client.json, control-delegation.json, and control-rotation.json pin this value as x-archivist.trustRecordCacheTtlSeconds; schemas/v1/control-revocation.json pins it as x-archivist.revocationPropagationBoundSeconds; tools/check-control-schemas.py proves all five agree",
+        "appliesTo": "every control record an ingestion replica loads while authenticating an uploader — the linked-client record, a delegation record for relay attempts, a rotation record while an old-key overlap window is being served, a revocation record for the revoked-epoch check — and the receipt-key record a receipt signer loads to learn which certified key and window to sign under (all five shipped; authority-rotation records when they ship)",
+        "crossRef": "schemas/v1/control-client.json, control-delegation.json, control-rotation.json, and control-receipt-key.json pin this value as x-archivist.trustRecordCacheTtlSeconds; schemas/v1/control-revocation.json pins it as x-archivist.revocationPropagationBoundSeconds; tools/check-control-schemas.py proves all six agree",
         "description": "The upper bound on how long a reader may serve a cached control record before re-reading the store (plan Section 5: trust records cache for at most 60 seconds; EC-09: a registry outage permits using an unexpired cached record for at most 60 seconds, then readiness comes off with a retryable 503 and no storage writes). Because a revocation takes effect through the reader's view of control state, this constant is also the maximum revocation propagation delay — the same number re-expressed where the revocation record needs it, never a second value."
       },
       "authorizationWindowSeconds": {
@@ -81,6 +81,22 @@
         "appliesTo": "the old/new-key verification overlap after a client key rotation: both the previous and the new public key verify for this long from the rotation record's signed_at (schemas/v1/control-rotation.json, which anchors the window, applies it)",
         "crossRef": "schemas/v1/control-client.json and schemas/v1/control-rotation.json pin this value as x-archivist.rotationVerificationOverlapHours; tools/check-control-schemas.py proves all three agree",
         "description": "How long both the previous and the new client key verify after a rotation (plan Section 5: 'Key rotation accepts old and new keys for 24 hours, and retries authorize the frozen envelope with the current key'). The overlap widens which key may sign, never which epoch is current — attempts present the current authorization epoch throughout — so a retry of an already-frozen envelope re-authorizes with fresh per-attempt state under either half instead of stranding in the spool (plan Phase 3 exit gate; EC-12), and after the window only the new key verifies. Registered in hours, not seconds, because the plan pins it as 24 hours and the constant mirrors the plan's number exactly; the unit field — not the name alone — carries the distinction from the second-valued constants beside it."
+      },
+      "receiptKeyRotationDays": {
+        "value": 30,
+        "unit": "days",
+        "plan": ["Section 7.8"],
+        "appliesTo": "the receipt-key signing-window cadence: how often the tenant authority certifies a fresh receipt key (schemas/v1/control-receipt-key.json, the authoritative control-prefix record; the certificate embedded by value in every receipt, schemas/v1/ingest-receipt.json)",
+        "crossRef": "schemas/v1/control-receipt-key.json and the certificate definition in schemas/v1/ingest-receipt.json pin this value as x-archivist.receiptKeyRotationDays; tools/check-control-schemas.py proves all three agree",
+        "description": "How often a fresh server receipt key is certified (plan Section 7.8: 'Receipt keys rotate every 30 days with seven days of old/new signing overlap'). Successor signing windows open every 30 days and each key signs for the rotation plus the overlap — 37 days — so the cadence is what keeps exactly one fresh certification per month while the overlap constant below keeps the boundary covered. Rotation is non-invalidating by the record's write class, not by this number: the receipt-key record is immutable and key-addressed, so certifying a fresh key writes a new object and every retained certificate keeps verifying indefinitely (ID-009). Registered in days, not seconds, because the plan pins it as 30 days and the constant mirrors the plan's number exactly."
+      },
+      "receiptKeySigningOverlapDays": {
+        "value": 7,
+        "unit": "days",
+        "plan": ["Section 7.8"],
+        "appliesTo": "the receipt-key signing-window overlap: how long each certified key keeps signing past its successor's first signing instant (schemas/v1/control-receipt-key.json; the certificate in schemas/v1/ingest-receipt.json)",
+        "crossRef": "schemas/v1/control-receipt-key.json and the certificate definition in schemas/v1/ingest-receipt.json pin this value as x-archivist.receiptKeySigningOverlapDays; tools/check-control-schemas.py proves all three agree",
+        "description": "The old/new signing overlap on receipt keys (plan Section 7.8): each key signs for seven days past its successor's start, so a replacement begins signing before its predecessor stops and the signer is never without a valid key across a rotation boundary — including one that lands late, since a successor certified inside the last seven days of its predecessor's window still leaves both valid. It bounds signing only, never verification: an expired key's receipts verify for as long as their certificates are retained, which immutability makes forever (ID-009). Named separately from the rotation constant because it serves a different guarantee — signing continuity across the boundary, not the cadence — and the two sum to the window length a reader can check from any single record (`valid_until` − `valid_from`, VAL-002)."
       }
     },
     "signatures": [
@@ -131,6 +147,15 @@
         "keyMembers": ["tenant_id", "client_id", "authorization_epoch"],
         "status": "shipped",
         "description": "The key-rotation record (plan Section 5: key rotation accepts old and new keys for 24 hours; Phase 3: overlapping verification with monotonic authorization epochs): the durable evidence of one client key rotation — the epoch it establishes, the previous epoch, both public halves, and the 24-hour overlap during which both verify so retries of a frozen envelope authorize under either key, read by stateless replicas from this record rather than server-local state. `keyMembers` names the members the store derives the object key from — the established epoch is identity, exactly like the revocation's revoked epoch."
+      },
+      {
+        "type": "receipt-key",
+        "writeClass": "immutable",
+        "schema": "schemas/v1/control-receipt-key.json",
+        "objectKeyPattern": "#/$defs/receipt-key-object-key",
+        "keyMembers": ["tenant_id", "key_id"],
+        "status": "shipped",
+        "description": "The receipt-key record (plan Section 7.5 `tenants/<tenant>/v1/control/receipt-keys/<key>.json`; Section 7.8): the tenant-authority certification of one server receipt-signing key — the public half, its pinned derivation, the algorithm, and the signing window — as the authoritative control-prefix source of the receipt-key certificate embedded by value in every receipt the key signs (schemas/v1/ingest-receipt.json), whose members are this record's payload members. One immutable object per key ID: rotation certifies a fresh key as a fresh object and never rewrites a predecessor, so retained receipts keep verifying indefinitely (ID-009). Key-addressed, not epoch-addressed — the one shipped immutable type that carries no `authorization_epoch`, because its identity is the certified key ID its key names."
       }
     ]
   },
@@ -146,8 +171,8 @@
     },
     "record-type": {
       "type": "string",
-      "enum": ["linked-client", "revocation", "delegation", "rotation"],
-      "description": "Which control record type the object is (plan Section 5: client, delegation, rotation, revocation, and receipt-verification-key records all live under the control prefix). Closed, and appended to only by the change that ships the new type's schema and its readers: v1 ships `linked-client`, `revocation`, `delegation`, and `rotation`; receipt-key and authority-rotation tokens arrive with their record types and old readers fail closed on them until upgraded — the plan Section 7.1 rule that unknown security-bearing values are never guessed. Each record-type schema pins this member to a const of its own token, so a record of one type can never validate as the other. Security-bearing.",
+      "enum": ["linked-client", "revocation", "delegation", "rotation", "receipt-key"],
+      "description": "Which control record type the object is (plan Section 5: client, delegation, rotation, revocation, and receipt-verification-key records all live under the control prefix). Closed, and appended to only by the change that ships the new type's schema and its readers: v1 ships `linked-client`, `revocation`, `delegation`, `rotation`, and `receipt-key`; the authority-rotation token arrives with its record type and old readers fail closed on it until upgraded — the plan Section 7.1 rule that unknown security-bearing values are never guessed. Each record-type schema pins this member to a const of its own token, so a record of one type can never validate as the other. Security-bearing.",
       "x-archivist": {
         "bearing": "security",
         "compat": "append-per-record-type",
@@ -214,7 +239,7 @@
       "type": "string",
       "pattern": "^tenants/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/v1/control/receipt-keys/[0-9a-f]{64}\\.json$",
       "maxLength": 512,
-      "description": "Reserved for the receipt-key record type (schema pending; plan Section 7.5): tenant and the receipt key ID, the SHA-256 of the encoded public key. Must stay in agreement with the receipt-key certificate's documented `objectKey` in `schemas/v1/ingest-receipt.json` — that flat certificate definition is what the receipt-key record type will consume, not duplicate (docs/notes/wire-schemas.md, open questions); tools/check-control-schemas.py cross-checks the two. An immutable record per key ID: rotation writes a new key object, it never rewrites an old one.",
+      "description": "Server-derived receipt-key record key (plan Section 7.5): tenant and the receipt key ID — the lowercase-hex SHA-256 of the encoded public key, so the key segment is computable from the record's own `public_key` under the pinned derivation. One immutable object per key ID: rotation certifies a fresh key as a fresh object and never rewrites a predecessor, which is what keeps every retained receipt's certificate in the store and verifying (ID-009). The tenant segment must equal the record's `tenant_id` and the key segment its `key_id` (VAL-002 cross-field checks at the store and at any reader; ID-008). Must stay in agreement with the receipt-key certificate's documented `objectKey` in `schemas/v1/ingest-receipt.json` — the certificate definition is what the receipt-key record type consumes, not duplicates; tools/check-control-schemas.py cross-checks the two and proves the member-for-member agreement.",
       "x-archivist": {
         "bearing": "security"
       }
