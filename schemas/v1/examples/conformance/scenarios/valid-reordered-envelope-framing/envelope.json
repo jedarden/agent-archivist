@@ -23,7 +23,7 @@
   "compressed_size": 119,
   "capture_time": "2026-09-22T10:05:10Z",
   "blob_digest": "5e775fdaae97d133e5688f8fad4fcd2f90fd0081c5aaafc8e018f0f2af3e74ad",
-  "attestation_id": "15f1bed4234986fe3053a95a8b1d61480c3f17e6e9e4f7561946ef0a6b2e6064",
+  "attestation_id": "a5885032aad2c7de2a6b2efe89157fb95e0dd69048e53e2327ce73d6fa432744",
   "artifact_kind": "file-slice",
   "adapter_projection_version": "1",
   "adapter_id": "claude-jsonl",

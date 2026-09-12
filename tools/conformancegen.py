@@ -791,7 +791,11 @@ def derive_identity(envelope: dict) -> dict:
                            text(envelope["range_kind"]),
                            u63(envelope["range_start"]),
                            u63(envelope["range_end"]), digest(blob))
-    attestation_id = derive("attestation-v1", digest(envelope["occurrence_id"]),
+    # attestation-v1 takes the re-derived occurrence, never the declared
+    # member: finalize_envelope derives identities while the occurrence
+    # member still holds its zero placeholder, and the one mismatch vector
+    # lies in exactly that member (VAL-002 — identities derive from inputs).
+    attestation_id = derive("attestation-v1", digest(occurrence_id),
                             text(envelope["uploader_client_id"]),
                             text(envelope["request_id"]))
     tenant = envelope["tenant_id"]
@@ -1111,8 +1115,9 @@ def build_scenarios() -> list[Scenario]:
         asserts=[
             "the server re-derives occurrence_id from the envelope's own "
             "inputs and refuses the mismatch (VAL-002, SID-005)",
-            "the attestation ID stays consistent with the declared (wrong) "
-            "occurrence, so exactly one defect exists in the vector",
+            "the attestation ID still re-derives from the envelope's true "
+            "inputs, so the flipped occurrence member is the vector's one "
+            "defect",
         ],
     ))
 

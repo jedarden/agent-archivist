@@ -240,12 +240,6 @@ READER_STEMS = {
 # --require-complete`` so a deferral can never silently outlive the
 # split. Everything not listed here is verified unconditionally.
 DEFERRED_VERIFICATION = {
-    "orn-additive-envelope":
-        "split-child 2 (additive-field matrix): the baseline envelope's "
-        "declared occurrence/attestation ids must re-derive (VAL-002)",
-    "orn-additive-receipt":
-        "split-child 2 (additive-field matrix): the pinned "
-        "signed_bytes_sha256 must match the regenerated canonical bytes",
     "adapter-projection-bump":
         "split-child 3 (storage layouts): the bump doc must carry an "
         "additive member and mint a fresh occurrence identity and key",
@@ -293,6 +287,17 @@ def canonical_text(value: object) -> str:
 
 def canonical_bytes(value: object) -> bytes:
     return canonical_text(value).encode("utf-8")
+
+
+def signed_bytes(stem: str, doc: dict) -> bytes:
+    """The bytes a record's signature covers: the canonical record minus
+    its signature member when the kind carries one (the receipt-v1
+    convention the conformance corpus pins), the whole canonical record
+    otherwise (the envelope has no per-record signature member)."""
+    if stem == "ingest-receipt":
+        return canonical_bytes(
+            {k: v for k, v in doc.items() if k != "signature"})
+    return canonical_bytes(doc)
 
 
 def metadata_bytes(value: object) -> bytes:
@@ -347,7 +352,10 @@ class Registry:
         deriv = self.derivations[did]
         raw = b""
         for name, kind in zip(deriv["fields"], deriv["fieldKinds"]):
-            raw += _encode(kind, self.value_of(name, values))
+            # fieldEncoding: every member is 8-byte big-endian length +
+            # exactly that many field bytes (plan Section 7.4) — the same
+            # framing tools/conformancegen.py pins golden vectors for.
+            raw += _field(_encode(kind, self.value_of(name, values)))
         label = deriv.get("label")
         if label is None:
             # The one label-less construction: plain SHA-256 over the bytes.
@@ -750,8 +758,7 @@ def build_scenarios(ctx: Ctx) -> tuple[list[dict], dict[str, bytes]]:
         writer={"generation": "v1.0",
                 "file": "writers/nro-attestation.json"}))
 
-    receipt_signed = canonical_bytes(
-        {k: v for k, v in additive_receipt.items() if k != "signature"})
+    receipt_signed = signed_bytes("ingest-receipt", additive_receipt)
     put("writers/orn-additive-receipt.json", additive_receipt)
     scenarios.append(scenario_entry(
         "orn-additive-receipt", "compatible",
@@ -1466,26 +1473,33 @@ def verify_bundle(require_complete: bool = False) -> int:
                         f"{sid}: additive member {name} not retained "
                         "through canonical re-serialization")
             if "signed_bytes_sha256" in entry:
-                if sha256_hex(canonical_bytes(doc)) != \
+                stem = (entry.get("reads") or [{}])[0].get("stem", "")
+                if sha256_hex(signed_bytes(stem, doc)) != \
                         entry["signed_bytes_sha256"]:
                     failures.append(
                         f"{sid}: signed canonical bytes digest drift")
-            if entry["id"] == "orn-additive-receipt":
-                signed = canonical_bytes(
-                    {k: v for k, v in doc.items() if k != "signature"})
-                if sha256_hex(signed) != entry["signed_bytes_sha256"]:
-                    failures.append(
-                        f"{sid}: receipt-v1 signed-bytes digest drift")
 
-        # Identity re-derivation for envelope-based writers.
-        if doc is not None and "identity" in entry and \
-                entry.get("stem_kind") != "manifest":
+        # Identity re-derivation for writer documents that declare ids:
+        # whatever a fixture claims must agree with a fresh derivation
+        # from the document's own inputs (VAL-002), on every record kind
+        # the matrix touches — not just the envelope.
+        if doc is not None and "identity" in entry:
             stem = (entry.get("reads") or [{}])[0].get("stem", "")
-            if stem == "ingest-envelope":
-                ids = ctx.envelope_identities(doc)
+            identity_of = {
+                "ingest-envelope": (ctx.envelope_identities,
+                                    ("occurrence_id", "attestation_id")),
+                "occurrence-manifest": (ctx.manifest_identities,
+                                        ("session_hash", "artifact_hash",
+                                         "occurrence_id")),
+                "upload-attestation": (ctx.attestation_identities,
+                                       ("attestation_id",)),
+            }.get(stem)
+            if identity_of is not None:
+                derive_ids, declared = identity_of
+                ids = derive_ids(doc)
                 if ids != entry["identity"]:
                     failures.append(f"{sid}: identity re-derivation drift")
-                for field in ("occurrence_id", "attestation_id"):
+                for field in declared:
                     if doc.get(field) != ids.get(field):
                         failures.append(
                             f"{sid}: declared {field} disagrees with its "
@@ -1582,8 +1596,10 @@ def verify_bundle(require_complete: bool = False) -> int:
         failures.append("layout-new-profile-segment: a new profile must "
                         "render a distinct key")
 
-    # Shared baseline keys for the writer-generation proofs below (each
-    # block is gated independently, so neither may define these).
+    # Shared baselines for the writer-generation proofs below (each block
+    # is gated independently, so none may define these).
+    base_occ = ctx.baselines["occurrence"]
+    base_att = ctx.baselines["attestation"]
     base_keys = object_keys_for(ctx.envelope_record(base_env), ctx.registry)
 
     # adapter-projection bump: fresh identity, stable blob, old preserved.
@@ -1612,6 +1628,21 @@ def verify_bundle(require_complete: bool = False) -> int:
                            ctx.registry) != base_keys:
             failures.append("orn-additive-envelope: additive member must "
                             "not move object keys")
+
+    # additive occurrence and attestation: adding a member must not
+    # perturb the identity inputs there either.
+    if "orn-additive-occurrence" not in DEFERRED_VERIFICATION:
+        if ctx.manifest_identities(json.loads(
+                expected["writers/orn-additive-occurrence.json"])) != \
+                ctx.manifest_identities(base_occ):
+            failures.append("orn-additive-occurrence: semantics of the "
+                            "additive member must not touch identity")
+    if "orn-additive-attestation" not in DEFERRED_VERIFICATION:
+        if ctx.attestation_identities(json.loads(
+                expected["writers/orn-additive-attestation.json"])) != \
+                ctx.attestation_identities(base_att):
+            failures.append("orn-additive-attestation: semantics of the "
+                            "additive member must not touch identity")
 
     # Coverage: the acceptance criterion.
     for rule, ids in manifest["coverage"].items():
