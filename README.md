@@ -34,7 +34,9 @@ scripts/definition-of-done.sh --all
 
 It covers formatting, Clippy with warnings denied, unit tests, rustdoc, the
 crate purpose/cycle check, the dependency license gate, the error-code
-registry gate, byte-exact regeneration and a content scan of the synthetic
+registry gate, the metrics registry gate (name, unit, label, span, and
+status conventions, the forbidden-label list, and export-name collision
+checking), byte-exact regeneration and a content scan of the synthetic
 fixture corpus, the requirement-verification register gate, a redacted
 secret scan of the working tree and the git history, and a `cargo audit`
 dependency audit.
@@ -69,6 +71,13 @@ committed.
   `archivist.cli-output/v1` envelope schema, and a gate that proves the
   three flag namespaces disjoint and no secret value accepted as a literal
   argument.
+- [Metrics conventions](docs/notes/metrics.md) define the metric, span,
+  attribute, unit, histogram, status, and bounded-label contract for the
+  client, server, adapter, storage, pilot, and exact-coverage signals,
+  backed by the machine-checked registry in `tools/metrics.toml` and a gate
+  that rejects forbidden high-cardinality and sensitive labels and proves
+  the OpenTelemetry-to-Prometheus name translation injective, so exporters
+  retain consistent names.
 - [Synthetic fixtures](docs/notes/fixtures.md) define the deterministic,
   seeded generator behind the `fixtures/synthetic/` corpus — normal,
   malformed, rewritten, and large synthetic sessions — its byte-exact

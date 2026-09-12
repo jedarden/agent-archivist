@@ -59,6 +59,7 @@ cargo doc --workspace --no-deps                    # docs; broken links deny
 python3 tools/check-crate-graph.py                 # crate purpose + cycle check
 python3 tools/check-licenses.py                    # dependency license gate
 python3 tools/check-error-codes.py --self-test     # error-code registry gate
+python3 tools/check-metrics.py --self-test         # metrics registry gate
 python3 tools/check-config.py --self-test          # config-key registry gate
 python3 tools/check-cli.py --self-test             # CLI command registry gate
 python3 tools/check-wire-schemas.py --self-test    # wire-schema coherence gate
@@ -75,7 +76,8 @@ The script's lanes keep per-change gating cheap:
 
 - `--fast` (default; what automation runs per change): fmt, build, Clippy,
   rustdoc, stub scan, crate graph, license gate, error-code registry gate,
-  config-key registry gate, CLI command registry gate, wire-schema
+  metrics registry gate, config-key registry gate, CLI command registry
+  gate, wire-schema
   coherence gate, synthetic-fixture regeneration and content scan,
   verification-register gate, working-tree secret scan — seconds, fully
   offline.
@@ -101,7 +103,12 @@ dependency. The error-code registry gate requires every emitted error code to
 be an appended entry in `tools/error-codes.toml` whose class, HTTP status,
 message template, and labels satisfy the
 [error-code conventions](docs/notes/error-codes.md); adding a code is a
-compatible change, redefining one is not. The configuration-key registry gate
+compatible change, redefining one is not. The metrics registry gate requires
+every metric, span, and label to be an appended entry in
+`tools/metrics.toml` whose name, unit, kind, boundaries, and bounded labels
+satisfy the [metrics conventions](docs/notes/metrics.md); it rejects
+correlation, content, and location labels outright and fails the build if
+two signals would export under one Prometheus family name. The configuration-key registry gate
 requires every deployment-settable setting to be an appended entry in
 `tools/config-keys.toml` whose name, owner, type, tiers, default, and
 secret-reference spelling satisfy the

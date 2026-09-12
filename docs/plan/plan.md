@@ -799,8 +799,12 @@ Deliverables:
   the registry gate in `tools/check-error-codes.py`; configuration naming is
   defined by `docs/notes/configuration.md` and enforced by the registry gate
   in `tools/check-config.py`, which also scans committed files for literal
-  values assigned to secret-reference settings; metrics naming remains a
-  separate Phase 0 deliverable.
+  values assigned to secret-reference settings; metrics naming is defined by
+  `docs/notes/metrics.md` and enforced by the registry gate in
+  `tools/check-metrics.py`, which registers every metric, span, and label in
+  `tools/metrics.toml`, rejects forbidden high-cardinality and sensitive
+  labels outright, and proves the OpenTelemetry-to-Prometheus name
+  translation injective so exporters retain consistent names.
 - Document reproducible local development commands.
 - Add `containers/agent-archivist/{Dockerfile,VERSION}`. The version file contains
   the SemVer image tag and changes in the same commit as a release.
@@ -1616,7 +1620,10 @@ Expose per adapter/account without session text or raw paths:
 - receipt outcome.
 
 Do not label metrics with session ID, client hostname, source path, digest, request
-ID, or other unbounded/sensitive values by default.
+ID, or other unbounded/sensitive values by default. The metric, span, and label
+inventory for these signals is defined by `docs/notes/metrics.md` and registered in
+`tools/metrics.toml`; the registry gate rejects unregistered, unbounded, or
+sensitive labels, so this rule is machine-checked rather than advisory.
 
 ### Initial operational objectives
 

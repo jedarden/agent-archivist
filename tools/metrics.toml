@@ -1,0 +1,513 @@
+# Machine-readable metrics and telemetry registry for Agent Archivist.
+#
+# The normative conventions live in docs/notes/metrics.md; this file is the
+# data they define, and tools/check-metrics.py (fast lane of
+# scripts/definition-of-done.sh) rejects any entry that violates them.
+#
+# Within registry schema v1 entries are append-only: a new metric, span, or
+# label is a compatible change; renaming, deleting, or redefining the kind,
+# unit, surface, labels, boundaries, or value set of an existing entry is a
+# v2 event. The frozen tables — surfaces, units, the pinned status sets, and
+# the forbidden-label list — are pinned in the checker itself, so a registry
+# edit cannot silently redefine them.
+#
+# Exported Prometheus family names are derived, never hand-written:
+# dots become underscores, the unit suffix is appended (none for unit 1),
+# and counters gain _total (MET-011). The gate proves the derivation is
+# injective, so no two signals can surface under one exported name.
+
+schema = "archivist.metrics-registry/v1"
+
+# ---------------------------------------------------------------------------
+# Labels: bounded attributes shared by metrics and spans (MET-015..MET-019).
+# Kinds: enum (closed value list), token (declared cardinality ceiling),
+# boolean. There is no free-form kind; the forbidden-label list is enforced
+# by the gate and is not repeated here.
+# ---------------------------------------------------------------------------
+
+[labels.harness]
+kind = "enum"
+values = ["claude", "codex", "opencode", "pi", "synthetic"]
+description = "Harness adapter emitting the signal; community adapters append their harness ID (plan Section 7.4 grammar)."
+
+[labels.error_code]
+kind = "enum"
+values = [
+  "envelope.malformed", "envelope.version_unsupported", "envelope.media_type_unsupported",
+  "envelope.schema_invalid", "envelope.size_exceeded", "auth.unlinked", "auth.revoked",
+  "auth.authorization_rejected", "auth.forbidden", "storage.integrity_conflict",
+  "request.payload_too_large", "request.expansion_ratio_exceeded", "request.record_too_large",
+  "request.deadline_exceeded", "request.rate_limited", "request.too_early", "server.internal",
+  "server.storage_failure", "server.unavailable", "server.partial_commit", "server.upstream_timeout",
+  "transport.connection_failed", "transport.response_lost", "cli.usage_error", "cli.decision_missing",
+  "client.lock_held", "client.spool_high_water", "client.state_io", "client.state_corrupt",
+  "client.clock_skew", "client.internal_error",
+]
+description = "Stable archivist.error/v1 code (ERR-032); the only error-derived label value, pinned equal to tools/error-codes.toml."
+
+[labels.coverage_state]
+kind = "enum"
+values = ["missing", "unsupported", "failed", "partial", "current", "backfilled"]
+description = "Semantic capture state of a client source (plan Section 12; CAP-010)."
+
+[labels.exact_outcome]
+kind = "enum"
+values = ["observed", "partial", "failed", "unobserved", "unknown"]
+description = "Exact-inference coverage outcome of a closed expectation (plan Phase 9)."
+
+[labels.commit_outcome]
+kind = "enum"
+values = ["created", "already_present", "replaced_equivalent", "logically_committed_unknown_physical_result"]
+description = "What the storage backend could establish for a committed object (RCPT-003)."
+
+[labels.object_kind]
+kind = "enum"
+values = ["blob", "occurrence", "attestation"]
+description = "Kind of raw object a commit signal counts (plan Sections 7.5 and 7.7)."
+
+[labels.storage_operation]
+kind = "enum"
+values = ["put_object", "head_object", "begin_multipart", "upload_part", "complete_multipart", "abort_multipart"]
+description = "Storage backend operation class (plan Section 7.7 write path plus abort)."
+
+[labels.error_class]
+kind = "enum"
+values = ["auth", "throttling", "unavailable", "timeout", "corruption", "unknown"]
+description = "Storage backend failure classification for latency and failure signals."
+
+[labels.ingest_outcome]
+kind = "enum"
+values = ["committed", "rejected", "throttled", "failed"]
+description = "Terminal outcome of an ingest request attempt from the server's view."
+
+[labels.upload_outcome]
+kind = "enum"
+values = ["acknowledged", "retry_scheduled", "quarantined", "paused"]
+description = "Outcome of a client upload attempt under the Section 7.8 error policy."
+
+[labels.degraded_reason]
+kind = "enum"
+values = ["none", "spool_cap", "disk_floor"]
+description = "Client degradation cause at the spool cap or below the free-space floor (OPS-003)."
+
+[labels.trust_outcome]
+kind = "enum"
+values = ["refreshed", "cache_hit", "unavailable"]
+description = "Trust-registry refresh result including the bounded 60-second cache fallback (EC-09)."
+
+[labels.shutdown_phase]
+kind = "enum"
+values = ["running", "draining", "aborting"]
+description = "Graceful-shutdown phase: serving, draining, then aborting multipart uploads."
+
+[labels.failure_class]
+kind = "enum"
+values = ["permission", "missing", "locked", "corrupt", "unsupported", "unknown"]
+description = "Adapter source-access failure classification (EC-08 fails closed as unsupported)."
+
+[labels.quarantine_reason]
+kind = "enum"
+values = ["record_too_large", "malformed", "unsupported"]
+description = "Poison-artifact quarantine cause (Section 7.8; EC-07)."
+
+[labels.capability]
+kind = "enum"
+values = ["conditional_create", "multipart_commit_abort", "stored_checksum", "versioning", "server_side_encryption"]
+description = "Storage capability from the Section 7.7 capability model."
+
+[labels.capability_state]
+kind = "enum"
+values = ["supported", "unavailable", "unknown"]
+description = "Observed state of a storage capability; never converted into a stronger guarantee."
+
+[labels.gap_class]
+kind = "enum"
+values = ["matched", "missing_new", "missing_legacy", "digest_mismatch", "unexplained"]
+description = "Pilot comparator classification of a coverage difference between collectors (Phase 8)."
+
+[labels.restore_outcome]
+kind = "enum"
+values = ["verified", "mismatched", "error"]
+description = "Outcome of one restored chunk or parity sample (Phase 8 restore evidence)."
+
+[labels.route]
+kind = "enum"
+values = ["proxy", "sdk_hook"]
+description = "Exact-capture route an inference attempt traversed (plan Phase 9)."
+
+[labels.artifact_kind]
+kind = "enum"
+values = ["provider_request", "provider_response", "stream_event", "retry", "usage", "transport_error"]
+description = "Exact-capture artifact kind at the provider boundary (Phase 9 deliverables)."
+
+[labels.flush_outcome]
+kind = "enum"
+values = ["complete", "incomplete"]
+description = "Ephemeral-job flush-before-teardown result (CAP-007)."
+
+[labels.version]
+kind = "token"
+bound = 32
+description = "Adapter or projection version in use; bounded by deployed version count per process."
+
+# ---------------------------------------------------------------------------
+# Signals: metrics named archivist.<surface>.<quantity> (MET-004). The unit
+# never appears in the name; the exporter appends it. Histograms register
+# their explicit boundaries (MET-027).
+# ---------------------------------------------------------------------------
+
+# --- storage (archivist-storage, Phase 2) ---------------------------------
+
+[signals."archivist.storage.operation.duration"]
+kind = "histogram"
+unit = "s"
+labels = ["storage_operation"]
+boundaries = [0.005, 0.025, 0.1, 0.5, 2.5, 10, 60]
+phase = 2
+description = "Storage backend operation latency by operation class (OPS-005 storage latency)."
+
+[signals."archivist.storage.operation.failures"]
+kind = "counter"
+unit = "{errors}"
+labels = ["storage_operation", "error_class"]
+phase = 2
+description = "Storage backend operation failures by operation and bounded error class (OPS-005)."
+
+[signals."archivist.storage.multipart.abort.failures"]
+kind = "counter"
+unit = "{errors}"
+phase = 2
+description = "Failed multipart aborts on error paths and shutdown; a nonzero rate pages (plan Section 7.7)."
+
+[signals."archivist.storage.capability"]
+kind = "gauge"
+unit = "1"
+labels = ["capability", "capability_state"]
+phase = 2
+description = "Observed storage capability matrix as 1-valued series (ARCH-007; never overstated)."
+
+# --- server (archivist-server, Phase 4) ------------------------------------
+
+[signals."archivist.server.ingest"]
+kind = "counter"
+unit = "{requests}"
+labels = ["ingest_outcome"]
+phase = 4
+description = "Ingest requests by terminal outcome: committed, rejected, throttled, failed (OPS-005)."
+
+[signals."archivist.server.ingest.received"]
+kind = "counter"
+unit = "By"
+phase = 4
+description = "Accepted transport-encoded payload bytes (compressed on the wire)."
+
+[signals."archivist.server.ingest.canonical"]
+kind = "counter"
+unit = "By"
+phase = 4
+description = "Accepted canonical uncompressed payload bytes after streaming validation (OPS-005)."
+
+[signals."archivist.server.ingest.duration"]
+kind = "histogram"
+unit = "s"
+boundaries = [0.05, 0.25, 1, 5, 25, 60, 300, 900]
+phase = 4
+description = "End-to-end ingest request duration; the last boundary brackets the 15-minute deadline (Section 7.6)."
+
+[signals."archivist.server.ingest.failures"]
+kind = "counter"
+unit = "{errors}"
+labels = ["error_code"]
+phase = 4
+description = "Authorization and validation failures by bounded error code; the only error-derived label (ERR-032, OPS-005)."
+
+[signals."archivist.server.ingest.inflight"]
+kind = "gauge"
+unit = "{requests}"
+phase = 4
+description = "In-flight ingest requests against the 16-per-process concurrency bound (Section 7.6)."
+
+[signals."archivist.server.commit"]
+kind = "counter"
+unit = "{objects}"
+labels = ["object_kind", "commit_outcome"]
+phase = 4
+description = "Blob, occurrence, and attestation commits by what the backend could establish (RCPT-003, RCPT-004)."
+
+[signals."archivist.server.shutdown"]
+kind = "gauge"
+unit = "1"
+labels = ["shutdown_phase"]
+phase = 4
+description = "Graceful-shutdown phase: 30-second drain then multipart aborts (plan Phase 4)."
+
+[signals."archivist.server.trust.age"]
+kind = "gauge"
+unit = "s"
+phase = 4
+description = "Age of the newest successful tenant trust-record read; readiness expires at 60 seconds (plan Phase 4)."
+
+[signals."archivist.server.trust.refresh"]
+kind = "counter"
+unit = "{attempts}"
+labels = ["trust_outcome"]
+phase = 4
+description = "Trust-registry refresh attempts including bounded cache fallback and failures (EC-09)."
+
+# --- client (archivist-client-core, Phase 5) -------------------------------
+
+[signals."archivist.client.spool.usage"]
+kind = "gauge"
+unit = "By"
+phase = 5
+description = "Current spool usage against the configured cap (OPS-003)."
+
+[signals."archivist.client.spool.limit"]
+kind = "gauge"
+unit = "By"
+phase = 5
+description = "Configured spool cap this client degrades at; dashboards join usage to it."
+
+[signals."archivist.client.degraded"]
+kind = "gauge"
+unit = "1"
+labels = ["degraded_reason"]
+phase = 5
+description = "Client degradation state and cause at the spool cap or disk floor (EC-11)."
+
+[signals."archivist.client.backlog.pending"]
+kind = "gauge"
+unit = "By"
+labels = ["harness"]
+phase = 5
+description = "Unacknowledged outstanding bytes by harness: spooled plus uncaptured (OPS-004)."
+
+[signals."archivist.client.backlog.remaining"]
+kind = "gauge"
+unit = "By"
+labels = ["harness"]
+phase = 5
+description = "Estimated historical bytes remaining by harness (OPS-004 estimated remaining)."
+
+[signals."archivist.client.backlog.outstanding"]
+kind = "gauge"
+unit = "{records}"
+labels = ["harness"]
+phase = 5
+description = "Unacknowledged complete records by harness, from inventory without content (OPS-004)."
+
+[signals."archivist.client.backlog.age"]
+kind = "gauge"
+unit = "s"
+labels = ["harness"]
+phase = 5
+description = "Age of the oldest pending item by harness; the backfill urgency signal (Section 12)."
+
+[signals."archivist.client.freshness.lag"]
+kind = "gauge"
+unit = "s"
+labels = ["harness"]
+phase = 5
+description = "Freshness lag of active sources; objective is two 15-minute intervals (Section 12)."
+
+[signals."archivist.client.inventory.age"]
+kind = "gauge"
+unit = "s"
+labels = ["harness"]
+phase = 5
+description = "Age of the last successful source inventory by harness (Section 12 client status)."
+
+[signals."archivist.client.active"]
+kind = "gauge"
+unit = "{sources}"
+labels = ["harness"]
+phase = 5
+description = "Active source count by harness receiving freshness reservation (SCH-005)."
+
+[signals."archivist.client.coverage"]
+kind = "gauge"
+unit = "{sources}"
+labels = ["harness", "coverage_state"]
+phase = 5
+description = "Source count by harness and coverage state; no unclassified state (CAP-010, Section 12)."
+
+[signals."archivist.client.uploads"]
+kind = "counter"
+unit = "{attempts}"
+labels = ["upload_outcome"]
+phase = 5
+description = "Upload attempts by outcome under the Section 7.8 retry and quarantine policy (OPS-002)."
+
+[signals."archivist.client.failures"]
+kind = "counter"
+unit = "{errors}"
+labels = ["error_code"]
+phase = 5
+description = "Client-side failures by bounded error code; the only error-derived label (ERR-032)."
+
+[signals."archivist.client.cycle.duration"]
+kind = "histogram"
+unit = "s"
+boundaries = [1, 5, 15, 60, 300, 900, 3600]
+phase = 5
+description = "Scheduling cycle duration; cycles never overlap and carry 10 percent jitter (Section 7.9)."
+
+# --- adapter (archivist-adapter-sdk, Phase 6) -------------------------------
+
+[signals."archivist.adapter.build"]
+kind = "gauge"
+unit = "1"
+labels = ["harness", "version"]
+phase = 6
+description = "Adapter and projection version in use as a 1-valued series (Section 12 adapter version)."
+
+[signals."archivist.adapter.discovered"]
+kind = "counter"
+unit = "{records}"
+labels = ["harness"]
+phase = 6
+description = "Complete records discovered by adapter inventory scans without content (OPS-004)."
+
+[signals."archivist.adapter.source.failures"]
+kind = "counter"
+unit = "{errors}"
+labels = ["harness", "failure_class"]
+phase = 6
+description = "Source-access failures by harness and class; unsupported fails closed (EC-08)."
+
+[signals."archivist.adapter.quarantined"]
+kind = "counter"
+unit = "{records}"
+labels = ["harness", "quarantine_reason"]
+phase = 6
+description = "Quarantined records by cause; each quarantine is a reported coverage gap (Section 7.8)."
+
+# --- pilot (archivist-cli, Phase 8) -----------------------------------------
+
+[signals."archivist.pilot.comparator.gaps"]
+kind = "counter"
+unit = "{objects}"
+labels = ["gap_class"]
+phase = 8
+description = "Inventory comparator classifications between legacy and new collectors; unexplained blocks cutover (Phase 8)."
+
+[signals."archivist.pilot.freshness.lag"]
+kind = "gauge"
+unit = "s"
+labels = ["harness"]
+phase = 8
+description = "Fleet freshness lag observed across pilot clients for the seven-day soak (Phase 8 exit gate)."
+
+[signals."archivist.pilot.restore"]
+kind = "counter"
+unit = "{objects}"
+labels = ["restore_outcome"]
+phase = 8
+description = "Restore-verification samples by outcome; the Phase 8 exit gate requires 100 percent verified."
+
+# --- exact (archivist-adapter-sdk, Phase 9) ---------------------------------
+
+[signals."archivist.exact.coverage"]
+kind = "counter"
+unit = "{requests}"
+labels = ["exact_outcome"]
+phase = 9
+description = "Closed expected-inference ledger entries by exact coverage outcome (Phase 9 reconciliation)."
+
+[signals."archivist.exact.artifacts"]
+kind = "counter"
+unit = "{objects}"
+labels = ["artifact_kind"]
+phase = 9
+description = "Exact-capture artifacts recorded at the provider boundary by kind (Phase 9 deliverables)."
+
+[signals."archivist.exact.proxy"]
+kind = "counter"
+unit = "{requests}"
+labels = ["route"]
+phase = 9
+description = "Inference attempts seen through the proxy and SDK-hook routes (Phase 9 routes)."
+
+[signals."archivist.exact.flush"]
+kind = "counter"
+unit = "{attempts}"
+labels = ["flush_outcome"]
+phase = 9
+description = "Ephemeral-job flush-before-teardown attempts by completeness (CAP-007)."
+
+# ---------------------------------------------------------------------------
+# Spans: internal operations named archivist.<surface>.<operation> and HTTP
+# route templates named {METHOD} {route} (MET-030, MET-031). The closed set
+# is what bounds span-name cardinality; attributes are registered labels.
+# ---------------------------------------------------------------------------
+
+[spans."POST /v1/ingest"]
+surface = "server"
+attributes = ["error_code"]
+description = "Ingest request handling from envelope parse to receipt issuance."
+
+[spans."GET /health/live"]
+surface = "server"
+description = "Liveness probe; process-only by design."
+
+[spans."GET /health/ready"]
+surface = "server"
+description = "Readiness probe over configuration, trust roots, and control-record evidence."
+
+[spans."GET /metrics"]
+surface = "server"
+description = "Metrics exposition scrape."
+
+[spans."archivist.server.auth.verify"]
+surface = "server"
+attributes = ["error_code"]
+description = "Proof-of-possession verification: signature, window, epoch, delegation."
+
+[spans."archivist.storage.operation"]
+surface = "storage"
+attributes = ["storage_operation", "error_class"]
+description = "One storage backend operation with its classification."
+
+[spans."archivist.client.cycle"]
+surface = "client"
+description = "One daemon scheduling cycle: drain spool, reserve freshness, backfill."
+
+[spans."archivist.client.inventory"]
+surface = "client"
+attributes = ["harness"]
+description = "One source inventory pass over configured roots."
+
+[spans."archivist.client.materialize"]
+surface = "client"
+attributes = ["harness"]
+description = "Spool materialization of one canonical chunk: write, sync, rename."
+
+[spans."archivist.client.upload"]
+surface = "client"
+attributes = ["error_code"]
+description = "One upload attempt with fresh authorization over the frozen envelope."
+
+[spans."archivist.adapter.discover"]
+surface = "adapter"
+attributes = ["harness", "failure_class"]
+description = "Adapter discovery of accounts, roots, and supported fingerprints."
+
+[spans."archivist.adapter.project"]
+surface = "adapter"
+attributes = ["harness"]
+description = "Allowlisted projection of source records into canonical bytes."
+
+[spans."archivist.exact.exchange"]
+surface = "exact"
+attributes = ["route"]
+description = "One provider exchange observed at the proxy or SDK-hook boundary."
+
+[spans."archivist.exact.flush"]
+surface = "exact"
+attributes = ["flush_outcome"]
+description = "Ephemeral-job flush of pending exact-capture artifacts before teardown."
+
+[spans."archivist.pilot.compare"]
+surface = "pilot"
+attributes = ["gap_class"]
+description = "One inventory comparator pass classifying coverage differences."

@@ -229,8 +229,9 @@ server. A server-side internal fault is `server.internal` in class
   `code`, `request_id`, and `correlation_id`. The error counter metric is
   labeled by `code` alone — a value bounded by the registry — never by
   message, tenant, session, or correlation identifiers. This section pins
-  the error side of metrics naming only; general metrics naming is separate
-  Phase 0 work.
+  the error side of metrics naming only; general metrics naming is defined
+  by `docs/notes/metrics.md` and its registry gate, whose `error_code`
+  label is cross-checked against this registry so neither can drift.
 
 ## 10. Metrics-label safety
 

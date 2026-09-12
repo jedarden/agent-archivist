@@ -6,8 +6,9 @@
 #
 # Lanes:
 #   - Fast:  fmt, build, clippy (-D warnings), rustdoc, stub scan, crate
-#     graph, license gate, error-code registry gate, config-key registry
-#     gate, wire-schema coherence gate, CLI command registry gate,
+#     graph, license gate, error-code registry gate, metrics registry
+#     gate, config-key registry gate, wire-schema coherence gate, CLI
+#     command registry gate,
 #     control trust schema gate, synthetic-fixture regeneration and
 #     content scan,
 #     verification-register gate, secret scan of the working tree
@@ -107,6 +108,13 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   run_check "crate graph"          python3 tools/check-crate-graph.py
   run_check "license gate"         python3 tools/check-licenses.py
   run_check "error-code registry"  python3 tools/check-error-codes.py --self-test
+  # Metrics and telemetry registry (docs/notes/metrics.md): metric, span,
+  # attribute, unit, histogram, status, and bounded-label conventions; the
+  # forbidden correlation/content/location label list; and the pinned
+  # OpenTelemetry-to-Prometheus translation with an injectivity proof, so
+  # exporters retain consistent names; `--self-test` proves the rejection
+  # paths.
+  run_check "metrics registry"     python3 tools/check-metrics.py --self-test
   # Configuration-key registry (docs/notes/configuration.md): naming,
   # precedence, types/bounds, secret-reference grammar, and a tree scan
   # that rejects literal values assigned to *_ref settings; `--self-test`
