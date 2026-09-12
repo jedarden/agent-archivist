@@ -1371,6 +1371,49 @@ no raw or derived prompt path. **Revisit if:** tenant governance adopts a strict
 compatible taxonomy or external policy engine; imported decisions must preserve the
 signed record semantics, purpose separation, and default denial.
 
+Token accounting is a second derived projection, `usage-summary-v1`, and never a
+field on the ingest path. The deterministic catalog rebuild emits one row per
+occurrence carrying model identity, service tier, and the harness-reported token
+counts already present in the raw bytes — input, output, cache-read, cache-creation
+by ephemeral class, and reasoning tokens — together with the number of assistant
+messages they were summed from and the adapter projection version that read them.
+The projection is content-free: no transcript text, no prompt, no tool argument.
+Absent, malformed, or unsupported source usage is the bounded state `unknown`, never
+zero, so an incomplete source can never read as free. This projection is called
+usage, never consumption: `consumption-policy-v1` above governs who may read derived
+content, which is a different question.
+
+Harness-reported usage and Phase 9 provider-observed usage are separate columns with
+separate coverage states, and are never summed. The first is semantic and complete
+for every supported adapter; the second is exact and covers only routed or hooked
+traffic. A row may carry both, either, or neither.
+
+The archive stores no monetary amount. Cost is computed outside the archive at query
+time from model, service tier, token counts, and a versioned price table, because
+provider prices change retroactively and per contract; a stored amount would be
+unreproducible from the raw bytes and wrong from the moment pricing moved.
+
+Because the projection is content-free it is not subject to `use-approval-v1`: it
+carries no transcript content and so raises none of the risk that approval exists to
+gate. It stays tenant-scoped and inherits raw retention — a swept occurrence loses
+its usage row in the same pass, because a catalog row that cannot be rebuilt from the
+raw prefix is a divergence.
+
+**Because:** the token counts are already inside the archived bytes, so exposing them
+costs a projection rather than a capture mechanism, and a numeric content-free
+aggregate needs neither redaction nor human approval to be safe. **Rejected:**
+carrying usage in the ingest envelope, which accounts bytes and whose identity and
+version axes must not move for an analytics field; routing usage through
+`redaction-v1` and `use-approval-v1`, which does not retain these fields and gates
+them for a content risk they do not carry; storing a monetary amount; treating absent
+usage as zero; summing semantic and exact counts into one number. **Enforced by:**
+rebuild-determinism fixtures; a fixture whose source omits usage asserting `unknown`
+rather than zero; a negative test that no transcript text appears in the projection;
+schema tests keeping the two denominators separately required with their own coverage
+states; and a deletion test that sweeps the usage row with its occurrence.
+**Revisit if:** a supported harness stops reporting usage in its transcripts, leaving
+a provider-boundary route as the only source for that harness.
+
 Deliverables:
 
 - Build deterministic `archivist catalog rebuild --from-occurrences` processing from
@@ -1387,6 +1430,11 @@ Deliverables:
   deterministic `redaction-v1` producer.
 - Add prompt-injection classification and human policy gates before any archive
   material can be used by an agent.
+- Define `usage-summary-v1` and implement its producer inside the deterministic
+  catalog rebuild, including the `unknown` state for absent or unsupported source
+  usage.
+- Extend the versioned Parquet inventories with usage columns, so token questions
+  are answered by query against the inventory rather than by a separate service.
 
 Exit gate:
 
@@ -1395,6 +1443,11 @@ Exit gate:
 - Derived data can be traced to raw occurrences without exposing raw object paths to
   unauthorized consumers.
 - No raw transcript enters an agent context in the default installation.
+- A usage projection rebuilt from the same raw prefix and pipeline version is
+  byte-identical, contains no transcript text, and reports absent source usage as
+  `unknown` rather than zero.
+- Harness-reported and provider-observed token counts stay separately stated, each
+  with its own coverage state.
 
 ### Phase 11 — Production hardening and 1.0
 
