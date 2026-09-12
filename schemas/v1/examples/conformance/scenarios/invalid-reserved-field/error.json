@@ -1,0 +1,1 @@
+{"code":"envelope.schema_invalid","correlation_id":"1a07c201-7000-7000-8000-000000000001","message":"The envelope fails schema validation at field commit_time.","request_id":"1a07b208-7000-7000-8000-000000000008","retryable":false,"schema":"archivist.error/v1"}

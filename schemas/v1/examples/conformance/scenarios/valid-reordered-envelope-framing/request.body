@@ -1,0 +1,41 @@
+--archivist-conformance-13
+content-type: application/vnd.agent-archivist.envelope+json;version=1
+
+{
+  "upstream_session_id": "4f9c2f1e-8a3d-4b67-9c2f-1e8a3d4b679c",
+  "uploader_client_id": "11111111-2222-4333-8444-555555555555",
+  "uncompressed_size": 119,
+  "transport_encoding": "identity",
+  "tenant_id": "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b",
+  "storage_profile": "zstd-v1",
+  "source_time": "2026-09-11T16:44:02Z",
+  "request_id": "1a07b205-7000-7000-8000-000000000005",
+  "range_start": 176,
+  "range_kind": "byte",
+  "range_end": 294,
+  "protocol_version": 1,
+  "origin_client_id": "11111111-2222-4333-8444-555555555555",
+  "occurrence_id": "aebf225698a60da026da7289336fda2360a7e12cb751d0326e6cbf3b528f344f",
+  "incoming_checksum_algorithm": "sha256",
+  "incoming_checksum": "5e775fdaae97d133e5688f8fad4fcd2f90fd0081c5aaafc8e018f0f2af3e74ad",
+  "id_source": "upstream",
+  "harness": "claude-code",
+  "generation": "1a07a111-7000-7000-8000-000000000001",
+  "envelope_version": 1,
+  "envelope_creation_time": "2026-09-22T10:05:11Z",
+  "compressed_size": 119,
+  "capture_time": "2026-09-22T10:05:10Z",
+  "blob_digest": "5e775fdaae97d133e5688f8fad4fcd2f90fd0081c5aaafc8e018f0f2af3e74ad",
+  "attestation_id": "15f1bed4234986fe3053a95a8b1d61480c3f17e6e9e4f7561946ef0a6b2e6064",
+  "artifact_kind": "file-slice",
+  "adapter_projection_version": "1",
+  "adapter_id": "claude-jsonl",
+  "adapter_artifact_id": "session-file-4f9c2f1e"
+}
+--archivist-conformance-13
+content-type: application/octet-stream
+
+{"seq":4,"text":"conformance delta four","type":"user"}
+{"seq":5,"text":"conformance epsilon five","type":"assistant"}
+
+--archivist-conformance-13--

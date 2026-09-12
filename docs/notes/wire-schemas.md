@@ -199,10 +199,12 @@ schema validity, `$id`/`$ref` resolution across the URN space, the
 reserved-name `not` blocks, `failClosed` metadata on every closed enum,
 required-field presence in the derivation sources, and the receipt's
 signature-member names agreeing with `ingest-identifiers.json`; its
-`--self-test` proves the rejection paths. Golden request/signature/ID
-vectors arrive with the language-neutral conformance corpus and the
-old-reader/new-writer compatibility fixtures (plan Section 7.1), which are
-separately tracked work.
+`--self-test` proves the rejection paths. The golden
+request/signature/ID vectors live in the language-neutral conformance
+corpus ([conformance corpus](conformance-corpus.md)), regenerated and
+verified by `tools/conformancegen.py --verify` in the same fast lane;
+the old-reader/new-writer compatibility fixtures (plan Section 7.1)
+remain separately tracked work.
 
 ## Open questions
 

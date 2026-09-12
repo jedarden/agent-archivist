@@ -1,0 +1,11 @@
+--archivist-conformance-07
+content-type: application/vnd.agent-archivist.envelope+json;version=1
+
+{"adapter_artifact_id":"conflicted-session-file-0001","adapter_id":"claude-jsonl","adapter_projection_version":"1","artifact_kind":"file-slice","attestation_id":"27c837a3c234ed3a700d4295ca74451b505fdbc3c6d59bf35a3e7159381a782b","blob_digest":"058221b96c810d0fe9a33842c70dc46dfb0ef8eaed92ed1b05b49941d6bc6d8e","capture_time":"2026-09-11T16:49:10Z","compressed_size":121,"envelope_creation_time":"2026-09-11T16:49:11Z","envelope_version":1,"generation":"1a07a114-7000-7000-8000-000000000004","harness":"claude-code","id_source":"upstream","incoming_checksum":"058221b96c810d0fe9a33842c70dc46dfb0ef8eaed92ed1b05b49941d6bc6d8e","incoming_checksum_algorithm":"sha256","occurrence_id":"fc71eac9d8e4c52d509cb6a295ff0086669fc1428b5c358db6e5b2d213a9225b","origin_client_id":"11111111-2222-4333-8444-555555555555","protocol_version":1,"range_end":0,"range_kind":"byte","range_start":0,"request_id":"1a07b207-7000-7000-8000-000000000007","source_time":"2026-09-11T16:50:00Z","storage_profile":"zstd-v1","tenant_id":"0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b","transport_encoding":"identity","uncompressed_size":121,"uploader_client_id":"11111111-2222-4333-8444-555555555555","upstream_session_id":"c0nf11ct-7e57-4be5-8f6a-1d2e3f4a5b6c"}
+--archivist-conformance-07
+content-type: application/octet-stream
+
+{"seq":1,"text":"conformance conflict one","type":"user"}
+{"seq":2,"text":"conformance conflict two","type":"assistant"}
+
+--archivist-conformance-07--

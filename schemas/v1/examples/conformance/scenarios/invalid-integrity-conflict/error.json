@@ -1,0 +1,1 @@
+{"code":"storage.integrity_conflict","correlation_id":"1a07c201-7000-7000-8000-000000000001","message":"An existing object is incompatible with this submission; the affected source requires operator review.","request_id":"1a07b207-7000-7000-8000-000000000007","retryable":false,"schema":"archivist.error/v1"}

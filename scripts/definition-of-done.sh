@@ -9,8 +9,8 @@
 #     graph, license gate, error-code registry gate, metrics registry
 #     gate, config-key registry gate, wire-schema coherence gate, CLI
 #     command registry gate,
-#     control trust schema gate, synthetic-fixture regeneration and
-#     content scan,
+#     control trust schema gate, synthetic-fixture and
+#     conformance-corpus regeneration and content scan,
 #     verification-register gate, secret scan of the working tree
 #     (seconds, offline; safe as a gate)
 #   - Slow:  the workspace test suite
@@ -143,6 +143,13 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # vocabulary content scan (docs/notes/fixtures.md). Output is
   # content-free: counts, bytes, and digests only.
   run_check "synthetic fixtures"   python3 tools/fixturegen.py --verify
+  # Language-neutral conformance corpus (docs/notes/conformance-corpus.md):
+  # byte-exact regeneration of the golden envelopes, signatures, digests,
+  # identifier hashes, object keys, receipt chains, and retry examples;
+  # every signature is re-verified by the generator's independent
+  # pure-Python Ed25519 verifier and every golden error body is checked
+  # against the error-code registry.
+  run_check "conformance corpus"  python3 tools/conformancegen.py --verify
   # Requirement-to-verification mapping (docs/notes/verification.md):
   # `check` validates this tree's register (consistency with the
   # requirements document plus the located-check rule for anything marked

@@ -1,0 +1,1 @@
+{"code":"envelope.schema_invalid","correlation_id":"1a07c201-7000-7000-8000-000000000001","message":"The envelope fails schema validation at field transport_encoding.","request_id":"1a07b209-7000-7000-8000-000000000009","retryable":false,"schema":"archivist.error/v1"}

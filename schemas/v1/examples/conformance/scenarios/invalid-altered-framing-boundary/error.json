@@ -1,0 +1,1 @@
+{"code":"auth.authorization_rejected","correlation_id":"1a07c201-7000-7000-8000-000000000001","message":"The authorization proof is stale, altered, or replayed; obtain fresh authorization.","request_id":"1a07b201-7000-7000-8000-000000000001","retryable":false,"schema":"archivist.error/v1"}

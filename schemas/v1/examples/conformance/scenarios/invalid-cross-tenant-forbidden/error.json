@@ -1,0 +1,1 @@
+{"code":"auth.forbidden","correlation_id":"1a07c201-7000-7000-8000-000000000001","message":"The uploader is not authorized for the declared origin client or tenant.","request_id":"1a07b20c-7000-7000-8000-00000000000c","retryable":false,"schema":"archivist.error/v1"}
