@@ -14,6 +14,7 @@
       "zstd": "application/zstd"
     },
     "authorizationWindowSeconds": 300,
+    "clockSkewAllowanceSeconds": 300,
     "preauthorization": "the server MAY pre-authorize uploader_key_id before the body arrives, but commits nothing until the complete signature and payload verify (plan Section 7.2); stale-epoch or window-expired proofs are rejected while an identical authorized retry stays logically idempotent (ID-006, ID-007)",
     "signingConstruction": "ingest-attempt-v1 domain label over zero-delimited, length-prefixed fields in the pinned covered order (schemas/v1/ingest-identifiers.json); golden vectors arrive with the language-neutral conformance corpus",
     "floats": false
@@ -85,7 +86,7 @@
     },
     "authorization_timestamp": {
       "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
-      "description": "Fresh UTC timestamp bound into this attempt's proof (plan Section 7.2). Valid for the five-minute authorization window; a retry after the window re-authorizes without changing occurrence or attestation identity, because none of this enters the envelope.",
+      "description": "Fresh UTC timestamp bound into this attempt's proof (plan Section 7.2). Valid for the five-minute authorization window with at most five minutes of clock-skew allowance (plan Section 5) — the two constants pinned above as named values and registered cross-family in schemas/v1/control-envelope.json, which the control gate proves agree with these; a retry after the window re-authorizes without changing occurrence or attestation identity, because none of this enters the envelope.",
       "x-archivist": { "bearing": "security", "compat": "required-v1" }
     },
     "signature_algorithm": {

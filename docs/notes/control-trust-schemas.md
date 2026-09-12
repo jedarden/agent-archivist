@@ -1,22 +1,24 @@
 # Control trust schemas
 
 Authority: the implementation plan, Section 5 (control-plane boundary),
-Section 7.1 (version axes), and Section 7.5 (object keys); requirements
-ID-001, ID-003, ID-006, ID-008, ID-009, and SEC-006. The family is:
+Section 7.1 (version axes), Section 7.2 (wire authentication), and
+Section 7.5 (object keys); requirements ID-001, ID-003, ID-006, ID-008,
+ID-009, and SEC-006. The family is:
 
 | File | Role |
 |---|---|
-| [`schemas/v1/control-envelope.json`](../../schemas/v1/control-envelope.json) | The shared conventions registry and member library: the `archivist.control/v1` namespace, the wrapper member set, the two write classes, the `control-record-v1` signing construction, the record-type registry, and the control object-key patterns. |
+| [`schemas/v1/control-envelope.json`](../../schemas/v1/control-envelope.json) | The shared conventions registry and member library: the `archivist.control/v1` namespace, the wrapper member set, the two write classes, the named timing-constants registry, the `control-record-v1` signing construction, the record-type registry, and the control object-key patterns. |
 | [`schemas/v1/control-client.json`](../../schemas/v1/control-client.json) | The linked-client record (plan Section 7.5 `tenants/<tenant>/v1/control/clients/<client>.json`): client identity, Ed25519 public key, base scopes, and the current authorization epoch. |
+| [`schemas/v1/control-revocation.json`](../../schemas/v1/control-revocation.json) | The revocation record (plan Section 7.5 `tenants/<tenant>/v1/control/revocations/<client>/<epoch>.json`): the append-only, epoch-addressed revocation of one client's authorization at one epoch. |
 
 Control records are what the control-plane boundary runs on: objects
 below `tenants/<tenant>/v1/control/`, written only by the offline
 `ControlAdminStore` (which can put nothing but validated,
 tenant-authority-signed control objects), read by every ingestion replica
 when it authenticates an uploader, and cacheable for at most 60 seconds
-(plan Section 5). Revocation, receipt-key, delegation, and
-authority-rotation record types arrive as later schema changes composed
-from the same envelope — the decision list below is what binds them.
+(plan Section 5). Receipt-key, delegation, and authority-rotation record
+types arrive as later schema changes composed from the same envelope —
+the decision list below is what binds them.
 
 ## The envelope: decisions every record type follows
 
@@ -75,8 +77,11 @@ them is wrong, not a variation:
    cannot displace a newer pointer without the authority key: rollback
    requires publishing another higher-epoch record, never repointing to an
    older one. The epoch is required for current-pointer records and carried
-   by immutable types only when it is part of their identity (the revocation
-   key names the revoked epoch).
+   by immutable types only when it is part of their identity — the
+   revocation record is the shipped type that does, because its object key
+   names the revoked epoch (the registry's `keyMembers` names the members
+   the store derives each type's key from, and the gate proves every one
+   is a required property of the shipped record).
 6. **One signing construction.** `control-record-v1`: Ed25519 by the tenant
    authority key named by `authority_key_id`, over the RFC 8785
    canonicalization of the complete record object with the
@@ -98,13 +103,15 @@ them is wrong, not a variation:
    member names outright, so the property is machine-checked.
 8. **Server-derived object keys.** Keys are derived from the validated
    record type and fields (ID-008): `clients/<client>.json` for the
-   linked-client record, and — pinned in the envelope now because plan
-   Section 7.5 fixes the layout — `revocations/<client>/<epoch>.json` and
-   `receipt-keys/<key>.json` for their pending record types. Key segments
-   must equal the record's own identifiers (`tenant_id`, `client_id`, the
-   revoked epoch); the store refuses a mismatch and any reader can re-make
-   the check. The receipt-key pattern is cross-checked against the
-   certificate's documented `objectKey` so the two cannot fork.
+   linked-client record and `revocations/<client>/<epoch>.json` for the
+   revocation record, both shipped; `receipt-keys/<key>.json` is pinned in
+   the envelope now because plan Section 7.5 fixes the layout, and it stays
+   reserved until that record type ships. Key segments must equal the
+   record's own identifiers (`tenant_id`, `client_id`, and, for a
+   revocation, the revoked epoch); the store refuses a mismatch and any
+   reader can re-make the check. The receipt-key pattern is cross-checked
+   against the certificate's documented `objectKey` so the two cannot
+   fork.
 9. **Numeric and timestamp discipline.** RFC 8785 canonical JSON, no
    floats, integers bounded (`authorization_epoch` 1 through
    999999999999999999 — the 18-digit canonical decimal the revocation key
@@ -112,6 +119,23 @@ them is wrong, not a variation:
    with the `Z` suffix, scope and identifier arrays issued sorted so
    equivalent grants produce identical canonical bytes (writer discipline —
    RFC 8785 does not sort arrays).
+10. **Named timing constants, one registry.** The timing values the
+    control plane and the wire lean on are named constants in the
+    envelope's `x-archivist.constants` registry — never prose — and each
+    schema that applies one pins the same number where it applies, with
+    the gate proving agreement: the 60-second trust-record cache TTL that
+    bounds revocation propagation (plan Section 5; EC-09; pinned as
+    `trustRecordCacheTtlSeconds`, mirrored in the linked-client record and
+    re-expressed as the revocation record's
+    `revocationPropagationBoundSeconds`), and the 300-second
+    fresh-per-attempt authorization window with its separate 300-second
+    clock-skew allowance (plan Sections 5 and 7.2; the window already
+    lives as `authorizationWindowSeconds` in
+    `schemas/v1/ingest-request.json`, and the allowance is pinned beside
+    it there as `clockSkewAllowanceSeconds`). Skew is named separately
+    from the window because it protects a different clock — the
+    verifier's, not the signer's — and two five-minute values must not
+    silently become one ten-minute window.
 
 ## The linked-client record
 
@@ -160,20 +184,73 @@ Empty allowlists are structurally impossible (`minItems: 1`): a client
 with no grants is not a linked client with empty arrays, it is a revoked
 client.
 
+## The revocation record
+
+The record revokes one client's authorization at one epoch (ID-006:
+credentials must be revocable) and lives at
+`tenants/<tenant>/v1/control/revocations/<client>/<epoch>.json` (plan
+Section 7.5). It is the shipped immutable record type, and its three
+defining properties are all structural:
+
+- **Epoch-addressed.** The object key names the revoked epoch, and the
+  record's signed `authorization_epoch` equals that segment in canonical
+  decimal without leading zeros. The epoch is an identity member here,
+  not a pointer guard: an immutable record protects no pointer, and it
+  carries the epoch exactly because the key names it (decision 5).
+- **Append-only.** One object per (client, epoch), written once; the
+  store rejects an overwrite of an incompatible immutable record, and no
+  operation removes or supersedes a revocation. The only way to add is a
+  new epoch.
+- **Monotonic per client.** The linked-client pointer's epoch only
+  increases, and each revocation permanently fixes one rung of that
+  sequence. The store accepts a revocation only when the revoked epoch
+  does not exceed the pointer's current signed epoch — one cannot
+  pre-revoke an epoch the client has not reached, because a
+  forward-dated revocation would arm itself against a legitimate later
+  rotation — and the revocation completes by publishing a strictly
+  higher-epoch linked-client record.
+
+That pointer bump is the enforcement: an attempt presenting the revoked
+epoch is stale against the new pointer even when its envelope and
+signature are otherwise valid (plan Phase 3 exit gate), which is why the
+revocation record carries no expiry and propagation is bounded by the
+reader's 60-second trust cache (plan Section 5; EC-09) — the envelope's
+`trustRecordCacheTtlSeconds` named constant, re-expressed in this record
+as `revocationPropagationBoundSeconds` and proven equal by the gate. The
+record itself is the durable evidence half: `client_id` (the linked
+installation), `authorization_epoch` (the boundary), and
+`revoked_key_id` — the `key_id` the linked-client record held at that
+epoch, under the pinned SHA-256 derivation. The pointer retains no
+history once it moves on, so `revoked_key_id` is the durable statement
+of which credential died; it cross-checks against the
+`authorization_key_id` of receipts for attempts at that epoch and
+against the `uploader_key_id` an attempt signs with. Relinking after a
+revocation (EC-12: preserve the spool, pause on `401`/`403`, resume only
+after an operator links a valid epoch/key) is a new, higher epoch with a
+new key — never an edit of the revocation.
+
 ## Verification
 
 `tools/check-control-schemas.py` proves the family's coherence
 structurally and behaviourally: envelope registry coherence (namespace
-const, closed fail-closed enums, recordTypes/write-class/key-pattern
-agreement), flat wrapper composition against `wrapper.requiredByKind`,
-closed shapes at every object level, the banned private-member-name
-grammar, the plan-pinned 60-second cache and 24-hour rotation overlap
-constants, draft 2020-12 validity, a zero-entropy golden linked-client
-record whose key IDs are computed by the pinned SHA-256 derivation and
-whose object key is re-derived from its own identifiers, thirteen
-behavioural rejections of that record, and the receipt-key pattern
-cross-check against `ingest-receipt.json`. Its `--self-test` proves the
-rejection paths.
+const, closed fail-closed enums, recordTypes/write-class/key-pattern/
+keyMembers agreement), flat wrapper composition against
+`wrapper.requiredByKind` — with every wrapper member a record carries
+referencing the registry's declared source, the revocation's identity
+epoch included — closed shapes at every object level, the banned
+private-member-name grammar, the named timing-constant registry with
+every plan-pinned value and every cross-file agreement proven (envelope
+↔ linked-client TTL ↔ revocation propagation bound; envelope ↔
+ingest-request window and skew allowance), draft 2020-12 validity,
+zero-entropy golden linked-client and revocation records — one coherent
+story: the client at epoch 3, and the revocation of that epoch naming
+that client's key — whose key IDs are computed by the pinned SHA-256
+derivation and whose object keys are re-derived from their own
+identifiers, with the revocation key also checked at the epoch ceiling
+so the 18-digit epoch bound and the key grammar are proven in lockstep,
+twenty-eight behavioural rejections across the two records, and the
+receipt-key pattern cross-check against `ingest-receipt.json`. Its
+`--self-test` proves the rejection paths.
 
 ```sh
 tools/check-control-schemas.py             # accept path
@@ -197,8 +274,9 @@ side.
   chained to its predecessor and how clients re-pin — is the first open
   item the envelope's authority-chain rule anticipates; `authority_key_id`
   already names the signer generally enough for it.
-- The **delegation record** (relay grants) and the **revocation record**
-  follow next; their key patterns are already pinned in the envelope.
+- The **delegation record** (relay grants) follows next, once plan work
+  names its object key; the revocation record it was listed beside has
+  shipped.
 - Whether a scope grant ever needs a per-grant qualifier (expiry, per-origin
   limits inside the client record) — v1 says no: grants change by epoch,
   and anything richer is a new record type's decision, made against the

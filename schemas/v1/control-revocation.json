@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:control-revocation",
+  "title": "Agent Archivist revocation record (archivist.control/v1)",
+  "description": "The tenant-authority-signed record that revokes one client's authorization at one epoch (plan Sections 5 and 7.5; ID-006: credentials must be revocable). Stored at `tenants/<tenant>/v1/control/revocations/<client>/<epoch>.json`, written only by the offline ControlAdminStore, read by ingestion replicas and auditors as the durable evidence that an authorization epoch is dead. The record is the append-only half of a revocation by construction on three axes: it is epoch-addressed (the object key names the revoked epoch, so each revocation event is its own object), immutable (the store rejects an overwrite of an incompatible immutable record outright, so nothing can rewrite or un-revoke), and signed against a monotonic epoch sequence per client (the linked-client pointer's epoch only increases, and the revocation fixes a boundary no later record can slide back below). Enforcement rides the pointer, not this file: a revocation is completed by publishing a strictly higher-epoch linked-client record, which is what makes stale-epoch attempts fail closed; this record preserves what the pointer cannot, because a current-pointer object retains no history of the epoch it left. Propagation is bounded by the reader's trust-record cache, never by an expiry in this record: 60 seconds, the envelope's `trustRecordCacheTtlSeconds` named constant, pinned here as `revocationPropagationBoundSeconds` and proven equal by the gate (plan Section 5; EC-09). The flat object is the complete record: the seven wrapper members every immutable control record carries (schemas/v1/control-envelope.json) plus `authorization_epoch` as an identity member — the envelope's write-class rule: an immutable type carries the epoch exactly when it is part of the record's identity, and here it names the revoked epoch in the object key — plus `client_id` and `revoked_key_id`, closed with `additionalProperties: false` (docs/notes/control-trust-schemas.md). Public material only: the record carries a key identifier — the hash of a public key — and nothing else that could hold key material (SEC-006).",
+  "type": "object",
+  "x-archivist": {
+    "namespace": "archivist.control/v1",
+    "namespaceField": "schema",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "canonicalization": "rfc8785",
+    "objectKey": "schemas/v1/control-envelope.json#/$defs/revocation-object-key",
+    "writeClass": "immutable",
+    "signature": "control-record-v1 (schemas/v1/control-envelope.json): Ed25519 by the tenant authority named by `authority_key_id` over the RFC 8785 canonicalization of this object with the `authority_signature` member removed. The same construction, key namespace, and verifier core as the linked-client record; domain separation comes from `record_type`, so a revocation can never be replayed as a client record or the reverse.",
+    "epochRule": "This record revokes the epoch its signed `authorization_epoch` names — the revoked epoch, equal to the object key's epoch segment (VAL-002). The write is accepted only when the revoked epoch does not exceed the linked-client pointer's current signed epoch: one cannot pre-revoke an epoch the client has not reached, because a forward-dated revocation would otherwise arm itself against a legitimate later rotation. Revocation is completed by publishing a strictly higher epoch of the linked-client record (plan Section 5), which is the move that fails stale-epoch attempts closed; together the two writes leave the client's authorization history a strictly ascending sequence — the pointer never decreases, and each revocation permanently fixes one of its rungs. Append-only follows: one immutable object per (client, epoch), a lost-response retry of identical bytes is an idempotent repair, and there is no operation that removes or supersedes a revocation — relinking after revocation (EC-12) is a new, higher epoch with a new key, never an edit of this record.",
+    "revocationPropagationBoundSeconds": 60,
+    "privateKey": "no private material exists anywhere in this record — `revoked_key_id` is the SHA-256 of a public key and every other member is an identifier, a timestamp, or a signature (SEC-006, ID-001). The key that died stays wherever it died; this record proves it is dead.",
+    "compatibility": "member additions, redefinitions, and new required members are all v2 namespace events — the closed shape is the compatibility rule for control records (docs/notes/control-trust-schemas.md). The only in-place appends this schema tolerates are new tokens inside already-closed enums (record_type in the envelope), each shipped together with the readers that understand it"
+  },
+  "additionalProperties": false,
+  "required": [
+    "authority_key_id",
+    "authority_signature",
+    "authorization_epoch",
+    "client_id",
+    "record_kind",
+    "record_type",
+    "revoked_key_id",
+    "schema",
+    "signed_at",
+    "tenant_id"
+  ],
+  "properties": {
+    "schema": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/schema-namespace",
+      "description": "The control trust namespace this record belongs to. Pinned by the shared definition; an unknown namespace fails closed before anything else is read.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "record_type": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/record-type",
+      "const": "revocation",
+      "description": "This is a revocation record. Narrowed from the envelope's closed record-type enum to a const of this schema's own token, so this file both names and is the type's complete contract.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "record_kind": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/record-kind",
+      "const": "immutable",
+      "description": "The revocation record is an immutable record: written once at the epoch-addressed key derived from its own identifiers, never overwritten — the store rejects an incompatible overwrite outright, so the only writer-visible repetition is a lost-response retry of identical bytes (the envelope's writeClasses rule). Immutability plus epoch addressing is what makes revocation append-only: the only way to add is a new epoch, and there is no way to remove.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "tenant_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "The tenant whose authorization authority issued this revocation (plan Section 5). Must equal the tenant segment of the object key — the store derives the key from validated fields and refuses any mismatch (ID-008), and a reader can re-make the check, so a record served under another tenant's prefix is rejected as a cross-tenant forgery, not a naming oddity.",
+      "x-archivist": {
+        "bearing": "identity",
+        "compat": "required-v1"
+      }
+    },
+    "client_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "The client whose authorization this record revokes at the named epoch (ID-006). Must equal the client segment of the object key (VAL-002 cross-field check). The identifier is the one its linked-client record binds — a revocation names the linked installation, never a hostname or any mutable provenance (ID-002).",
+      "x-archivist": {
+        "bearing": "identity",
+        "compat": "required-v1"
+      }
+    },
+    "revoked_key_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id",
+      "description": "The authorization key that held at the revoked epoch — the `key_id` of the linked-client record being revoked, under the pinned SHA-256-of-encoded-public-key derivation (VAL-002), so it is computable from the public record at revocation time. The current-pointer client record retains no history once it moves on, so this member is the durable statement of which credential died at this boundary; it cross-checks against the `uploader_key_id` an attempt signs with and the `authorization_key_id` of receipts for attempts at this epoch (schemas/v1/ingest-receipt.json). A public identifier only — a hash of a public key, never key material (SEC-006).",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    },
+    "authorization_epoch": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/authorization-epoch",
+      "description": "The revoked epoch. Identity member of an immutable record (the envelope's write-class rule): it equals the object key's epoch segment in canonical decimal without leading zeros, and the envelope holds this member's bound and that grammar in lockstep — 18 digits at the ceiling (VAL-002 cross-field checks at the store and at any reader). Signed, so a revocation cannot be re-dated or moved to a different epoch after the fact. On the wire, an attempt presenting this epoch is dead twice over — stale against the higher-epoch pointer that completed the revocation, and named dead by this record (plan Phase 3 exit gate; ID-006, ID-007).",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    },
+    "signed_at": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "UTC time the tenant authority signed this revocation — audit evidence for when the authorization was withdrawn. The epoch is the logical order of the client's authorization history; this is its wall-clock context. No validity window is attached and none is needed: the record takes effect at its write and never expires, and propagation to readers is bounded by the trust-record cache TTL, not by any timestamp here (plan Section 5; EC-09).",
+      "x-archivist": {
+        "bearing": "provenance",
+        "compat": "required-v1"
+      }
+    },
+    "authority_key_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id",
+      "description": "Identifier of the tenant authority key that signed this record — the root the revoked client pinned during linking (ID-009). Names which pinned key (or, once authority rotation exists, which authority record's key) verifies `authority_signature`; see the envelope's authority-chain rule. A revocation signed by any other key is not a revocation.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    },
+    "authority_signature": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/ed25519-signature-hex",
+      "description": "The tenant authority's Ed25519 signature under the control-record-v1 construction (schemas/v1/control-envelope.json): the RFC 8785 canonicalization of this object with this member removed. The one field the authority itself cannot cover, and the reason the revoked client, epoch, and key are tamper-evident — an attacker holding only the raw-data or control-reader credential cannot forge, alter, or retract a revocation.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    }
+  }
+}

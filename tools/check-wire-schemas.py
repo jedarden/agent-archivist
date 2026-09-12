@@ -105,11 +105,12 @@ VERSION_CONSTS = {
 CERT_PATH = ("$defs", "receipt-key-certificate")
 CERT_VERSION_FIELD = "certificate_version"
 
-# Plan-pinned v1 constants (Sections 7.2, 7.6, and 7.8). Changing one is a
+# Plan-pinned v1 constants (Sections 5, 7.2, 7.6, and 7.8). Changing one is a
 # contract change that must touch schema and gate in the same commit.
 PINNED = {
     ("ingest-envelope", ("x-archivist", "canonicalMaxBytes")): 65536,
     ("ingest-request", ("x-archivist", "authorizationWindowSeconds")): 300,
+    ("ingest-request", ("x-archivist", "clockSkewAllowanceSeconds")): 300,
     ("ingest-receipt", tuple(CERT_PATH) + ("x-archivist", "keyRotationDays")): 30,
     ("ingest-receipt", tuple(CERT_PATH) + ("x-archivist", "signingOverlapDays")): 7,
 }
