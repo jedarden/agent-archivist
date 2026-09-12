@@ -62,6 +62,13 @@ committed.
   commands read, backed by the machine-checked registry in
   `tools/config-keys.toml` and a tree scan that rejects literal values
   assigned to secret-reference settings.
+- [CLI command conventions](docs/notes/cli.md) define the versioned command,
+  flag, output-envelope, exit-code, non-interactive, and secret-argument
+  contract of the `archivist` binary before command implementation, backed by
+  the machine-checked registry in `tools/cli-commands.toml`, the
+  `archivist.cli-output/v1` envelope schema, and a gate that proves the
+  three flag namespaces disjoint and no secret value accepted as a literal
+  argument.
 - [Synthetic fixtures](docs/notes/fixtures.md) define the deterministic,
   seeded generator behind the `fixtures/synthetic/` corpus — normal,
   malformed, rewritten, and large synthetic sessions — its byte-exact

@@ -62,7 +62,7 @@ layer 1 — not on a tier of its own above the client engine.
 | `archivist-adapter-opencode` | 2 | OpenCode: read-only allowlisted database projection | 6B | adapter-sdk |
 | `archivist-adapter-pi` | 2 | Pi: configured-root discovery, durable session formats, coverage gaps | 6C | adapter-sdk |
 | `archivist-server` | 2 | Stateless HTTP data plane: `/v1/ingest`, health, metrics, bounded middleware, commit ordering, signed receipts | 4 | protocol, auth, storage |
-| `archivist-cli` | 3 | `archivist` binary: collect, serve, link, admin, status; selects backend and adapters | 3, 5, 6, 7 | all of the above |
+| `archivist-cli` | 3 | `archivist` binary: the command surface pinned in [`tools/cli-commands.toml`](../../tools/cli-commands.toml) (run, daemon, inventory, status, verify-state, doctor, serve, link request, admin, catalog rebuild); selects backend and adapters | 3, 5, 6, 7 | all of the above |
 
 ## Boundary rules
 

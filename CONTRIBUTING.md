@@ -59,6 +59,9 @@ cargo doc --workspace --no-deps                    # docs; broken links deny
 python3 tools/check-crate-graph.py                 # crate purpose + cycle check
 python3 tools/check-licenses.py                    # dependency license gate
 python3 tools/check-error-codes.py --self-test     # error-code registry gate
+python3 tools/check-config.py --self-test          # config-key registry gate
+python3 tools/check-cli.py --self-test             # CLI command registry gate
+python3 tools/check-wire-schemas.py --self-test    # wire-schema coherence gate
 python3 tools/fixturegen.py --verify               # synthetic fixtures: byte-exact
                                                    # regeneration + content scan
 python3 tools/verification-manifest.py check       # this tree's verification register
@@ -72,8 +75,10 @@ The script's lanes keep per-change gating cheap:
 
 - `--fast` (default; what automation runs per change): fmt, build, Clippy,
   rustdoc, stub scan, crate graph, license gate, error-code registry gate,
-  synthetic-fixture regeneration and content scan, verification-register
-  gate, working-tree secret scan — seconds, fully offline.
+  config-key registry gate, CLI command registry gate, wire-schema
+  coherence gate, synthetic-fixture regeneration and content scan,
+  verification-register gate, working-tree secret scan — seconds, fully
+  offline.
 - `--slow`: the workspace test suite.
 - `--audit`: `cargo audit` and the git-history secret scan. The audit
   downloads the public RustSec advisory database; no credentials are involved.

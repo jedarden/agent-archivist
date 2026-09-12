@@ -327,7 +327,7 @@ agent-archivist/
 │   ├── archivist-adapter-opencode/
 │   ├── archivist-adapter-pi/
 │   ├── archivist-server/         # stateless HTTP data plane
-│   └── archivist-cli/            # collect, serve, link, admin, status commands
+│   └── archivist-cli/            # the archivist command surface (tools/cli-commands.toml)
 ├── schemas/
 │   └── v1/                       # checked-in JSON schemas and examples
 ├── fixtures/
@@ -852,7 +852,11 @@ Deliverables:
   digests, and object keys.
 - Versioned CLI/config reference and schemas defining command names, flags, TOML
   keys, defaults, precedence, stdout/stderr, exit codes, and secret-reference fields
-  before client command implementation.
+  before client command implementation. The command side is defined by
+  `docs/notes/cli.md` and enforced by the registry gate in `tools/check-cli.py`
+  (registry: `tools/cli-commands.toml`; output envelope:
+  `schemas/v1/cli-output.json`, `archivist.cli-output/v1`); the key side is
+  `docs/notes/configuration.md` and `tools/check-config.py`.
 - A threat model covering spoofing, replay, cross-tenant writes, digest confusion,
   decompression bombs, poisoned manifests, and metadata leakage.
 - Compatibility fixtures that prove an old reader accepts additive optional fields,

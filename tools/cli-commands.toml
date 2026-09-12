@@ -1,0 +1,222 @@
+# Machine-readable command registry for the Agent Archivist `archivist`
+# binary.
+#
+# The normative conventions live in docs/notes/cli.md; this file is the data
+# they define, and tools/check-cli.py (fast lane of
+# scripts/definition-of-done.sh) rejects any entry that violates them, checks
+# the flag namespaces against the mode-flag set and every key-flag name
+# derived from tools/config-keys.toml, and validates the output envelope
+# schema schemas/v1/cli-output.json.
+#
+# Within registry schema v1 the command set is append-only: adding a command,
+# appending an operational flag, growing a command's key list, or attaching a
+# result schema is a compatible change; renaming, removing, or redefining a
+# declared attribute of an existing command is a v2 event.
+#
+# Every entry names the plan phase that implements it. A command may carry an
+# empty key list because its consuming configuration keys are appended by the
+# phase that implements it (CFG-004); every registered key is still consumed
+# by at least one command, or the gate rejects the pair of registries.
+
+schema = "archivist.cli-registry/v1"
+
+# ---------------------------------------------------------------------------
+# Client engine (plan Section 7.9, Phase 5) — owner archivist-client-core
+# ---------------------------------------------------------------------------
+
+[commands.daemon]
+summary = "Run the client collection daemon: the internal 15-minute scheduling loop with jitter, never overlapping itself, until signalled."
+phase = 5
+owner = "archivist-client-core"
+state_lock = "exclusive"
+stdout = "none"
+operand = "none"
+stdin = "none"
+keys = [
+  "client.state_dir",
+  "spool.max_bytes",
+  "spool.free_floor_bytes",
+  "spool.resume_percent",
+  "schedule.interval_seconds",
+  "schedule.jitter_percent",
+  "schedule.backfill_quantum_bytes",
+  "ingest.endpoint_url",
+]
+
+[commands.run]
+summary = "Run exactly one scheduling cycle in the foreground: drain the spool, then fresh and backfill work, then exit."
+phase = 5
+owner = "archivist-client-core"
+state_lock = "exclusive"
+stdout = "document"
+operand = "none"
+stdin = "none"
+keys = [
+  "client.state_dir",
+  "spool.max_bytes",
+  "spool.free_floor_bytes",
+  "spool.resume_percent",
+  "schedule.backfill_quantum_bytes",
+  "ingest.endpoint_url",
+]
+
+[commands.run.flags.once]
+summary = "Run a single scheduling cycle and exit; the looping form is the daemon."
+required = true
+
+[commands.inventory]
+summary = "Inventory configured sources and estimate unacknowledged bytes and records without uploading anything."
+phase = 5
+owner = "archivist-client-core"
+state_lock = "read_only"
+stdout = "document"
+operand = "none"
+stdin = "none"
+keys = ["client.state_dir"]
+
+[commands.status]
+summary = "Report local collection status from a read-only state snapshot: per-source counts, freshness, and degraded reason."
+phase = 5
+owner = "archivist-client-core"
+state_lock = "read_only"
+stdout = "document"
+operand = "none"
+stdin = "none"
+keys = ["client.state_dir"]
+
+[commands."verify-state"]
+summary = "Verify local state consistency: spool and receipt transitions, orphan reconciliation, and cursor invariants."
+phase = 5
+owner = "archivist-client-core"
+state_lock = "read_only"
+stdout = "document"
+operand = "none"
+stdin = "none"
+keys = ["client.state_dir"]
+
+[commands.doctor]
+summary = "Non-mutating health check of configuration, permissions, state integrity, lock, clock, server readiness, and linkage."
+phase = 5
+owner = "archivist-client-core"
+state_lock = "read_only"
+stdout = "document"
+operand = "none"
+stdin = "none"
+keys = ["client.state_dir", "ingest.endpoint_url"]
+
+# ---------------------------------------------------------------------------
+# Ingestion server (plan Phase 4) — owner archivist-server
+# ---------------------------------------------------------------------------
+
+[commands.serve]
+summary = "Run the stateless ingestion server: bounded middleware, streaming validation, ordered commits, and signed receipts."
+phase = 4
+owner = "archivist-server"
+state_lock = "none"
+stdout = "none"
+operand = "none"
+stdin = "none"
+keys = [
+  "server.listen_address",
+  "server.request_deadline_seconds",
+  "server.envelope_max_bytes",
+  "server.record_max_bytes",
+  "server.max_expansion_ratio",
+  "server.multipart_part_bytes",
+  "server.max_inflight_upload_count",
+  "server.max_inflight_per_client_count",
+  "server.rate_per_minute_count",
+  "server.rate_burst_count",
+  "server.shutdown_drain_seconds",
+  "storage.endpoint_url",
+  "storage.region",
+  "storage.path_style",
+  "storage.encryption",
+  "storage.raw_bucket",
+  "storage.control_bucket",
+  "storage.raw_write_credentials_ref",
+  "storage.control_read_credentials_ref",
+]
+
+# ---------------------------------------------------------------------------
+# Identity and linking control plane (plan Section 5, Phase 3) — owner
+# archivist-auth
+# ---------------------------------------------------------------------------
+
+[commands."link request"]
+summary = "Emit a link request document carrying only public identity and requested scope for tenant approval."
+phase = 3
+owner = "archivist-auth"
+state_lock = "none"
+stdout = "document"
+operand = "none"
+stdin = "none"
+keys = ["client.state_dir"]
+
+[commands."admin approve"]
+summary = "Approve a link request: validate the draft, sign it with the tenant authority, and write the linked-client record."
+phase = 3
+owner = "archivist-auth"
+state_lock = "none"
+stdout = "document"
+operand = "path"
+stdin = "none"
+keys = []
+
+[commands."admin revoke"]
+summary = "Write a signed revocation record from the supplied draft, effective on every replica within the trust-cache window."
+phase = 3
+owner = "archivist-auth"
+state_lock = "none"
+stdout = "document"
+operand = "path"
+stdin = "none"
+keys = []
+
+[commands."admin rotate"]
+summary = "Record a client key rotation with overlapping verification and a monotonic authorization epoch from the supplied draft."
+phase = 3
+owner = "archivist-auth"
+state_lock = "none"
+stdout = "document"
+operand = "path"
+stdin = "none"
+keys = []
+
+[commands."admin delegate"]
+summary = "Record origin and uploader delegation for an approved relay from the supplied draft."
+phase = 3
+owner = "archivist-auth"
+state_lock = "none"
+stdout = "document"
+operand = "path"
+stdin = "none"
+keys = []
+
+[commands."admin receipt-key"]
+summary = "Generate and certify a tenant receipt-signing key under the pinned tenant authority chain."
+phase = 3
+owner = "archivist-auth"
+state_lock = "none"
+stdout = "document"
+operand = "none"
+stdin = "none"
+keys = []
+
+# ---------------------------------------------------------------------------
+# Derived catalog (plan Section 7.10, Phase 10) — owner archivist-storage
+# ---------------------------------------------------------------------------
+
+[commands."catalog rebuild"]
+summary = "Rebuild the catalog from raw occurrences, upload attestations, and blobs without touching the ingest data plane."
+phase = 10
+owner = "archivist-storage"
+state_lock = "none"
+stdout = "document"
+operand = "none"
+stdin = "none"
+keys = []
+
+[commands."catalog rebuild".flags.from-occurrences]
+summary = "Rebuild from raw S3 occurrences, attestations, and blobs; the only v1 rebuild source."
+required = true

@@ -17,6 +17,13 @@ SEC-004/SEC-006. The family is:
 | [`schemas/v1/ingest-error.json`](../../schemas/v1/ingest-error.json) | The stable error body every producer emits (`archivist.error/v1`). |
 | [`schemas/v1/ingest-receipt.json`](../../schemas/v1/ingest-receipt.json) | The authenticated receipt and the embedded receipt-key certificate. |
 
+One further v1 schema lives in the same directory:
+[`schemas/v1/cli-output.json`](../../schemas/v1/cli-output.json), the
+`archivist.cli-output/v1` CLI output envelope. It is owned by the
+[CLI command conventions](cli.md) and their gate, and appears here only
+because this gate's generic rules (draft, `$id`, ref resolution, no floats)
+scan every file under `schemas/v1/`.
+
 ## Version axes and fail-closed behavior
 
 Each record carries its own axis (plan Section 7.1): `protocol_version` and

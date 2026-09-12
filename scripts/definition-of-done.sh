@@ -7,7 +7,8 @@
 # Lanes:
 #   - Fast:  fmt, build, clippy (-D warnings), rustdoc, stub scan, crate
 #     graph, license gate, error-code registry gate, config-key registry
-#     gate, synthetic-fixture regeneration and content scan,
+#     gate, wire-schema coherence gate, CLI command registry gate,
+#     synthetic-fixture regeneration and content scan,
 #     verification-register gate, secret scan of the working tree
 #     (seconds, offline; safe as a gate)
 #   - Slow:  the workspace test suite
@@ -110,6 +111,12 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # that rejects literal values assigned to *_ref settings; `--self-test`
   # proves the rejection paths.
   run_check "config registry"     python3 tools/check-config.py --self-test
+  # CLI command registry (docs/notes/cli.md): command grammar, the three
+  # disjoint flag namespaces, the versioned output envelope, and
+  # cross-registry coherence with the config keys — including that no
+  # secret key ever exposes a flag tier; `--self-test` proves the
+  # rejection paths.
+  run_check "cli command registry"  python3 tools/check-cli.py --self-test
   # Wire-schema coherence (docs/notes/wire-schemas.md): refs, fail-closed
   # enum/version metadata, reserved-name blocks, the construction registry,
   # and the error-message charset; `--self-test` proves the rejection paths.

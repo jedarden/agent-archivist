@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:cli-output",
+  "title": "Agent Archivist CLI output envelope (archivist.cli-output/v1)",
+  "description": "The single versioned JSON value a successful `archivist` command writes to stdout under `--json` (plan Phase 5: one versioned JSON value, diagnostics on stderr, never ANSI). The envelope is closed — four members and no others — while `result` is the one delegated member: each command's result document is a closed schema under schemas/v1/, attached to its registry entry (tools/cli-commands.toml, `result_schema`) by the phase that implements the command. The command vocabulary is append-only like the error codes, so `command` is pattern-bounded rather than closed to the registry: an envelope from a newer binary carrying an unregistered command token still parses, and a consumer reads the `schema` namespace to decide how to interpret it (the ERR-037 ethos). A failed command emits no stdout value at all (ERR-029). No floating-point values appear anywhere in CLI output.",
+  "type": "object",
+  "x-archivist": {
+    "namespace": "archivist.cli-output/v1",
+    "namespaceField": "schema",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "compatibility": "appending per-command result schemas and new command tokens is compatible (docs/notes/cli.md Section 8); changing the envelope member set, redefining a member, or a new namespace is a v2 event"
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "command",
+    "generated_at",
+    "result"
+  ],
+  "properties": {
+    "schema": {
+      "const": "archivist.cli-output/v1",
+      "description": "The output namespace (CLI-014): present in every envelope, never implied by context, so a consumer always knows which output contract it is reading before it looks at anything else. Security-bearing: an unknown namespace is not this format; a consumer fails closed rather than parsing it hopefully (VAL-001). v2 arrives only through the documented transition.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "command": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,64}$",
+      "maxLength": 65,
+      "description": "The command path that produced this value, with spaces replaced by hyphens (CLI-005) — `daemon`, `verify-state`, `catalog-rebuild`. The hyphen-joined form is unique across the command registry by construction, so the token identifies exactly one command. Bounded by pattern, not closed to the registry: commands are append-only within v1, and an unregistered token still parses.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1",
+        "normalization": "none-rejected-unless-canonical"
+      }
+    },
+    "generated_at": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "When the command produced this value: RFC 3339 UTC with the Z suffix (plan Section 7.3 — persisted and reported timestamps are UTC; local time is a display choice). Provenance-bearing: freshness evidence for automation, never an input to identity.",
+      "x-archivist": {
+        "bearing": "provenance",
+        "compat": "required-v1"
+      }
+    },
+    "result": {
+      "type": "object",
+      "description": "The command's result document. The envelope delegates this member: each command's result shape is a closed schema under schemas/v1/, registered on the command's entry in tools/cli-commands.toml by the phase that implements it, and additive within that schema per the Section 7.1 compatibility rules. A command that has no result schema yet has not shipped. Whatever a result carries obeys the content rules every output obeys: no transcript bodies, no secret values or reference strings, no unbounded or sensitive identifiers (SEC-004, CFG-027).",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1",
+        "resultSchemas": "per-command closed schemas registered in tools/cli-commands.toml, appended by the implementing phase"
+      }
+    }
+  }
+}
