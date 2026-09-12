@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:control-client",
+  "title": "Agent Archivist linked-client record (archivist.control/v1)",
+  "description": "The tenant-authority-signed record that links one client installation to a tenant (plan Sections 5 and 7.5; ID-003): the installation's identity and Ed25519 public key, the base scopes it may act under, and its current authorization epoch. Stored at `tenants/<tenant>/v1/control/clients/<client>.json`, written only by the offline ControlAdminStore, read by every ingestion replica when it authenticates an uploader. The flat object is the complete record: the eight wrapper members every control record carries (schemas/v1/control-envelope.json) plus the five payload members below, closed with `additionalProperties: false` — for control records there is no retain-ignore additive growth inside v1, because a member a reader cannot interpret might carry authorization semantics, and authorization never rests on partially understood evidence (docs/notes/control-trust-schemas.md records the deviation from the plan Section 7.1 envelope rule and why). Public material only: the client's private half stays on the host that generated it (ID-001, SEC-006) and no field of this record, open or hypothetical, carries it.",
+  "type": "object",
+  "x-archivist": {
+    "namespace": "archivist.control/v1",
+    "namespaceField": "schema",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "canonicalization": "rfc8785",
+    "objectKey": "schemas/v1/control-envelope.json#/$defs/client-object-key",
+    "writeClass": "current-pointer",
+    "signature": "control-record-v1 (schemas/v1/control-envelope.json): Ed25519 by the tenant authority named by `authority_key_id` over the RFC 8785 canonicalization of this object with the `authority_signature` member removed. The chain an offline verifier walks: pinned authority root over this record, record's public key over each ingest attempt (ID-009).",
+    "epochRule": "a replacement of this record is accepted only when its signed `authorization_epoch` strictly increases (plan Section 5). The link starts at epoch 1; every key rotation, scope change, and revocation bumps it. An ingest attempt presents the current epoch inside its signature, and a stale-epoch attempt fails closed even when its immutable envelope is valid (plan Phase 3 exit gate); the receipt records which epoch authorized the commit.",
+    "trustRecordCacheTtlSeconds": 60,
+    "rotationVerificationOverlapHours": 24,
+    "privateKey": "the client's private half never appears in this or any other record, file, or argument — it is generated on the host (ID-001), used there to sign attempts, and reaches nothing else (SEC-006). This record carries the public half only; `key_id` is derivable from it by the pinned SHA-256 construction, so the record proves its own key identity",
+    "compatibility": "member additions, redefinitions, and new required members are all v2 namespace events — the closed shape is the compatibility rule for control records (docs/notes/control-trust-schemas.md). The only in-place appends this schema tolerates are new tokens inside already-closed enums (record_type in the envelope; operations below), each shipped together with the readers that understand it"
+  },
+  "additionalProperties": false,
+  "required": [
+    "authority_key_id",
+    "authority_signature",
+    "authorization_epoch",
+    "client_id",
+    "key_algorithm",
+    "key_id",
+    "public_key",
+    "record_kind",
+    "record_type",
+    "schema",
+    "scopes",
+    "signed_at",
+    "tenant_id"
+  ],
+  "properties": {
+    "schema": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/schema-namespace",
+      "description": "The control trust namespace this record belongs to. Pinned by the shared definition; an unknown namespace fails closed before anything else is read.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "record_type": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/record-type",
+      "const": "linked-client",
+      "description": "This is a linked-client record. Narrowed from the envelope's closed record-type enum to a const of this schema's own token, so this file both names and is the type's complete contract.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "record_kind": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/record-kind",
+      "const": "current-pointer",
+      "description": "The linked-client record is a current-pointer record: one object per client at the fixed key, replaced only by a strictly higher signed epoch (plan Section 5). A key rotation or scope change does not fork history — it publishes the next epoch of this same object, and the predecessor remains auditable in the signature chain of events that referenced it.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "tenant_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "The tenant this client is linked to (ID-003). Must equal the tenant segment of the object key — the store derives the key from validated fields and refuses any mismatch (ID-008); a record served under another tenant's prefix is a cross-tenant forgery check away from rejection, not a naming convention.",
+      "x-archivist": {
+        "bearing": "identity",
+        "compat": "required-v1"
+      }
+    },
+    "client_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "The installation-generated client identity (ID-001): a cryptographically random UUIDv4 minted once per installation, whose only security meaning comes from this record binding its key. Must equal the client segment of the object key (VAL-002 cross-field check). Hostnames are mutable provenance and never enter identity (ID-002); an upload's origin client is this ID or, for relays, an origin named by a delegation record — never a hostname.",
+      "x-archivist": {
+        "bearing": "identity",
+        "compat": "required-v1"
+      }
+    },
+    "key_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id",
+      "description": "Identifier of the client's authorization key: the lowercase-hex SHA-256 of the encoded public key, so the ID is computable from this record's own `public_key` (VAL-002 cross-field derivation, re-made by every verifier). This is the `uploader_key_id` an ingest attempt signs with and the `authorization_key_id` a receipt reports — one key identity from link to receipt.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    },
+    "key_algorithm": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/signature-algorithm",
+      "description": "Algorithm of `public_key`; Ed25519 only in v1. The attempt signature's algorithm is pinned by this closed enum inside the authority-signed record, so it travels verified rather than trusted — the same rule the receipt-key certificate applies.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "public_key": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/ed25519-public-key-hex",
+      "description": "The client's Ed25519 public half, lowercase hex — the value an ingestion replica uses to verify the per-attempt ingest-attempt-v1 signature after this record's authority chain verifies. Public material only (SEC-006): the private half is never in any record, file, or argument.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    },
+    "scopes": {
+      "type": "object",
+      "description": "The base grants the tenant authority gives this client as itself (ID-003: linking associates a public key with a tenant and an authorization policy). Relay authority is a conjunction of tenant, origin, harness, and operation scopes — never their union (plan Section 5): the tenant dimension is the record itself (it lives under the tenant's control prefix and is valid nowhere else); the origin dimension is the client itself for base uploads, because this record grants nothing for other origins — relay grants are delegation records, a later control record type; the harness and operation dimensions are the two members below, each an explicit allowlist. Closed and minimal: a client with no grants is not a client linked with empty arrays, it is a revoked client (a revocation record at a higher epoch).",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "closedShape": true
+      },
+      "additionalProperties": false,
+      "required": [
+        "harnesses",
+        "operations"
+      ],
+      "properties": {
+        "harnesses": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "description": "Harness IDs this client may upload as itself, each under the common harness grammar (plan Section 7.4). An explicit allowlist — v1 has no wildcard token, so adding a harness is a new epoch of this record, granted as deliberately as the first. Issued lexicographically sorted: RFC 8785 does not sort arrays, so sorted issuance is the writer discipline that makes equivalent grants produce identical canonical bytes (recorded here, not schema syntax).",
+          "x-archivist": {
+            "bearing": "security",
+            "compat": "required-v1",
+            "normalization": "writer-sorted"
+          },
+          "items": {
+            "$ref": "urn:agent-archivist:schema:v1:common#/$defs/short-token"
+          }
+        },
+        "operations": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "description": "Operations this client may perform. The operation dimension of the conjunction exists from day one because relay authority is defined over it (plan Section 5); v1 grants exactly `ingest`. Issued sorted, like `harnesses`.",
+          "x-archivist": {
+            "bearing": "security",
+            "compat": "required-v1",
+            "normalization": "writer-sorted"
+          },
+          "items": {
+            "type": "string",
+            "enum": ["ingest"],
+            "description": "A granted operation. `ingest`: present upload attempts under plan Section 7.2. Appended only by the change that ships the operation's readers; an unknown token fails closed.",
+            "x-archivist": {
+              "bearing": "security",
+              "compat": "append-per-operation",
+              "failClosed": true
+            }
+          }
+        }
+      }
+    },
+    "authorization_epoch": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/authorization-epoch",
+      "description": "This client's current authorization epoch. The link is epoch 1; every rotation, scope change, and revocation bumps it; the signed value is what makes pointer replacement safe (plan Section 5). During key rotation the old and new keys both verify for 24 hours while attempts must present the current epoch (plan Section 5), so retries of an already-frozen envelope authorize with the current key rather than stranding in the spool.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    },
+    "signed_at": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "UTC time the tenant authority signed this record — audit evidence for when the link, rotation, or scope change was approved. The epoch is the logical order of the record; this is its wall-clock context. No validity window is attached: the record is current until a higher epoch replaces it or a revocation record names its epoch, which is why revocation propagation is bounded by the reader cache, not by expiry (plan Section 5).",
+      "x-archivist": {
+        "bearing": "provenance",
+        "compat": "required-v1"
+      }
+    },
+    "authority_key_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id",
+      "description": "Identifier of the tenant authority key that signed this record — the root the client pinned during linking (ID-009). Names which pinned key (or, once authority rotation exists, which authority record's key) verifies `authority_signature`; see the envelope's authority-chain rule.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    },
+    "authority_signature": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/ed25519-signature-hex",
+      "description": "The tenant authority's Ed25519 signature under the control-record-v1 construction (schemas/v1/control-envelope.json): the RFC 8785 canonicalization of this object with this member removed. The one field the authority itself cannot cover, and the reason every other member — scopes and epoch included — is tamper-evident.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    }
+  }
+}

@@ -17,12 +17,19 @@ SEC-004/SEC-006. The family is:
 | [`schemas/v1/ingest-error.json`](../../schemas/v1/ingest-error.json) | The stable error body every producer emits (`archivist.error/v1`). |
 | [`schemas/v1/ingest-receipt.json`](../../schemas/v1/ingest-receipt.json) | The authenticated receipt and the embedded receipt-key certificate. |
 
-One further v1 schema lives in the same directory:
+Three further v1 schemas live in the same directory, each owned elsewhere
+and appearing here only because this gate's generic rules (draft, `$id`,
+ref resolution, enum bearings, no floats) scan every file under
+`schemas/v1/`:
 [`schemas/v1/cli-output.json`](../../schemas/v1/cli-output.json), the
-`archivist.cli-output/v1` CLI output envelope. It is owned by the
-[CLI command conventions](cli.md) and their gate, and appears here only
-because this gate's generic rules (draft, `$id`, ref resolution, no floats)
-scan every file under `schemas/v1/`.
+`archivist.cli-output/v1` CLI output envelope, owned by the
+[CLI command conventions](cli.md) and their gate; and the two control
+trust family files,
+[`schemas/v1/control-envelope.json`](../../schemas/v1/control-envelope.json)
+and
+[`schemas/v1/control-client.json`](../../schemas/v1/control-client.json),
+the `archivist.control/v1` record envelope and linked-client record, owned
+by the [control trust schemas](control-trust-schemas.md) and their gate.
 
 ## Version axes and fail-closed behavior
 

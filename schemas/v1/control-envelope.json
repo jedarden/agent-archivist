@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:control-envelope",
+  "title": "Agent Archivist control trust record envelope (archivist.control/v1)",
+  "description": "The shared, versioned conventions every control trust record reuses (plan Section 5 control-plane boundary; docs/notes/control-trust-schemas.md). Control records are the tenant-authority-signed objects below `tenants/<tenant>/v1/control/` (plan Section 7.5): the linked-client record shipped alongside this file, and the revocation, receipt-key, delegation, and authority-rotation record types the control-plane boundary names, each arriving as its own schema composed from this document. This file is a conventions registry and shared member library, not an instance schema — the standing `ingest-identifiers.json` has in the wire family: no control object validates against it alone, and every record-type schema is the complete, closed, flat object (wrapper members from `wrapper.members` below plus the type's payload members, side by side, `additionalProperties: false`). The wrapper is deliberately not a nested envelope-with-record shape: the receipt-key certificate inside `ingest-receipt.json` is already a flat authority-signed control record, and that definition is consumed by this family, not duplicated (docs/notes/wire-schemas.md, open questions).",
+  "x-archivist": {
+    "namespace": "archivist.control/v1",
+    "namespaceField": "schema",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "canonicalization": "rfc8785",
+    "publicMaterialOnly": "no member of any control record carries private-key material: every key-bearing member is a public half under a common shape, and the closed shape leaves no undeclared member for anything else to ride in (SEC-006). tools/check-control-schemas.py rejects private/secret/seed member names outright so the property is machine-checked, not aspirational",
+    "authorityChain": "every control record is signed by the tenant authority: `authority_key_id` names the signing key and `authority_signature` carries the signature (construction `control-record-v1` below). In v1 the named key is the tenant authority root the client pinned during linking (ID-009); when the authority itself rotates, an authority-rotation record type chains successor keys to predecessor ones, and `authority_key_id` then names the signing authority record's key — the certificate's authority-resolution rule, applied family-wide. Verification always starts at the pinned root and walks forward; it never trusts a key because a record asserts it",
+    "wrapper": {
+      "members": {
+        "schema": "#/$defs/schema-namespace",
+        "record_type": "#/$defs/record-type",
+        "record_kind": "#/$defs/record-kind",
+        "tenant_id": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+        "authorization_epoch": "#/$defs/authorization-epoch",
+        "signed_at": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+        "authority_key_id": "urn:agent-archivist:schema:v1:common#/$defs/key-id",
+        "authority_signature": "urn:agent-archivist:schema:v1:common#/$defs/ed25519-signature-hex"
+      },
+      "requiredByKind": {
+        "immutable": [
+          "authority_key_id",
+          "authority_signature",
+          "record_kind",
+          "record_type",
+          "schema",
+          "signed_at",
+          "tenant_id"
+        ],
+        "current-pointer": [
+          "authority_key_id",
+          "authority_signature",
+          "authorization_epoch",
+          "record_kind",
+          "record_type",
+          "schema",
+          "signed_at",
+          "tenant_id"
+        ]
+      }
+    },
+    "writeClasses": {
+      "immutable": "written once at a record-type-derived key; the ControlAdminStore rejects an overwrite outright unless the bytes are the identical record (plan Section 5: it 'rejects overwrite of an incompatible immutable record'), so a lost-response retry of the same administrative write is an idempotent repair and nothing else can displace the object. No pointer is protected, so the signed epoch is not a wrapper requirement for this class — a type carries it only when the epoch is part of the record's identity (the revocation object key names the revoked epoch)",
+      "current-pointer": "one object per subject at a fixed key, holding the current state; a replacement is accepted only when its signed `authorization_epoch` strictly increases — equal or lower is a stale write and is rejected (plan Section 5). The signature covers the epoch, so replaying an older record cannot displace a newer pointer without the authority key; rollback is therefore impossible by construction, the same property the plan pins for derived-policy pointers (publish another higher-epoch record, never repoint to an older one)"
+    },
+    "signatures": [
+      {
+        "id": "control-record-v1",
+        "algorithm": "ed25519",
+        "key": "the tenant authority key named by `authority_key_id` — the pinned root in v1, or an authority record's key once authority rotation exists (ID-009)",
+        "covered": ["canonical record bytes minus the `authority_signature` member"],
+        "coveredEncodings": ["bytes"],
+        "authorityMember": "authority_signature",
+        "source": "schemas/v1/control-envelope.json",
+        "description": "Ed25519 over the RFC 8785 canonicalization of the complete record object with the `authority_signature` member removed — exactly the receipt-key-v1 shape (schemas/v1/ingest-identifiers.json), reused deliberately so one verifier core walks both families. Domain separation under one authority key comes from the member sets: every control record's signed bytes contain the `schema` namespace member and no bare certificate's do, so the two signed byte ranges stay structurally distinct."
+      }
+    ],
+    "recordTypes": [
+      {
+        "type": "linked-client",
+        "writeClass": "current-pointer",
+        "schema": "schemas/v1/control-client.json",
+        "objectKeyPattern": "#/$defs/client-object-key",
+        "status": "shipped",
+        "description": "The linked-client record (plan Section 7.5 `tenants/<tenant>/v1/control/clients/<client>.json`): client identity, Ed25519 public key, base scopes, and the current authorization epoch (ID-003)."
+      }
+    ]
+  },
+  "$defs": {
+    "schema-namespace": {
+      "const": "archivist.control/v1",
+      "description": "The control trust namespace, expressed the way the `archivist.error/v1` and `archivist.cli-output/v1` families express theirs: one namespace member, present in every record, never implied by context, so a reader knows which contract it is reading before it looks at anything else. The trailing `v1` is the family's only version axis — there is no numeric twin beside it, and a v2 is a new namespace string, never a second field. Security-bearing: an unknown namespace fails closed; a trust record a reader cannot interpret is a verification failure, never a best-effort parse.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "record-type": {
+      "type": "string",
+      "enum": ["linked-client"],
+      "description": "Which control record type the object is (plan Section 5: client, delegation, rotation, revocation, and receipt-verification-key records all live under the control prefix). Closed, and appended to only by the change that ships the new type's schema and its readers: v1 ships `linked-client`; revocation, receipt-key, delegation, and authority-rotation tokens arrive with their record types and old readers fail closed on them until upgraded — the plan Section 7.1 rule that unknown security-bearing values are never guessed. Each record-type schema pins this member to a const of its own token. Security-bearing.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "append-per-record-type",
+        "failClosed": true
+      }
+    },
+    "record-kind": {
+      "type": "string",
+      "enum": ["immutable", "current-pointer"],
+      "description": "The write class (plan Section 5): `immutable` records are written once at a derived key with incompatible overwrites rejected; `current-pointer` records hold the current state of one subject and a replacement is valid only when its signed epoch increases (see `writeClasses`). The member must equal the write class registered for `record_type` in this schema's `recordTypes` registry — a cross-field check the ControlAdminStore makes before any write and any reader can re-make (VAL-002-style, not schema syntax). Security-bearing: the write rule is an authorization decision, so an unknown value fails closed.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "authorization-epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 999999999999999999,
+      "description": "The signed monotonic authorization epoch (plan Section 5: a current-pointer replacement is permitted only when its signed epoch increases; plan Phase 3: monotonic authorization epochs). Required on every current-pointer record; an immutable record type carries it only when the epoch is part of its identity (the revocation object key names the revoked epoch). The authority signature covers it, so a stale record cannot displace a newer pointer. The maximum is the 18-digit canonical decimal the revocation object key can carry — the bound is held in lockstep with that grammar rather than at the raw u63 ceiling, and sits far above any real epoch count. On the wire, an attempt's authorization epoch must equal the current linked-client record's epoch: stale-epoch attempts fail closed (plan Phase 3 exit gate), and the receipt records which epoch actually authorized the commit.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    },
+    "client-object-key": {
+      "type": "string",
+      "pattern": "^tenants/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/v1/control/clients/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.json$",
+      "maxLength": 512,
+      "description": "Server-derived linked-client record key (plan Section 7.5): tenant, the fixed v1 control prefix, and the validated client UUID. One object per linked client — the current-pointer home whose replacement requires a strictly higher signed epoch. The tenant segment must equal the record's `tenant_id` and the client segment its `client_id` (VAL-002 cross-field checks at the store and at any reader; ID-008: keys are derived from validated fields, never chosen by a writer).",
+      "x-archivist": {
+        "bearing": "security"
+      }
+    },
+    "revocation-object-key": {
+      "type": "string",
+      "pattern": "^tenants/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/v1/control/revocations/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[1-9][0-9]{0,17}\\.json$",
+      "maxLength": 512,
+      "description": "Reserved for the revocation record type (schema pending; plan Section 7.5): tenant, client, and the revoked authorization epoch in canonical decimal without leading zeros. Pinned here because the plan fixes the layout now and the `authorization-epoch` bound above must stay in lockstep with its decimal segment. An immutable record: one revocation event per epoch, never overwritten.",
+      "x-archivist": {
+        "bearing": "security"
+      }
+    },
+    "receipt-key-object-key": {
+      "type": "string",
+      "pattern": "^tenants/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/v1/control/receipt-keys/[0-9a-f]{64}\\.json$",
+      "maxLength": 512,
+      "description": "Reserved for the receipt-key record type (schema pending; plan Section 7.5): tenant and the receipt key ID, the SHA-256 of the encoded public key. Must stay in agreement with the receipt-key certificate's documented `objectKey` in `schemas/v1/ingest-receipt.json` — that flat certificate definition is what the receipt-key record type will consume, not duplicate (docs/notes/wire-schemas.md, open questions); tools/check-control-schemas.py cross-checks the two. An immutable record per key ID: rotation writes a new key object, it never rewrites an old one.",
+      "x-archivist": {
+        "bearing": "security"
+      }
+    }
+  }
+}

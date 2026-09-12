@@ -8,7 +8,8 @@
 #   - Fast:  fmt, build, clippy (-D warnings), rustdoc, stub scan, crate
 #     graph, license gate, error-code registry gate, config-key registry
 #     gate, wire-schema coherence gate, CLI command registry gate,
-#     synthetic-fixture regeneration and content scan,
+#     control trust schema gate, synthetic-fixture regeneration and
+#     content scan,
 #     verification-register gate, secret scan of the working tree
 #     (seconds, offline; safe as a gate)
 #   - Slow:  the workspace test suite
@@ -121,6 +122,12 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # enum/version metadata, reserved-name blocks, the construction registry,
   # and the error-message charset; `--self-test` proves the rejection paths.
   run_check "wire schema coherence"  python3 tools/check-wire-schemas.py --self-test
+  # Control trust family (docs/notes/control-trust-schemas.md): the
+  # archivist.control/v1 envelope registry, flat wrapper composition,
+  # closed shapes, the no-private-material rule, and behavioural
+  # validation of the golden linked-client record; `--self-test` proves
+  # the rejection paths.
+  run_check "control trust schemas"  python3 tools/check-control-schemas.py --self-test
   # Byte-exact regeneration from the recorded seed plus the closed-
   # vocabulary content scan (docs/notes/fixtures.md). Output is
   # content-free: counts, bytes, and digests only.
