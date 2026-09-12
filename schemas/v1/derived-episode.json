@@ -1,0 +1,304 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:derived-episode",
+  "title": "Agent Archivist redacted episode (episode_version 1, pipeline redaction-v1)",
+  "description": "The deterministic derived record the pinned `redaction-v1` pipeline emits from validated raw occurrences (plan Phase 10; STO-012; SEC-009): redacted content, raw occurrence provenance, redaction and transformation metadata, the pipeline version, and the episode digest — nothing else. It is the only derived artifact an agent-facing consumer may ever read, and it is deliberately the dumbest object in the derived family: every judgment about it — risk labels, trust decisions, use approvals, policy evaluation — lives in records that come after it and point back at it by digest, never inside it. The four forbidden categories (embedded risk assessment or trust decision, use approval or governance material, raw object paths, reversible redaction material) are rejected by name below and excluded by the closed shape, so no later governance record can be frozen into the bytes it is about. The record is derivation-stable: every member is a deterministic function of the input occurrence set, the immutable pipeline version, and the tenant pseudonym key, so a catalog rebuild from the same raw prefix reproduces byte-identical episodes and digests (plan Phase 10 exit gate) — wall-clock, producer, and run identity never enter. The episode digest is self-verifying and acyclic (construction `episode-v1` in `x-archivist.derivations`): it excludes its own member from its preimage, and no member references any assessment, approval, or policy record, so a later risk assessment binds the episode by digest alone and neither record's serialization ever contains the other.",
+  "type": "object",
+  "x-archivist": {
+    "mediaType": "application/vnd.agent-archivist.derived-episode+json;version=1",
+    "canonicalization": "rfc8785",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "objectKey": "schemas/v1/common.json#/$defs/derived-episode-object-key",
+    "writeOrder": "after every input occurrence manifest is durable, before any risk assessment (plan Phase 10: episodes precede and feed classification)",
+    "writeClass": "immutable, content-addressed by episode_digest: one object per digest, a rebuild writes identical bytes, and nothing can displace it. The derived prefix never touches a raw namespace (plan Section 7.1 derived-pipeline axis: rebuildable; never overwrites raw data)",
+    "derivationStability": "every member is a deterministic function of the input occurrence set, pipeline_id + pipeline_version (with the detector corpus that version freezes, digest-pinned below), and the tenant pseudonym key. No wall-clock, producer, run, assessment, approval, or policy input exists to make two derivations of the same inputs diverge — which is what makes the Phase 10 rebuild exit gate and assessment freshness by digest comparison possible at all",
+    "derivations": [
+      {
+        "id": "episode_digest",
+        "label": "episode-v1",
+        "algorithm": "sha256",
+        "fields": [
+          "canonical_episode_bytes_without_episode_digest"
+        ],
+        "fieldKinds": [
+          "bytes"
+        ],
+        "selfMember": "episode_digest",
+        "source": "the episode record itself",
+        "description": "SHA-256 under the domain label `episode-v1` (UTF-8 label bytes, one 0x00 terminator, then an 8-byte unsigned big-endian length and exactly that many bytes, the ingest-identifiers encodings reused) over the RFC 8785 canonicalization of the complete episode object with the `episode_digest` member removed — exactly the exclusion shape the control-record-v1 signature and the receipt-key certificate use, so one verifier core pattern walks every family. Self-verifying: an auditor recomputes it from this record's own bytes and refuses a mismatch (VAL-005). Acyclic by construction: the digest member is excluded from its own preimage, and no member of an episode references any record derived from it, so an assessment binding `episode_digest` never requires the episode to embed, re-serialize, or anticipate the assessment."
+      }
+    ],
+    "governanceBoundary": "classification is evidence about an episode; policy decides what that evidence authorizes; approval is a human act binding both. All three are later, separately versioned, separately signed records that reference this one by `episode_digest` — the plan's separation of classifier (rules-v1), authorization (consumption-policy-v1), and human approval (use-approval-v1). Nothing of them is embedded here, so a re-assessment supersedes in place, a policy change fails closed without touching derived bytes, and an approval can expire and be revoked without the episode ever knowing",
+    "reservedFields": [
+      "approval",
+      "approved_by",
+      "assessment",
+      "assessment_digest",
+      "assessment_id",
+      "blob_key",
+      "built_at",
+      "classification",
+      "created_at",
+      "generated_at",
+      "labels",
+      "location",
+      "mapping",
+      "object_key",
+      "path",
+      "plaintext",
+      "policy",
+      "policy_version",
+      "produced_at",
+      "producer",
+      "pseudonym_map",
+      "pseudonym_salt",
+      "raw_object_key",
+      "redaction_map",
+      "removed_content",
+      "reverse_map",
+      "risk_assessment",
+      "run_id",
+      "salt",
+      "severity",
+      "source_path",
+      "trust_decision",
+      "url",
+      "use_approval",
+      "verdict"
+    ]
+  },
+  "additionalProperties": false,
+  "required": [
+    "detector_corpus_digest",
+    "episode_digest",
+    "episode_version",
+    "marker_counts",
+    "occurrence_ids",
+    "pipeline_id",
+    "pipeline_version",
+    "pseudonym_counts",
+    "pseudonym_key_id",
+    "records",
+    "tenant_id"
+  ],
+  "properties": {
+    "episode_version": {
+      "const": 1,
+      "description": "Episode schema major version (plan Section 7.1): the record-shape axis, independent of the pipeline axis below. Integer, currently 1. Because a classifier must never reason over content it only partially understands, this family takes the control-family deviation from the plan's retain-ignore envelope rule: the closed shape is the compatibility rule, the only in-place growth is new tokens inside the already-closed enums (`role`, `pipeline_id`) shipped together with the readers that understand them, and anything else — new members, redefined fields, new required members, changed digest rules — is episode_version 2 (docs/notes/derived-episode-schema.md records the deviation and why).",
+      "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+    },
+    "episode_digest": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "The record's own identity, construction `episode-v1` (x-archivist.derivations above): SHA-256 over the RFC 8785 canonical bytes of this object with this member removed. Carried so the record is self-naming and re-derivable in place (VAL-005), and so every later governance record — risk-assessment-v1 binding the assessed episode, use-approval-v1 binding episode and assessment — references this digest and nothing else of the episode: the binding is by digest reference only, in neither direction embedding the other record's bytes, which is the no-circular-serialization acceptance of this schema.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "tenant_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "The tenant whose raw occurrences this episode derives from (plan Section 7.5 derived key layout). Scopes the object key and the pseudonym key reference; every occurrence referenced below belongs to this tenant.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "pipeline_id": {
+      "type": "string",
+      "enum": ["redaction"],
+      "description": "The derived pipeline that produced this episode (plan Section 7.1 derived-pipeline axis: pipeline name + version). v1 ships exactly one producer, deterministic `redaction`; a future producer extends this enum additively together with the readers that understand it, and writes under its own derived prefix segment — never by repurposing `redaction`'s. Security-bearing: the pipeline names the trust the digest rests on, so an unknown value fails closed.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+    },
+    "pipeline_version": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/version-token",
+      "description": "The immutable pipeline version (v1 pins `1`, the `redaction-v1` producer). Detector order, patterns, entropy parameters, structured-field allowlists, pseudonym format, and test corpus are frozen inside a version and digest-pinned by `detector_corpus_digest`; a changed detector is a new version writing a new derived prefix segment, never a silent rewrite of an old one (plan Section 7.1: rebuildable; never overwrites raw data). An input the pipeline's version cannot process — binary, malformed, unsupported, detector-failed, or limit-exceeding — produces no episode at all and a bounded coverage gap, never a partial one.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "detector_corpus_digest": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "SHA-256 of the immutable detector corpus frozen inside the named pipeline version: the ordered detectors, their patterns and entropy parameters, the structured-field allowlists, the pseudonym format, and the test corpus. Makes the derivation's behavior content-addressed: two producers claiming the same `pipeline_id` and `pipeline_version` but differing effective detectors are exposed by differing corpus digests before their episodes can be mistaken for each other, and a rebuild that drifts from the pinned corpus fails the byte-identical exit gate rather than silently staling every assessment.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "pseudonym_key_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "Reference to the tenant-scoped derived-pipeline key that keyed the pseudonym HMACs (plan Phase 10: pseudonyms use a derived-pipeline key reference). The construction is a keyed self-ID — lowercase hex of HMAC-SHA256 with the pseudonym key over the UTF-8 label `pseudonym-key-id-v1` — so the identifier is recomputable and verifiable only by holders of the key, discloses nothing about it, and cannot be brute-forced offline the way a digest of public or low-entropy material could. The key itself never appears in any record, file, or argument (SEC-006). Rotating the key changes every pseudonym, hence the episode bytes, hence `episode_digest`: all assessments over the old episodes go stale and use fails closed until re-derivation and re-assessment — rotation is a derived-corpus event, deliberately not transparent.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "occurrence_ids": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 65536,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex" },
+      "description": "The raw occurrences this episode derives from — their `occurrence-v1` identity digests (STO-012: derived artifacts retain references to raw occurrence IDs), in ascending unique order so the derivation input set has one canonical serialization. Occurrence IDs, never raw object paths: an ID is an opaque digest that names provenance, while a path would hand any derived consumer a direct route to unredacted bytes — traceability from an episode to its raw evidence runs occurrence ID, catalog, and the governed raw read, so raw stays separately governed (plan Phase 10 exit gate: derived data traceable to raw occurrences without exposing raw object paths to unauthorized consumers).",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "marker_counts": {
+      "$ref": "#/$defs/marker-counts",
+      "description": "Census of typed non-reversible markers substituted into `records` content, by bounded class: the five pinned detector families that destroy what they match. Every class key is required with an explicit zero when nothing fired, so a detector that silently failed to run is visible as a missing capability in the evidence rather than indistinguishable from a clean scan — the census complements `detector_corpus_digest` (what should have run) with what actually fired.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "pseudonym_counts": {
+      "$ref": "#/$defs/pseudonym-counts",
+      "description": "Census of tenant-scoped HMAC pseudonyms substituted into `records` content, by bounded class: the five identifier families that stay analytically useful only as stable pseudonyms. Same explicit-zero rule as `marker_counts`. Neither census records removed content — counts by class are the whole redaction report, per the plan's no-removed-bytes rule.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1" }
+    },
+    "records": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 65536,
+      "items": { "$ref": "#/$defs/episode-record" },
+      "description": "The redacted content in episode order: one entry per source record the pipeline accepted, serialized in ascending `ordinal` order so the array's order is the episode's order. An input set with no acceptable records produces no episode and a bounded coverage gap, never an empty one. What each entry retains is the plan's allowlist — role, ordering, timing, and relationship fields plus the redacted content rendering — and nothing else of the source record.",
+      "x-archivist": { "bearing": "structural", "compat": "required-v1" }
+    }
+  },
+  "$defs": {
+    "episode-role": {
+      "type": "string",
+      "enum": ["assistant", "system", "tool", "user"],
+      "description": "The bounded v1 role set: the four harness-agnostic roles adapters map their harness's roles onto. A role that cannot be mapped produces no episode (bounded coverage gap), never a best-effort token. Security-bearing and fail-closed: rules-v1 reasons over roles when classifying, so a role a classifier does not recognize must fail closed rather than be consumed as if it were understood.",
+      "x-archivist": {
+        "bearing": "security",
+        "failClosed": true
+      }
+    },
+    "episode-record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["content", "ordinal", "role"],
+      "properties": {
+        "ordinal": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Episode-local position of this record: contiguous, ascending from zero, unique across the episode, and the handle `parent_ordinals` references. Contiguity and uniqueness are producer and validator invariants (VAL-002), not syntax — the schema pins the shape, the pipeline pins the discipline."
+        },
+        "role": {
+          "$ref": "#/$defs/episode-role",
+          "description": "The source record's allowlisted role after adapter mapping."
+        },
+        "content": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1048576,
+          "description": "The record's redacted canonical rendering: the source text or structured projection after the pinned detectors replaced secrets with typed markers and identifiers with pseudonyms. The marker and pseudonym text formats are part of the immutable pipeline version, not this schema — the schema bounds the bytes; the corpus digest pins what produced them. Removed bytes never appear here or anywhere else in the episode.",
+          "x-archivist": {
+            "byteMaxLength": 1048576,
+            "bearing": "security"
+          }
+        },
+        "source_time": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+          "description": "Optional UTC event time embedded in or derived from the source record itself, when one exists — the timing field of the plan's allowlist. Source-stable like the manifest's `source_time`; omitted, never null, when the source carries none. It is never a derivation timestamp: wall-clock would break derivation stability and is rejected by name in the reserved list."
+        },
+        "parent_ordinals": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63" },
+          "description": "The relationship field of the plan's allowlist: references to earlier records this one answers or continues — a tool result naming its call, a reply its prompt. Backward-only (every value strictly below this record's own `ordinal`, a producer and validator invariant), so the episode's reference graph is acyclic by the same discipline that keeps the digest acyclic."
+        }
+      }
+    },
+    "marker-counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authorization_header",
+        "environment_secret",
+        "high_entropy_token",
+        "pinned_credential",
+        "private_key_block"
+      ],
+      "properties": {
+        "pinned_credential": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Pinned credential formats replaced with a typed marker."
+        },
+        "authorization_header": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Authorization headers replaced with a typed marker."
+        },
+        "private_key_block": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Private-key blocks replaced with a typed marker."
+        },
+        "environment_secret": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Environment-secret assignments replaced with a typed marker."
+        },
+        "high_entropy_token": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "High-entropy token candidates replaced with a typed marker."
+        }
+      }
+    },
+    "pseudonym-counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "absolute_path",
+        "email_address",
+        "hostname",
+        "ip_address",
+        "username"
+      ],
+      "properties": {
+        "absolute_path": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Absolute paths replaced with a tenant-scoped HMAC pseudonym."
+        },
+        "hostname": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Hostnames replaced with a tenant-scoped HMAC pseudonym."
+        },
+        "username": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "User names replaced with a tenant-scoped HMAC pseudonym."
+        },
+        "email_address": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Email addresses replaced with a tenant-scoped HMAC pseudonym."
+        },
+        "ip_address": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "IP addresses replaced with a tenant-scoped HMAC pseudonym."
+        }
+      }
+    }
+  },
+  "not": {
+    "anyOf": [
+      { "required": ["approval"] },
+      { "required": ["approved_by"] },
+      { "required": ["assessment"] },
+      { "required": ["assessment_digest"] },
+      { "required": ["assessment_id"] },
+      { "required": ["blob_key"] },
+      { "required": ["built_at"] },
+      { "required": ["classification"] },
+      { "required": ["created_at"] },
+      { "required": ["generated_at"] },
+      { "required": ["labels"] },
+      { "required": ["location"] },
+      { "required": ["mapping"] },
+      { "required": ["object_key"] },
+      { "required": ["path"] },
+      { "required": ["plaintext"] },
+      { "required": ["policy"] },
+      { "required": ["policy_version"] },
+      { "required": ["produced_at"] },
+      { "required": ["producer"] },
+      { "required": ["pseudonym_map"] },
+      { "required": ["pseudonym_salt"] },
+      { "required": ["raw_object_key"] },
+      { "required": ["redaction_map"] },
+      { "required": ["removed_content"] },
+      { "required": ["reverse_map"] },
+      { "required": ["risk_assessment"] },
+      { "required": ["run_id"] },
+      { "required": ["salt"] },
+      { "required": ["severity"] },
+      { "required": ["source_path"] },
+      { "required": ["trust_decision"] },
+      { "required": ["url"] },
+      { "required": ["use_approval"] },
+      { "required": ["verdict"] }
+    ]
+  }
+}

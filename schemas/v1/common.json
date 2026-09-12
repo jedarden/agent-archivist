@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:agent-archivist:schema:v1:common",
   "title": "Agent Archivist shared wire vocabulary (v1)",
-  "description": "Primitive shapes, identifier grammars, and the closed v1 enum sets shared by the ingest wire schema family (docs/notes/wire-schemas.md). Every enum here is fail-closed on unknown values per plan Section 7.1; the `x-archivist.bearing` metadata records which enums are security- or identity-bearing. Every numeric shape is an integer: protocol structures contain no floating-point values.",
+  "description": "Primitive shapes, identifier grammars, and the closed v1 enum sets shared by the ingest wire, raw provenance, and derived episode schema families (docs/notes/wire-schemas.md, docs/notes/raw-provenance-schemas.md, docs/notes/derived-episode-schema.md). Every enum here is fail-closed on unknown values per plan Section 7.1; the `x-archivist.bearing` metadata records which enums are security- or identity-bearing. Every numeric shape is an integer: protocol structures contain no floating-point values.",
   "$defs": {
     "uuid-v4": {
       "type": "string",
@@ -203,6 +203,15 @@
       "pattern": "^tenants/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/v1/raw/attestations/[0-9a-f]{2}/[0-9a-f]{64}/[0-9a-f]{64}\\.json$",
       "maxLength": 512,
       "description": "Server-derived upload-attestation key (plan Section 7.5): tenant, occurrence shard, occurrence hash, attestation hash.",
+      "x-archivist": {
+        "bearing": "security"
+      }
+    },
+    "derived-episode-object-key": {
+      "type": "string",
+      "pattern": "^tenants/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/v1/derived/redaction/1/episodes/[0-9a-f]{2}/[0-9a-f]{64}\\.json$",
+      "maxLength": 512,
+      "description": "Server-derived redacted-episode key (plan Section 7.5 derived layout `tenants/<tenant>/v1/derived/<pipeline>/<version>/<partition>/<object>`): tenant, the `redaction` pipeline and its version segment, the `episodes` partition, then the two-hex shard and the episode digest. The `<pipeline>/<version>` segments are the plan Section 7.1 derived-pipeline axis — a new pipeline version writes a new prefix and never rewrites an older episode, and no derived prefix ever touches a raw namespace. The digest segment is the record's own `episode_digest` and the two-hex segment is its shard, so the key is re-derivable from the stored record alone. The episode record itself carries occurrence IDs, never raw object paths.",
       "x-archivist": {
         "bearing": "security"
       }
