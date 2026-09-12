@@ -111,3 +111,9 @@ in the fast lane: it is offline, content-free in its output, and completes
 in well under a second at the current corpus size (99 files, ~455 KiB).
 The manifest's `corpus_digest` is the value downstream verification
 manifests can record as the fixture digest for a given commit.
+
+The fast lane gates the other byte-exact bundles the same way — the
+adapter-facing session corpus here, the wire-level
+[conformance corpus](conformance-corpus.md), and the schema-evolution
+[compatibility corpus](schema-compatibility.md) — each with its own
+regeneration tool and notes file.

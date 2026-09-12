@@ -844,7 +844,8 @@
         "outcomes"
       ],
       "kind": "test",
-      "lane": "slow",
+      "lane": "fast",
+      "locator": "tools/compatgen.py",
       "owner": "operations-exercises"
     },
     "T-PUB-001": {

@@ -203,8 +203,10 @@ signature-member names agreeing with `ingest-identifiers.json`; its
 request/signature/ID vectors live in the language-neutral conformance
 corpus ([conformance corpus](conformance-corpus.md)), regenerated and
 verified by `tools/conformancegen.py --verify` in the same fast lane;
-the old-reader/new-writer compatibility fixtures (plan Section 7.1)
-remain separately tracked work.
+the old-reader/new-writer and new-reader/old-writer fixtures that prove
+plan Section 7.1's compatibility rules over this family are the
+[schema compatibility corpus](schema-compatibility.md), gated the same
+way.
 
 ## Open questions
 

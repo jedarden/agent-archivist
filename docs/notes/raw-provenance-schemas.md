@@ -73,7 +73,11 @@ bytes; new required fields, redefined fields, a changed canonical field
 set, or changed identity rules require a new major, and unknown majors and
 unknown security- or identity-bearing enum values fail closed. Every
 `x-archivist.bearing` marks which enum is which; `delegation` is the one
-enum this family adds and it is security-bearing.
+enum this family adds and it is security-bearing. These rules are pinned
+as byte-exact old-reader/new-writer and new-reader/old-writer scenarios
+by the [schema compatibility corpus](schema-compatibility.md), which
+digest-pins this corpus's golden occurrence and attestation as its
+old-writer baselines.
 
 ## The example bundle
 

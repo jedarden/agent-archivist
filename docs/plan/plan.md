@@ -379,7 +379,14 @@ and old readers ignore their semantics while retaining them inside signed bytes.
 New required fields, redefined fields, or changed identity rules require `v2`.
 Unknown major versions and unknown security- or identity-bearing enum values fail
 closed. Protocol structures contain no floating-point values. These compatibility
-rules are enforced by old-reader/new-writer and new-reader/old-writer fixtures.
+rules are enforced by old-reader/new-writer and new-reader/old-writer fixtures in
+the schema compatibility corpus
+([docs/notes/schema-compatibility.md](../notes/schema-compatibility.md),
+`tools/compatgen.py`): every rule above — all seven table rows plus the
+additive-optional, retained-unknown-optional, fail-closed, no-floats, and
+requires-`v2` sentences — is pinned as byte-exact scenarios whose manifest
+coverage map must map each rule to at least one positive or negative case, and
+the corpus is regenerated and verified in the definition-of-done fast lane.
 
 ### 7.2 Wire request and authentication
 

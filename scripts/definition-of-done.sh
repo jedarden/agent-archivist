@@ -9,8 +9,8 @@
 #     graph, license gate, error-code registry gate, metrics registry
 #     gate, config-key registry gate, wire-schema coherence gate, CLI
 #     command registry gate,
-#     control trust schema gate, synthetic-fixture and
-#     conformance-corpus regeneration and content scan,
+#     control trust schema gate, synthetic-fixture, conformance-corpus,
+#     and compat-corpus regeneration and content scan,
 #     verification-register gate, secret scan of the working tree
 #     (seconds, offline; safe as a gate)
 #   - Slow:  the workspace test suite
@@ -150,6 +150,16 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # pure-Python Ed25519 verifier and every golden error body is checked
   # against the error-code registry.
   run_check "conformance corpus"  python3 tools/conformancegen.py --verify
+  # Schema compatibility corpus (docs/notes/schema-compatibility.md):
+  # byte-exact regeneration of the two-reader-generation matrix; the
+  # manifest coverage check proves every plan Section 7.1 version-axis
+  # rule maps to at least one pinned positive or negative scenario, the
+  # exhaustive failClosed-enum matrix rejects every synthesized unknown
+  # value under both reader generations, and --require-complete fails
+  # while any scenario verification is still deferred; `--self-test`
+  # proves the rejection paths.
+  run_check "compat corpus"  python3 tools/compatgen.py --verify --require-complete
+  run_check "compat policy"  python3 tools/compatgen.py --self-test
   # Requirement-to-verification mapping (docs/notes/verification.md):
   # `check` validates this tree's register (consistency with the
   # requirements document plus the located-check rule for anything marked
