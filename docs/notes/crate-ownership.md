@@ -52,7 +52,7 @@ layer 1 — not on a tier of its own above the client engine.
 | Crate | Layer | Purpose | Owning phase | Internal dependencies |
 |---|---|---|---|---|
 | `archivist-protocol` | 0 | Versioned wire types, validation, deterministic identifiers and object-key derivation, RFC 8785 canonical serialization | 1 | none |
-| `archivist-auth` | 1 | Ed25519 signing and verification, linked-client records, tenant authority chain, delegation, revocation and rotation epochs, receipt keys | 3 | protocol |
+| `archivist-auth` | 1 | Ed25519 signing and verification, linked-client records, tenant authority chain, delegation, revocation and rotation epochs, receipt keys — the `archivist.control/v1` types of the [control trust](control-trust.md) family | 3 | protocol |
 | `archivist-storage` | 1 | Capability model and the `RawWriteStore`, `ControlReadStore`, `ControlAdminStore`, `AuditRestoreStore` traits; `inventory-v1` contract | 2 | protocol |
 | `archivist-adapter-sdk` | 1 | Adapter lifecycle, capability, status, discovery, and immutable-artifact projection interfaces; fingerprint allowlists; conformance suite | 6D | protocol |
 | `archivist-storage-s3` | 2 | Portable S3 implementation of the storage traits; `zstd-v1` commits; validate-before-complete multipart | 2 | storage |

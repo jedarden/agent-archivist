@@ -23,13 +23,13 @@ ref resolution, enum bearings, no floats) scan every file under
 `schemas/v1/`:
 [`schemas/v1/cli-output.json`](../../schemas/v1/cli-output.json), the
 `archivist.cli-output/v1` CLI output envelope, owned by the
-[CLI command conventions](cli.md) and their gate; and the two control
+[CLI command conventions](cli.md) and their gate; and the six control
 trust family files,
 [`schemas/v1/control-envelope.json`](../../schemas/v1/control-envelope.json)
-and
-[`schemas/v1/control-client.json`](../../schemas/v1/control-client.json),
-the `archivist.control/v1` record envelope and linked-client record, owned
-by the [control trust schemas](control-trust-schemas.md) and their gate.
+with the five `control-*.json` record schemas beside it, the
+`archivist.control/v1` record envelope and its shipped record types,
+owned by the [control trust](control-trust.md) and
+[control trust schemas](control-trust-schemas.md) notes and their gate.
 
 ## Version axes and fail-closed behavior
 

@@ -78,6 +78,14 @@ committed.
   that rejects forbidden high-cardinality and sensitive labels and proves
   the OpenTelemetry-to-Prometheus name translation injective, so exporters
   retain consistent names.
+- [Control trust](docs/notes/control-trust.md) ties together the
+  `archivist.control/v1` record family — linked-client, delegation,
+  revocation, rotation, and receipt-key records under the control prefix —
+  backed by the append-only record registry in `tools/control-records.toml`
+  and a gate that proves the registry, the envelope's own registries, and
+  the plan's object-key table and timing sentences one contract; the
+  per-record contracts live in
+  [control trust schemas](docs/notes/control-trust-schemas.md).
 - [Synthetic fixtures](docs/notes/fixtures.md) define the deterministic,
   seeded generator behind the `fixtures/synthetic/` corpus — normal,
   malformed, rewritten, and large synthetic sessions — its byte-exact

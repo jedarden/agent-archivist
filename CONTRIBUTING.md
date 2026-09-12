@@ -63,6 +63,7 @@ python3 tools/check-metrics.py --self-test         # metrics registry gate
 python3 tools/check-config.py --self-test          # config-key registry gate
 python3 tools/check-cli.py --self-test             # CLI command registry gate
 python3 tools/check-wire-schemas.py --self-test    # wire-schema coherence gate
+python3 tools/check-control-schemas.py --self-test  # control trust schema gate
 python3 tools/fixturegen.py --verify               # synthetic fixtures: byte-exact
                                                    # regeneration + content scan
 python3 tools/verification-manifest.py check       # this tree's verification register
@@ -78,9 +79,9 @@ The script's lanes keep per-change gating cheap:
   rustdoc, stub scan, crate graph, license gate, error-code registry gate,
   metrics registry gate, config-key registry gate, CLI command registry
   gate, wire-schema
-  coherence gate, synthetic-fixture regeneration and content scan,
-  verification-register gate, working-tree secret scan — seconds, fully
-  offline.
+  coherence gate, control trust schema gate, synthetic-fixture
+  regeneration and content scan, verification-register gate,
+  working-tree secret scan — seconds, fully offline.
 - `--slow`: the workspace test suite.
 - `--audit`: `cargo audit` and the git-history secret scan. The audit
   downloads the public RustSec advisory database; no credentials are involved.
@@ -114,7 +115,17 @@ requires every deployment-settable setting to be an appended entry in
 secret-reference spelling satisfy the
 [configuration conventions](docs/notes/configuration.md); it also rejects
 committed configuration-bearing files that assign a literal value to a
-`*_ref` setting, so examples and fixtures carry references only. The synthetic-fixture gate
+`*_ref` setting, so examples and fixtures carry references only. The
+control trust schema gate keeps the `archivist.control/v1` family, its
+append-only record registry
+([`tools/control-records.toml`](tools/control-records.toml)), and the
+plan one contract — every record type agreeing with the envelope's own
+registry member for member, every object key under the plan Section 7.5
+control prefix and accepted by the envelope's pattern, every timing
+constant encoded exactly once and quoting the plan sentence that pins it
+([control trust](docs/notes/control-trust.md)); a registry that drifts
+from the envelope, a paraphrased plan quote, or a plan sentence
+rewritten out from under a quoted constant fails the fast lane. The synthetic-fixture gate
 regenerates the corpus from the seed recorded in
 `fixtures/synthetic/manifest.json` and byte-compares it against the working
 tree; after changing the generator, run

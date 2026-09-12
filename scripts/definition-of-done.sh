@@ -130,11 +130,14 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # enum/version metadata, reserved-name blocks, the construction registry,
   # and the error-message charset; `--self-test` proves the rejection paths.
   run_check "wire schema coherence"  python3 tools/check-wire-schemas.py --self-test
-  # Control trust family (docs/notes/control-trust-schemas.md): the
-  # archivist.control/v1 envelope registry, flat wrapper composition,
-  # closed shapes, the no-private-material rule, and behavioural
-  # validation of the golden linked-client record; `--self-test` proves
-  # the rejection paths.
+  # Control trust family (docs/notes/control-trust.md and
+  # docs/notes/control-trust-schemas.md): the archivist.control/v1
+  # envelope registry, flat wrapper composition, closed shapes, the
+  # no-private-material rule, behavioural validation of the golden
+  # records, and the append-only record registry
+  # (tools/control-records.toml) agreeing with the envelope registry,
+  # its object-key patterns, and the plan's Section 7.5 layouts and
+  # timing sentences; `--self-test` proves the rejection paths.
   run_check "control trust schemas"  python3 tools/check-control-schemas.py --self-test
   # Byte-exact regeneration from the recorded seed plus the closed-
   # vocabulary content scan (docs/notes/fixtures.md). Output is

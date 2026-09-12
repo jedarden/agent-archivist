@@ -4,6 +4,10 @@ Authority: the implementation plan, Section 5 (control-plane boundary),
 Section 7.1 (version axes), Section 7.2 (wire authentication),
 Section 7.5 (object keys), and Section 7.8 (receipts); requirements
 ID-001, ID-003, ID-005, ID-006, ID-008, ID-009, RCPT-006, and SEC-006.
+This note holds the per-record contracts; the family overview, the
+external record registry (`tools/control-records.toml`), and the
+plan-citation checks that bind the two notes' constants to the plan's
+own sentences live in [control trust](control-trust.md).
 The family is:
 
 | File | Role |
@@ -490,7 +494,11 @@ golden record's certificate projection validating against the
 certificate definition itself), seventy-eight behavioural rejections
 across the five records, and the receipt-key pattern cross-check
 against `ingest-receipt.json`.
-Its `--self-test` proves the rejection paths.
+Its `--self-test` proves the rejection paths. The registry layer of the
+same gate — `tools/control-records.toml` two-way agreement with the
+envelope registry, object-key layouts against the patterns and plan
+Section 7.5, and each timing constant's verbatim plan quote — is
+documented in [control trust](control-trust.md).
 
 ```sh
 tools/check-control-schemas.py             # accept path

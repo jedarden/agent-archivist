@@ -2,9 +2,10 @@
 """Control-trust schema coherence gate for Agent Archivist.
 
 Validates the ``archivist.control/v1`` family against the internal
-contracts of ``docs/notes/control-trust-schemas.md`` (authority: plan
-Sections 5, 7.1, 7.2, and 7.5; requirements ID-003, ID-005, ID-006,
-ID-008, ID-009, SEC-006):
+contracts of ``docs/notes/control-trust-schemas.md`` and
+``docs/notes/control-trust.md`` (authority: plan Sections 5, 7.1, 7.2,
+7.5, and 7.8; requirements ID-003, ID-005, ID-006, ID-008, ID-009,
+SEC-006):
 
 1. all six family schemas parse, declare draft 2020-12, and carry the
    ``urn:agent-archivist:schema:v1:<stem>`` id matching the filename, and
@@ -78,19 +79,43 @@ ID-008, ID-009, SEC-006):
    wrapper-shared members under identical shapes, and the record adds
    nothing but wrapper members), and the golden record's certificate
    projection — the payload members plus ``certificate_version`` —
-   validating against the certificate definition itself.
+   validating against the certificate definition itself;
+8. the external record registry (``tools/control-records.toml``, in the
+   mold of ``tools/cli-commands.toml``) is the family's append-only
+   index: its record types agree with the envelope's ``recordTypes``
+   registry and the record-type enum two-way — write class, schema,
+   key members, status, member for member, so neither home can drift
+   without the gate failing — its object keys are written with the
+   record's own member names as placeholders in ``key_members`` order,
+   sit under the plan Section 7.5 control prefix, and, with the pinned
+   golden identifiers substituted, reproduce keys the envelope's
+   object-key patterns accept; every control layout the plan's
+   Section 7.5 table pins appears in the registry exactly as the plan
+   writes it under the generic-to-member placeholder mapping; and its
+   timing constants agree with the envelope registry while each
+   ``plan_quote`` is proven verbatim plan text that states the
+   constant's number exactly once — words-to-numbers included, because
+   the plan pins the five-minute window and the seven-day overlap as
+   words;
+9. each timing constant is encoded exactly once: outside the envelope
+   registry (the one authoritative encoding), every occurrence of a
+   constant-name member anywhere in the family is one of the pin paths
+   this gate enumerates and pins the registry value — a second encoding
+   is how a timing contract forks, and there is none.
 
 On success it prints a summary and exits 0. Any failure prints a report
 on stderr and exits 2. A missing ``jsonschema`` module is a failure,
 never a silent skip of the behavioural checks.
 
-``--self-test`` mutates a copy of the committed family and fails unless
-every mutation is rejected, proving the rejection paths (opened shape,
-banned member name, dropped fail-closed metadata, registry/enum drift,
-wrapper drift, epoch-bound drift, public-shape drift, key-pattern drift,
-dropped identity members, unshipped record types, constant drift, the
-cross-file constant fork, and the record/certificate member fork) rather
-than only the accept path.
+``--self-test`` mutates a copy of the committed family — schemas, the
+record registry, and the plan alike — and fails unless every mutation
+is rejected, proving the rejection paths (opened shape, banned member
+name, dropped fail-closed metadata, registry/enum drift, wrapper drift,
+epoch-bound drift, public-shape drift, key-pattern drift, dropped
+identity members, unshipped record types, constant drift, the
+cross-file constant fork, the record/certificate member fork, the
+record-registry drift paths, and the plan-rewrite paths) rather than
+only the accept path.
 
 Usage::
 
@@ -106,10 +131,13 @@ import copy
 import json
 import re
 import sys
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_DIR = Path("schemas/v1")
+REGISTRY_PATH = Path("tools/control-records.toml")
+PLAN_PATH = Path("docs/plan/plan.md")
 URN_PREFIX = "urn:agent-archivist:schema:v1:"
 DRAFT = "https://json-schema.org/draft/2020-12/schema"
 
@@ -245,6 +273,38 @@ CERTIFICATE_KEY_TEMPLATE = (
     "tenants/<tenant_id>/v1/control/receipt-keys/<key_id>.json"
 )
 
+# The external record registry (the mold of tools/cli-commands.toml):
+# its schema header, the control prefix every object key must sit under
+# (the prefix plan Section 7.5's table pins for the family), and the
+# placeholder mapping that turns the plan's generic key layouts into the
+# member-name layouts the registry writes. The mapping is the pinned
+# bridge between the two spellings — a plan control line the mapping
+# cannot express is plan drift, and the gate says so.
+REGISTRY_SCHEMA = "archivist.control-registry/v1"
+CONTROL_PREFIX = "tenants/<tenant_id>/v1/control/"
+PLAN_PLACEHOLDERS = {
+    "<tenant>": "<tenant_id>",
+    "<client>": "<client_id>",
+    "<epoch>": "<authorization_epoch>",
+    "<key>": "<key_id>",
+}
+
+# The revocation propagation bound is the cache TTL re-expressed where
+# the revocation record needs it — the same number, never a second
+# value, so the exactly-once walk treats it as the TTL's alias.
+CONSTANT_ALIASES = {"revocationPropagationBoundSeconds":
+                    "trustRecordCacheTtlSeconds"}
+
+# Numbers the plan spells as words in the pinned sentences ("five
+# minutes", "seven days"), and the time-unit factors that canonicalize
+# a quoted quantity to the unit a constant is registered in.
+WORD_NUMBERS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+                "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+                "eleven": 11, "twelve": 12}
+UNIT_FACTORS = {"second": 1, "minute": 60, "hour": 3600, "day": 86400}
+QUANTITY = re.compile(
+    r"\b(\d+|" + "|".join(WORD_NUMBERS) + r")\s+(seconds?|minutes?|hours?|days?)\b")
+
 # Pinned synthetic constants (SEC-010: zero entropy, public material only).
 # Constructed at runtime so no long hexadecimal literal — indistinguishable
 # at a glance from secret material — ever sits in this file's source.
@@ -270,6 +330,20 @@ def key_id(public_key_hex: str) -> str:
     import hashlib
 
     return hashlib.sha256(bytes.fromhex(public_key_hex)).hexdigest()
+
+
+# Golden values for the registry's object-key placeholders: substituting
+# these into a registry layout must produce a key the envelope's pattern
+# accepts, which proves layout, pattern, and key members are one
+# contract on the same golden identifiers the behavioural records pin.
+LAYOUT_GOLDENS = {
+    "<tenant_id>": TENANT_ID,
+    "<client_id>": CLIENT_ID,
+    "<relay_client_id>": RELAY_CLIENT_ID,
+    "<origin_client_id>": CLIENT_ID,
+    "<authorization_epoch>": "3",
+    "<key_id>": key_id(RECEIPT_PUBLIC_KEY),
+}
 
 
 def parse_timestamp(value: str):
@@ -524,6 +598,27 @@ def load_schemas() -> dict[str, dict] | None:
             fail(f"{SCHEMA_DIR}/{stem}.json: missing from the control family")
             ok = False
     return schemas if ok else None
+
+
+def load_registry() -> dict | None:
+    try:
+        with (ROOT / REGISTRY_PATH).open("rb") as handle:
+            registry = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        fail(f"{REGISTRY_PATH}: unreadable or invalid TOML ({exc})")
+        return None
+    if not isinstance(registry, dict):
+        fail(f"{REGISTRY_PATH}: top level must be a table")
+        return None
+    return registry
+
+
+def load_plan() -> str | None:
+    try:
+        return (ROOT / PLAN_PATH).read_text(encoding="utf-8")
+    except OSError as exc:
+        fail(f"{PLAN_PATH}: unreadable ({exc})")
+        return None
 
 
 def resolve_pointer(doc: dict, pointer: str) -> bool:
@@ -970,6 +1065,287 @@ def check_cross_family(schemas: dict[str, dict]) -> list[str]:
     return violations
 
 
+def quantity_seconds(number: str, unit: str) -> int:
+    """A quoted quantity canonicalized to seconds."""
+    value = int(number) if number.isdigit() else WORD_NUMBERS[number]
+    return value * UNIT_FACTORS[unit.rstrip("s")]
+
+
+def normalized(text: str) -> str:
+    """Whitespace-collapsed text, so a plan quote matches the plan across
+    the file's incidental line wrapping."""
+    return " ".join(text.split())
+
+
+def plan_control_layouts(plan: str) -> list[str] | None:
+    """The control-prefix key layouts of plan Section 7.5's object-key
+    table, mapped from the plan's generic placeholders onto member
+    names. None when the section or its table cannot be found or holds
+    no control layout — plan drift, reported as such."""
+    marker = "### 7.5 Object keys"
+    start = plan.find(marker)
+    if start == -1:
+        return None
+    fence = plan.find("```text", start)
+    if fence == -1:
+        return None
+    end = plan.find("```", fence + len("```text"))
+    if end == -1:
+        return None
+    layouts: list[str] = []
+    for raw in plan[fence + len("```text"):end].splitlines():
+        line = raw.strip()
+        if "/v1/control/" not in line:
+            continue
+        mapped = line
+        for generic, member in PLAN_PLACEHOLDERS.items():
+            mapped = mapped.replace(generic, member)
+        layouts.append(mapped)
+    return layouts or None
+
+
+def constant_encodings(node: dict, path: tuple = ()):
+    """(path, name, value) for every constant-name member in any
+    x-archivist registry below ``node`` — the encodings the exactly-once
+    rule must account for at the envelope registry or among the pins."""
+    found: list[tuple[tuple, str, object]] = []
+    for key, value in node.items():
+        here = path + (key,)
+        if key == "x-archivist" and isinstance(value, dict):
+            for member, member_value in value.items():
+                if member in CONSTANT_NAMES or member in CONSTANT_ALIASES:
+                    found.append((here + (member,), member, member_value))
+            found += constant_encodings(value, here)
+        elif isinstance(value, dict):
+            found += constant_encodings(value, here)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    found += constant_encodings(item, here)
+    return found
+
+
+def check_registry(schemas: dict[str, dict], registry: dict,
+                   plan: str) -> list[str]:
+    """The external record registry (tools/control-records.toml) is the
+    family's append-only index and the plan is its authority: record
+    types agree with the envelope registry two-way, object keys sit
+    under the plan Section 7.5 control prefix and reproduce keys the
+    envelope patterns accept, the plan's control layouts appear in the
+    registry exactly as the plan writes them, each timing constant
+    agrees with the envelope registry and quotes its plan sentence
+    verbatim, and no constant is encoded twice anywhere in the
+    family."""
+    violations: list[str] = []
+    env = schemas.get(ENVELOPE_STEM, {})
+    meta = env.get("x-archivist", {})
+
+    # 1. Registry identity.
+    if registry.get("schema") != REGISTRY_SCHEMA:
+        violations.append(
+            f"{REGISTRY_PATH}: schema header must be {REGISTRY_SCHEMA!r}")
+    if registry.get("namespace") != NAMESPACE:
+        violations.append(
+            f"{REGISTRY_PATH}: namespace must be {NAMESPACE!r}, agreeing "
+            "with the envelope registry")
+
+    # 2. Record types: two-way, member-for-member agreement with the
+    #    envelope registry — the machine form of append-only. A record
+    #    type dropped, renamed, or redefined in either home fails here.
+    tables = registry.get("records", {})
+    by_type = {e.get("type"): e for e in meta.get("recordTypes", [])}
+    if not isinstance(tables, dict):
+        violations.append(f"{REGISTRY_PATH}: [records] must be a table")
+        tables = {}
+    if set(tables) != set(by_type):
+        violations.append(
+            f"{REGISTRY_PATH}: registry record types {sorted(tables)} and "
+            f"the envelope recordTypes registry {sorted(by_type)} "
+            "disagree — the record-type set is append-only and neither "
+            "home may drift")
+    else:
+        for rtype, table in tables.items():
+            entry = by_type[rtype]
+            if (table.get("write_class") != entry.get("writeClass")
+                    or table.get("schema") != entry.get("schema")
+                    or list(table.get("key_members", []))
+                    != list(entry.get("keyMembers", []))
+                    or table.get("status") != entry.get("status")):
+                violations.append(
+                    f"{REGISTRY_PATH}: record {rtype!r} must agree with "
+                    "the envelope registry entry member for member "
+                    "(write_class, schema, key_members, status)")
+            if not isinstance(table.get("summary"), str) or not table.get(
+                    "summary").strip():
+                violations.append(
+                    f"{REGISTRY_PATH}: record {rtype!r} must carry a "
+                    "non-empty summary")
+
+    # 3. Object keys: member-name placeholders in key_members order,
+    #    under the plan's control prefix, reproducing a key the
+    #    envelope's pattern accepts on the golden identifiers.
+    for rtype, table in tables.items():
+        layout = table.get("object_key")
+        members = list(table.get("key_members", []))
+        if not isinstance(layout, str) or not layout:
+            violations.append(
+                f"{REGISTRY_PATH}: record {rtype!r} must carry an "
+                "object_key layout")
+            continue
+        placeholders = re.findall(r"<[a-z0-9_]+>", layout)
+        if placeholders != [f"<{member}>" for member in members]:
+            violations.append(
+                f"{REGISTRY_PATH}: record {rtype!r} object_key "
+                f"{layout!r} must use exactly the key_members {members} "
+                "as placeholders, in order — the store derives the key "
+                "from those validated fields (ID-008)")
+        unknown = [p for p in placeholders if p not in LAYOUT_GOLDENS]
+        if unknown:
+            violations.append(
+                f"{REGISTRY_PATH}: record {rtype!r} object_key uses "
+                f"unknown placeholders {unknown} — the golden "
+                "identifiers pin every member a key segment may name")
+            continue
+        if not layout.startswith(CONTROL_PREFIX):
+            violations.append(
+                f"{REGISTRY_PATH}: record {rtype!r} object_key must sit "
+                f"under the plan Section 7.5 control prefix "
+                f"{CONTROL_PREFIX!r}")
+        concrete = layout
+        for placeholder, golden in LAYOUT_GOLDENS.items():
+            concrete = concrete.replace(placeholder, golden)
+        entry = by_type.get(rtype, {})
+        pointer = entry.get("objectKeyPattern")
+        node = (dig(env, pointer[2:].split("/"))
+                if isinstance(pointer, str) and pointer.startswith("#/")
+                else None)
+        pattern = node.get("pattern") if isinstance(node, dict) else None
+        if not isinstance(pattern, str) or not re.match(pattern, concrete):
+            violations.append(
+                f"{REGISTRY_PATH}: record {rtype!r} object_key does not "
+                "reproduce a key the envelope's pattern accepts — "
+                "layout, pattern, and key members are one contract")
+
+    # 4. Plan Section 7.5: every control layout the plan's object-key
+    #    table pins appears in the registry exactly as the plan writes
+    #    it, under the generic-to-member placeholder mapping.
+    layouts = plan_control_layouts(plan)
+    if layouts is None:
+        violations.append(
+            f"{REGISTRY_PATH}: plan Section 7.5's object-key table is "
+            "missing or holds no control-prefix layout — the plan is "
+            "the registry's authority and must still pin the family's "
+            "control prefix")
+    else:
+        registry_layouts = [table.get("object_key")
+                            for table in tables.values()
+                            if isinstance(table, dict)]
+        for plan_layout in layouts:
+            if plan_layout not in registry_layouts:
+                violations.append(
+                    f"{REGISTRY_PATH}: plan Section 7.5 pins the control "
+                    f"layout {plan_layout!r} and no registry record "
+                    "carries it exactly — the plan's control lines are "
+                    "the registry's authority, not a paraphrase of it")
+
+    # 5. Timing constants: member-for-member agreement with the envelope
+    #    registry, and each plan_quote proven verbatim plan text that
+    #    states the constant's number exactly once.
+    constants = registry.get("constants", {})
+    env_constants = meta.get("constants", {})
+    if not isinstance(constants, dict):
+        violations.append(f"{REGISTRY_PATH}: [constants] must be a table")
+        constants = {}
+    if set(constants) != set(env_constants):
+        violations.append(
+            f"{REGISTRY_PATH}: registry constants {sorted(constants)} "
+            f"and the envelope constants registry {sorted(env_constants)} "
+            "disagree — each timing constant is encoded exactly once in "
+            "each home, never renamed or re-listed")
+    plan_text = normalized(plan)
+    for name, table in constants.items():
+        entry = env_constants.get(name)
+        if not isinstance(table, dict) or not isinstance(entry, dict):
+            violations.append(
+                f"{REGISTRY_PATH}: constant {name!r} must be a table "
+                "agreeing with the envelope registry entry")
+            continue
+        if (table.get("value") != entry.get("value")
+                or table.get("unit") != entry.get("unit")
+                or list(table.get("plan_sections", []))
+                != list(entry.get("plan", []))):
+            violations.append(
+                f"{REGISTRY_PATH}: constant {name!r} must agree with the "
+                "envelope registry entry member for member (value, unit, "
+                "plan_sections)")
+        quote = table.get("plan_quote")
+        if not isinstance(quote, str) or not quote.strip():
+            violations.append(
+                f"{REGISTRY_PATH}: constant {name!r} must quote the plan "
+                "sentence that pins it")
+            continue
+        if normalized(quote) not in plan_text:
+            violations.append(
+                f"{REGISTRY_PATH}: constant {name!r} plan_quote is not "
+                "verbatim plan text — the citation must be the plan's "
+                "own sentence, never a paraphrase")
+            continue
+        quantities = QUANTITY.findall(normalized(quote))
+        if len(quantities) != 1:
+            violations.append(
+                f"{REGISTRY_PATH}: constant {name!r} plan_quote must "
+                "state the number exactly once — the quote is the one "
+                "sentence that pins the constant, not a paragraph to "
+                "read for it")
+            continue
+        value = table.get("value")
+        unit = table.get("unit")
+        if (isinstance(value, bool) or not isinstance(value, int)
+                or not isinstance(unit, str)
+                or unit.rstrip("s") not in UNIT_FACTORS):
+            violations.append(
+                f"{REGISTRY_PATH}: constant {name!r} must carry an "
+                "integer value in a known time unit")
+            continue
+        target = value * UNIT_FACTORS[unit.rstrip("s")]
+        number, quoted_unit = quantities[0]
+        if quantity_seconds(number, quoted_unit) != target:
+            violations.append(
+                f"{REGISTRY_PATH}: constant {name!r} plan_quote states "
+                f"{number} {quoted_unit}, not the {value} {unit} the "
+                "registry encodes — a quoted plan that disagrees is a "
+                "forked contract wearing a citation")
+
+    # 6. Exactly-once encodings across the family: outside the envelope
+    #    registry (the one authoritative encoding), every constant-name
+    #    member anywhere in any schema is one of the pin paths PINNED
+    #    enumerates and pins the registry value.
+    allowed = {(stem, path) for stem, path in PINNED
+               if not (stem == ENVELOPE_STEM
+                       and path[:2] == ("x-archivist", "constants"))}
+    for stem, doc in schemas.items():
+        for path, member, value in constant_encodings(doc):
+            if (stem == ENVELOPE_STEM and len(path) == 3
+                    and path[0] == "x-archivist"
+                    and path[1] == "constants"):
+                continue
+            name = CONSTANT_ALIASES.get(member, member)
+            entry = env_constants.get(name)
+            canonical = (entry.get("value")
+                         if isinstance(entry, dict) else None)
+            if (stem, path) not in allowed:
+                violations.append(
+                    f"{stem}: {'.'.join(path)} is a second encoding of "
+                    f"constant {name!r} — outside the envelope registry "
+                    "and the pins this gate enumerates, a constant-name "
+                    "member is how a timing contract forks")
+            elif value != canonical:
+                violations.append(
+                    f"{stem}: {'.'.join(path)} must pin {canonical!r}, "
+                    f"the registry value of {name!r}")
+    return violations
+
+
 def build_validator(schemas: dict[str, dict], stem: str, *, node=None):
     """A draft 2020-12 validator over ``schemas[stem]`` — or over an
     explicit ``node`` inside it (a ``$defs`` subschema, say) — with every
@@ -1285,7 +1661,8 @@ def check_behaviour(schemas: dict[str, dict]) -> list[str]:
     return violations
 
 
-def check_family(schemas: dict[str, dict]) -> list[str]:
+def check_family(schemas: dict[str, dict], registry: dict,
+                 plan: str) -> list[str]:
     violations: list[str] = []
     for stem, doc in schemas.items():
         if doc.get("$schema") != DRAFT:
@@ -1298,10 +1675,18 @@ def check_family(schemas: dict[str, dict]) -> list[str]:
             violations += check_record(schemas, stem)
     violations += check_cross_family(schemas)
     violations += check_behaviour(schemas)
+    violations += check_registry(schemas, registry, plan)
     return violations
 
 
-# Self-test mutations: (label, stem, mutation) — each must be rejected.
+# Self-test mutations: (label, target, mutation) — each must be rejected.
+# The target is a schema stem, or one of the two non-schema members of
+# the family the registry checks read: REGISTRY_TARGET mutates the
+# parsed record registry in place, and PLAN_TARGET rewrites the plan —
+# a str cannot be mutated in place, so its mutation returns the new
+# text and the runner substitutes.
+REGISTRY_TARGET = "tools/control-records.toml"
+PLAN_TARGET = "docs/plan/plan.md"
 SELF_TEST_CASES = [
     ("opened record shape", "control-client",
      lambda s: s.pop("additionalProperties")),
@@ -1367,25 +1752,83 @@ SELF_TEST_CASES = [
     ("cross-file receipt-key rotation fork", "ingest-receipt",
      lambda s: s["$defs"]["receipt-key-certificate"]["x-archivist"]
      .__setitem__("receiptKeyRotationDays", 60)),
+    ("second constant encoding outside the pins", "control-envelope",
+     lambda s: s["$defs"]["record-kind"]["x-archivist"].__setitem__(
+         "trustRecordCacheTtlSeconds", 60)),
+    ("record-registry schema header drift", REGISTRY_TARGET,
+     lambda r: r.__setitem__("schema", "archivist.control-registry/v2")),
+    ("record-registry record type dropped", REGISTRY_TARGET,
+     lambda r: r["records"].pop("rotation")),
+    ("record-registry write-class drift", REGISTRY_TARGET,
+     lambda r: r["records"]["linked-client"].__setitem__(
+         "write_class", "immutable")),
+    ("record-registry record summary dropped", REGISTRY_TARGET,
+     lambda r: r["records"]["linked-client"].pop("summary")),
+    ("record-registry key-member order drift", REGISTRY_TARGET,
+     lambda r: r["records"]["delegation"].__setitem__(
+         "key_members", ["tenant_id", "origin_client_id",
+                         "relay_client_id"])),
+    ("record-registry layout forked from key members", REGISTRY_TARGET,
+     lambda r: r["records"]["receipt-key"].__setitem__(
+         "object_key",
+         "tenants/<tenant_id>/v1/control/receipt-keys/<client_id>.json")),
+    ("record-registry layout off the control prefix", REGISTRY_TARGET,
+     lambda r: r["records"]["revocation"].__setitem__(
+         "object_key",
+         "tenants/<tenant_id>/v1/derived/revocations/<client_id>/"
+         "<authorization_epoch>.json")),
+    ("record-registry layout the envelope pattern rejects", REGISTRY_TARGET,
+     lambda r: r["records"]["revocation"].__setitem__(
+         "object_key",
+         "tenants/<tenant_id>/v1/control/revocations/x/<client_id>/"
+         "<authorization_epoch>.json")),
+    ("record-registry constant value drift", REGISTRY_TARGET,
+     lambda r: r["constants"]["trustRecordCacheTtlSeconds"].__setitem__(
+         "value", 120)),
+    ("record-registry plan quote paraphrased", REGISTRY_TARGET,
+     lambda r: r["constants"]["trustRecordCacheTtlSeconds"].__setitem__(
+         "plan_quote", "Trust records cache for about a minute.")),
+    ("record-registry plan quote states another number", REGISTRY_TARGET,
+     lambda r: r["constants"]["trustRecordCacheTtlSeconds"].__setitem__(
+         "plan_quote",
+         "Key rotation accepts old and new keys for 24 hours")),
+    ("plan control layout rewritten", PLAN_TARGET,
+     lambda p: p.replace("v1/control/clients/<client>.json",
+                         "v1/control/clients/<link>.json")),
+    ("plan control layouts dropped", PLAN_TARGET,
+     lambda p: re.sub(r"tenants/<tenant>/v1/control/\S+\n", "", p)),
+    ("plan timing sentence rewritten", PLAN_TARGET,
+     lambda p: p.replace("Trust records cache for at most 60 seconds.",
+                         "Trust records cache for at most 90 seconds.")),
 ]
 
 
 def run_self_test() -> int:
     base = load_schemas()
-    if base is None:
+    base_registry = load_registry()
+    base_plan = load_plan()
+    if base is None or base_registry is None or base_plan is None:
         return 2
-    if check_family(base):
+    base_violations = check_family(base, base_registry, base_plan)
+    if base_violations:
         fail("self-test base: the committed family itself is invalid")
-        for violation in check_family(base):
+        for violation in base_violations:
             fail(violation)
         return 2
 
     passed = 0
     failed = 0
-    for label, stem, mutation in SELF_TEST_CASES:
+    for label, target, mutation in SELF_TEST_CASES:
         mutated = copy.deepcopy(base)
-        mutation(mutated[stem])
-        rejected = bool(check_family(mutated))
+        registry = copy.deepcopy(base_registry)
+        plan = base_plan
+        if target == REGISTRY_TARGET:
+            mutation(registry)
+        elif target == PLAN_TARGET:
+            plan = mutation(plan)
+        else:
+            mutation(mutated[target])
+        rejected = bool(check_family(mutated, registry, plan))
         if rejected:
             passed += 1
             print(f"  ok  rejects: {label}")
@@ -1404,10 +1847,12 @@ def main(argv: list[str]) -> int:
         return 2
 
     schemas = load_schemas()
-    if schemas is None:
+    registry = load_registry()
+    plan = load_plan()
+    if schemas is None or registry is None or plan is None:
         return 2
 
-    violations = check_family(schemas)
+    violations = check_family(schemas, registry, plan)
     for violation in violations:
         fail(violation)
     if violations:
@@ -1419,13 +1864,18 @@ def main(argv: list[str]) -> int:
     rejections = (len(CLIENT_REJECTIONS) + len(REVOCATION_REJECTIONS)
                   + len(DELEGATION_REJECTIONS) + len(ROTATION_REJECTIONS)
                   + len(RECEIPT_KEY_REJECTIONS))
+    record_types = registry.get("records", {})
+    constants = registry.get("constants", {})
     print(f"agent-archivist control trust family: {len(RECORD_STEMS) + 1} schemas")
+    print(f"record registry: {len(record_types)} record types, "
+          f"{len(constants)} timing constants quoted from the plan")
     print(f"closed enums guarded: {enums}, "
           f"named constants pinned: {len(PINNED)}, "
           f"cross-file agreements proven: {len(CONSTANT_AGREEMENTS)}, "
           f"behavioural rejections proven: {rejections}")
-    print("OK: schemas/v1 control family satisfies "
-          "docs/notes/control-trust-schemas.md")
+    print("OK: schemas/v1 control family and tools/control-records.toml "
+          "satisfy docs/notes/control-trust-schemas.md and "
+          "docs/notes/control-trust.md")
     return 0
 
 

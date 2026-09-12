@@ -1,0 +1,134 @@
+# Machine-readable record registry for the Agent Archivist control trust
+# family (`archivist.control/v1`).
+#
+# The normative contracts live in docs/notes/control-trust-schemas.md and
+# docs/notes/control-trust.md; this file is the index of the family the
+# notes define, and tools/check-control-schemas.py (fast lane of
+# scripts/definition-of-done.sh) rejects any entry that violates them:
+# every record type must agree with the envelope registry in
+# schemas/v1/control-envelope.json and its shipped schema member for
+# member, every object key must sit under the plan Section 7.5 control
+# prefix and reproduce a key the envelope's pattern accepts, every timing
+# constant must quote its plan sentence verbatim and state the number the
+# sentence states, and the control layouts plan Section 7.5 pins must
+# appear here exactly as the plan writes them.
+#
+# Within registry schema v1 the record-type set is append-only: adding a
+# record type — with its schema, envelope registry entry, record-type
+# enum token, and object-key pattern in the same change — is a compatible
+# change; renaming, removing, or redefining a declared attribute of an
+# existing record type is a v2 event. The gate enforces this as two-way
+# agreement with the committed envelope registry and the record-type
+# enum, so neither home can drift without failing the fast lane.
+#
+# Object keys are written with the record's own member names as
+# placeholders, in the order the store concatenates them (`key_members`):
+# substituting the pinned golden records' identifiers must produce a key
+# the envelope's object-key pattern accepts, which is how the gate proves
+# layout, pattern, and key members are one contract (ID-008), and the
+# plan Section 7.5 lines — which spell the generic placeholders
+# `<tenant>`, `<client>`, `<epoch>`, `<key>` — are matched against these
+# layouts under that member-name mapping.
+
+schema = "archivist.control-registry/v1"
+namespace = "archivist.control/v1"
+
+# ---------------------------------------------------------------------------
+# Current-pointer records (plan Section 5) — a replacement is valid only
+# when its signed authorization epoch strictly increases
+# ---------------------------------------------------------------------------
+
+[records.linked-client]
+summary = "Client identity, Ed25519 public key, base scopes, and the current authorization epoch: the current-pointer home of one linked client."
+write_class = "current-pointer"
+schema = "schemas/v1/control-client.json"
+object_key = "tenants/<tenant_id>/v1/control/clients/<client_id>.json"
+key_members = ["tenant_id", "client_id"]
+status = "shipped"
+
+[records.delegation]
+summary = "The relay grant: one uploader client authorized to present one origin client's frozen occurrences, as the conjunction of tenant, origin, harness, and operation scopes."
+write_class = "current-pointer"
+schema = "schemas/v1/control-delegation.json"
+object_key = "tenants/<tenant_id>/v1/control/delegations/<relay_client_id>/<origin_client_id>.json"
+key_members = ["tenant_id", "relay_client_id", "origin_client_id"]
+status = "shipped"
+
+# ---------------------------------------------------------------------------
+# Immutable records (plan Section 5) — written once at a derived key; an
+# incompatible overwrite is rejected outright
+# ---------------------------------------------------------------------------
+
+[records.revocation]
+summary = "The append-only, epoch-addressed revocation of one client's authorization at one epoch, written beside a strictly higher-epoch client pointer."
+write_class = "immutable"
+schema = "schemas/v1/control-revocation.json"
+object_key = "tenants/<tenant_id>/v1/control/revocations/<client_id>/<authorization_epoch>.json"
+key_members = ["tenant_id", "client_id", "authorization_epoch"]
+status = "shipped"
+
+[records.rotation]
+summary = "The durable evidence of one client key rotation: the epoch it establishes, the previous epoch, both public halves, and the 24-hour overlap during which either verifies."
+write_class = "immutable"
+schema = "schemas/v1/control-rotation.json"
+object_key = "tenants/<tenant_id>/v1/control/rotations/<client_id>/<authorization_epoch>.json"
+key_members = ["tenant_id", "client_id", "authorization_epoch"]
+status = "shipped"
+
+[records.receipt-key]
+summary = "The tenant-authority certification of one server receipt-signing key — public half, pinned derivation, algorithm, and signing window — the authoritative source of the receipt certificate."
+write_class = "immutable"
+schema = "schemas/v1/control-receipt-key.json"
+object_key = "tenants/<tenant_id>/v1/control/receipt-keys/<key_id>.json"
+key_members = ["tenant_id", "key_id"]
+status = "shipped"
+
+# ---------------------------------------------------------------------------
+# Named timing constants — each is pinned by the plan sentence it quotes,
+# and the gate proves the quote is verbatim plan text that states this
+# number exactly once. The envelope's constants registry is the in-band
+# encoding; this table is its index, and the two must agree member for
+# member.
+# ---------------------------------------------------------------------------
+
+[constants.trustRecordCacheTtlSeconds]
+summary = "How long an ingestion replica may serve a cached control record before re-reading the store — also the revocation propagation bound, the same number re-expressed."
+value = 60
+unit = "seconds"
+plan_sections = ["Section 5", "Section 7.11 EC-09"]
+plan_quote = "Trust records cache for at most 60 seconds."
+
+[constants.authorizationWindowSeconds]
+summary = "How long a fresh-per-attempt authorization proof stays valid; a retry outside the window mints fresh authorization without changing identity."
+value = 300
+unit = "seconds"
+plan_sections = ["Section 5", "Section 7.2"]
+plan_quote = "Request authorization is fresh per upload attempt and valid for five minutes"
+
+[constants.clockSkewAllowanceSeconds]
+summary = "Clock-skew tolerance at attempt verification, named separately from the window because it protects the verifier's clock, not the signer's."
+value = 300
+unit = "seconds"
+plan_sections = ["Section 5", "Section 7.2"]
+plan_quote = "with at most five minutes of clock skew"
+
+[constants.rotationVerificationOverlapHours]
+summary = "How long both the previous and the new client key verify after a rotation, so retries of a frozen envelope authorize under either half."
+value = 24
+unit = "hours"
+plan_sections = ["Section 5"]
+plan_quote = "Key rotation accepts old and new keys for 24 hours"
+
+[constants.receiptKeyRotationDays]
+summary = "How often the tenant authority certifies a fresh receipt key; rotation is non-invalidating because the record is immutable and key-addressed."
+value = 30
+unit = "days"
+plan_sections = ["Section 7.8"]
+plan_quote = "Receipt keys rotate every 30 days"
+
+[constants.receiptKeySigningOverlapDays]
+summary = "How long each certified receipt key keeps signing past its successor's first signing instant, so the signer is never without a valid key across a boundary."
+value = 7
+unit = "days"
+plan_sections = ["Section 7.8"]
+plan_quote = "with seven days of old/new signing overlap"
