@@ -225,6 +225,35 @@ explicitly governed consumers.
   reflection or learning pipelines **MUST** perform redaction, provenance tracking,
   trust classification, and prompt-injection defenses before agent consumption.
 - **SEC-010** — Public tests and examples **MUST** use synthetic data only.
+- **SEC-011** — Administrative control mutation **MUST** run through a separate
+  configuration surface with its own dedicated credential reference, and each
+  configured storage role **MUST** map a distinct credential reference. A
+  validated ingestion or replica configuration **MUST NOT** carry the
+  control-administration credential.
+- **SEC-012** — Control-record object keys **MUST** be derived by the control
+  administrator from the validated record's own members, following the record
+  registry's layout for its family. A record that does not carry its family's
+  key grammar **MUST** fail closed, and no configuration or request **MUST**
+  substitute an arbitrary key.
+- **SEC-013** — An immutable control record (revocation, key rotation, receipt
+  verification key) **MUST** be written once at its derived key: an
+  incompatible object already at that key **MUST** fail closed as an integrity
+  conflict, while a byte-identical replay **MUST** succeed idempotently without
+  a second write.
+- **SEC-014** — A current-pointer control record (linked client, delegation)
+  **MUST** be replaced only when the presented record carries a valid signed
+  authorization epoch strictly greater than the stored pointer's; an equal,
+  lower, or invalid epoch **MUST** fail closed before any backend write, and a
+  corrupt stored pointer **MUST** surface as an integrity conflict.
+- **SEC-015** — The control-administration credential's backend permissions
+  **MUST** allow exactly the pinned tenant's control prefix and **MUST** deny
+  every other prefix — raw, catalog, derived, tombstone, legal-hold — and every
+  other tenant's control prefix. A record outside that scope **MUST** be
+  refused before any backend request is issued.
+- **SEC-016** — The ingestion configuration **MUST** reject the
+  control-administration credential reference offered in any ingestion role —
+  raw writer, control reader, optional raw reader, offline restore — before
+  a deployment is accepted.
 
 ## 11. Reliability and operations
 

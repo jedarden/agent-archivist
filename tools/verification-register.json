@@ -466,6 +466,42 @@
         "T-SEC-010"
       ]
     },
+    "SEC-011": {
+      "status": "implemented",
+      "verifications": [
+        "T-SEC-011"
+      ]
+    },
+    "SEC-012": {
+      "status": "implemented",
+      "verifications": [
+        "T-SEC-012"
+      ]
+    },
+    "SEC-013": {
+      "status": "implemented",
+      "verifications": [
+        "T-SEC-013"
+      ]
+    },
+    "SEC-014": {
+      "status": "implemented",
+      "verifications": [
+        "T-SEC-014"
+      ]
+    },
+    "SEC-015": {
+      "status": "implemented",
+      "verifications": [
+        "T-SEC-015"
+      ]
+    },
+    "SEC-016": {
+      "status": "implemented",
+      "verifications": [
+        "T-SEC-016"
+      ]
+    },
     "SID-001": {
       "status": "planned",
       "verifications": [
@@ -1288,6 +1324,60 @@
       ],
       "kind": "test",
       "lane": "slow",
+      "owner": "security-scans"
+    },
+    "T-SEC-011": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "locator": "crates/archivist-storage-s3/src/config.rs",
+      "owner": "security-scans"
+    },
+    "T-SEC-012": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "locator": "crates/archivist-storage-s3/src/control_admin.rs",
+      "owner": "security-scans"
+    },
+    "T-SEC-013": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "locator": "crates/archivist-storage-s3/src/control_admin.rs",
+      "owner": "security-scans"
+    },
+    "T-SEC-014": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "locator": "crates/archivist-storage-s3/src/control_admin.rs",
+      "owner": "security-scans"
+    },
+    "T-SEC-015": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "locator": "crates/archivist-storage-s3/tests/control_admin_scope.rs",
+      "owner": "security-scans"
+    },
+    "T-SEC-016": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "locator": "crates/archivist-storage-s3/tests/control_admin_scope.rs",
       "owner": "security-scans"
     },
     "T-SID-001": {
