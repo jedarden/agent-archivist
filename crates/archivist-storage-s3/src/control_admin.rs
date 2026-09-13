@@ -623,6 +623,18 @@ impl<B: ControlAdminBackend> S3ControlAdminStore<B> {
                 DETAIL_SCOPE,
             ));
         }
+        // The backend permission model, enforced store-side as well: the
+        // derived key must sit inside the one provisioned prefix this
+        // configuration pins. Unreachable while the key derivation and the
+        // scope model agree — which is exactly the agreement a drift
+        // between the two must fail closed on, before any request is
+        // issued against the administration credential.
+        if !self.config.permits_key(validated.key.as_str()) {
+            return Err(StorageError::new(
+                StorageErrorKind::ScopeViolation,
+                DETAIL_SCOPE,
+            ));
+        }
         Ok(validated)
     }
 }
@@ -871,24 +883,32 @@ mod tests {
     }
 
     /// The in-memory backend: an object map plus the prefix denial the
-    /// deployment's administration-credential policy states. Keys outside
-    /// the provisioned tenant's control prefix — the only request the store
-    /// can issue is a derived control key, but the backend refuses one from
-    /// any other scope all the same, mirroring what the live policy does.
+    /// deployment's administration-credential policy states. The check is
+    /// the policy's own shape — a literal string-prefix rule over the key,
+    /// read-write below `tenants/<tenant>/v1/control/` and deny everything
+    /// else — not a structural tenant compare, so the store's requests are
+    /// proven to stay inside the prefix exactly as a live backend would
+    /// grant or refuse them.
     #[derive(Clone, Debug)]
     struct MapBackend {
-        tenant: archivist_protocol::vocabulary::TenantId,
+        control_prefix: String,
         objects: Arc<Mutex<HashMap<String, Vec<u8>>>>,
         writes: Arc<Mutex<HashMap<String, u32>>>,
     }
 
     impl MapBackend {
-        fn new(tenant: archivist_protocol::vocabulary::TenantId) -> Self {
+        fn new(tenant: &archivist_protocol::vocabulary::TenantId) -> Self {
             Self {
-                tenant,
+                control_prefix: format!("tenants/{tenant}/v1/control/"),
                 objects: Arc::new(Mutex::new(HashMap::new())),
                 writes: Arc::new(Mutex::new(HashMap::new())),
             }
+        }
+
+        /// The deployment policy for the administration credential, as a
+        /// grant predicate over one object key.
+        fn policy_permits(&self, key: &str) -> bool {
+            key.starts_with(&self.control_prefix)
         }
 
         fn stored(&self, key: &str) -> Option<Vec<u8>> {
@@ -924,7 +944,7 @@ mod tests {
             &self,
             key: &super::ControlObjectKey,
         ) -> Result<Option<Vec<u8>>, StorageError> {
-            if key.tenant() != &self.tenant {
+            if !self.policy_permits(key.as_str()) {
                 return Err(StorageError::of_kind(StorageErrorKind::ScopeViolation));
             }
             Ok(self
@@ -940,7 +960,7 @@ mod tests {
             key: &super::ControlObjectKey,
             bytes: &[u8],
         ) -> Result<(), StorageError> {
-            if key.tenant() != &self.tenant {
+            if !self.policy_permits(key.as_str()) {
                 return Err(StorageError::of_kind(StorageErrorKind::ScopeViolation));
             }
             *self
@@ -958,7 +978,7 @@ mod tests {
     }
 
     fn store() -> S3ControlAdminStore<MapBackend> {
-        S3ControlAdminStore::new(admin_config(), MapBackend::new(tenant()))
+        S3ControlAdminStore::new(admin_config(), MapBackend::new(&tenant()))
     }
 
     fn record(kind: ControlRecordKind, bytes: Vec<u8>) -> AdminControlRecord {
