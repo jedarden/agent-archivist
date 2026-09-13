@@ -17,7 +17,10 @@
 //! The client state schema — explicit `SQLite` (WAL) migrations for sources,
 //! generations, spool entries, frozen requests, ranges, upload attestations,
 //! receipts, and adapter health, with automated integrity checks — arrived
-//! with Phase 5; see [`state`]. The remaining surfaces are still the Phase 0
+//! with Phase 5; see [`state`]. The configuration loader — XDG-native TOML
+//! discovery, flag/environment/file/default precedence, protected secret
+//! references, and the stable exit-64 error surface — arrived with Phase 5
+//! as well; see [`config`]. The remaining surfaces are still the Phase 0
 //! skeleton and deliberately contain no placeholder production code.
 //!
 //! # Dependency boundary
@@ -26,4 +29,5 @@
 //! not depend on the server, a concrete storage backend, or any specific
 //! harness adapter.
 
+pub mod config;
 pub mod state;

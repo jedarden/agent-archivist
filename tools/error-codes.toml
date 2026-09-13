@@ -290,6 +290,11 @@ class = "local_state"
 message = "The local clock is outside the accepted skew window; correct it before uploading."
 description = "Clock sanity failure detected by doctor or at authorization time."
 
+[codes."client.secret_ref_refused"]
+class = "usage"
+message = "The {field} reference did not resolve to protected material; fix the target file or variable."
+description = "A secret reference target failed its existence, protection, readability, or size check (CFG-030)."
+
 [codes."client.internal_error"]
 class = "internal"
 message = "An internal invariant was violated; report this as a bug with the correlation identifier."
