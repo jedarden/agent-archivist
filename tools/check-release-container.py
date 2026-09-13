@@ -42,7 +42,11 @@ validators against mutated copies and the history and tag validators
 against synthetic sequences, failing unless every bad sample is rejected
 and every good sample accepted — proving the rejection paths (a version
 record that moved alone, a floating base tag, a dropped build flag)
-rather than only the accept path.
+rather than only the accept path. When the ambient directory is a bare
+tree with no repository history (a ``git archive`` extraction), the
+ambient history/tag walk is skipped for the base case and those
+validators are proven by the synthetic cases alone; plain check mode
+still fails without a walkable HEAD.
 
 Usage::
 
@@ -106,6 +110,15 @@ FROM_RE = re.compile(r"^(\S+)(?:\s+[Aa][Ss]\s+([A-Za-z0-9_.-]+))?\s*$")
 #   tags             (tag, VERSION content at the tagged commit or None)
 TREE_KEYS = ("version_text", "cargo_version", "member_versions", "toolchain",
              "dockerfile")
+
+# Appended by load_state() when the ambient directory is a bare tree (for
+# example a `git archive` extraction) rather than a repository. Plain check
+# mode fails on it; --self-test treats it as a property of the context and
+# skips only the ambient history/tag walk, because the synthetic cases
+# still prove those validators reject every bad sample.
+NO_HISTORY_ERROR = ("history check: no committed HEAD to walk (the "
+                    "same-commit rule needs at least the introduction "
+                    "commit)")
 
 
 def fail(message: str) -> None:
@@ -557,9 +570,7 @@ def load_state() -> tuple[dict, list[str]]:
     state["history"] = []
     state["tags"] = []
     if run_git(["rev-parse", "--verify", "HEAD"]) is None:
-        errors.append("history check: no committed HEAD to walk (the "
-                      "same-commit rule needs at least the introduction "
-                      "commit)")
+        errors.append(NO_HISTORY_ERROR)
     else:
         hashes = run_git(["log", "--format=%H", "--", "Cargo.toml",
                           VERSION_REL]) or ""
@@ -774,15 +785,27 @@ def build_cases(state: dict) -> None:
 
 def run_self_test() -> int:
     state, errors = load_state()
+    # A bare tree (a `git archive` extraction) has no history to walk:
+    # a property of the context, not of the tree. Skip only the ambient
+    # history/tag walk for the base case; the synthetic cases below still
+    # prove those validators reject every bad sample.
+    unwalked = NO_HISTORY_ERROR in errors
+    errors = [error for error in errors if error != NO_HISTORY_ERROR]
     if errors:
         for error in errors:
             fail(f"self-test base: {error}")
         return 2
-    if validate_tree(state) or validate_history(state["history"]) \
-            or validate_tags(state["tags"]):
+    if unwalked:
+        print("  note: no repository history in this context; the ambient "
+              "history/tag base check is skipped (synthetic cases still "
+              "prove the rules)")
+    violations = validate_tree(state)
+    if not unwalked:
+        violations += validate_history(state["history"])
+        violations += validate_tags(state["tags"])
+    if violations:
         fail("self-test base: the committed tree itself is invalid:")
-        for violation in validate_tree(state) + validate_history(
-                state["history"]) + validate_tags(state["tags"]):
+        for violation in violations:
             fail(f"  {violation}")
         return 2
 
