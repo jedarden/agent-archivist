@@ -879,6 +879,7 @@ mod tests {
     struct MapBackend {
         tenant: archivist_protocol::vocabulary::TenantId,
         objects: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+        writes: Arc<Mutex<HashMap<String, u32>>>,
     }
 
     impl MapBackend {
@@ -886,6 +887,7 @@ mod tests {
             Self {
                 tenant,
                 objects: Arc::new(Mutex::new(HashMap::new())),
+                writes: Arc::new(Mutex::new(HashMap::new())),
             }
         }
 
@@ -895,6 +897,18 @@ mod tests {
                 .expect("test backend lock")
                 .get(key)
                 .cloned()
+        }
+
+        /// How many puts this backend actually issued at one key — the
+        /// counter an idempotent replay or a refused write must not move.
+        /// Preloads do not count; only `put_control_object` does.
+        fn puts_at(&self, key: &str) -> u32 {
+            self.writes
+                .lock()
+                .expect("test backend lock")
+                .get(key)
+                .copied()
+                .unwrap_or(0)
         }
 
         fn preload(&self, key: &str, bytes: &[u8]) {
@@ -929,6 +943,12 @@ mod tests {
             if key.tenant() != &self.tenant {
                 return Err(StorageError::of_kind(StorageErrorKind::ScopeViolation));
             }
+            *self
+                .writes
+                .lock()
+                .expect("test backend lock")
+                .entry(key.as_str().to_owned())
+                .or_insert(0) += 1;
             self.objects
                 .lock()
                 .expect("test backend lock")
@@ -1253,38 +1273,99 @@ mod tests {
     }
 
     #[test]
-    fn immutable_records_write_once_and_reject_incompatible_overwrites() {
+    fn immutable_families_write_once_replay_idempotently_and_reject_incompatible_bytes() {
+        // The immutable write class is one rule over its three families
+        // (plan Section 5; the trait's EC-06 contract): a fresh record
+        // creates the object at its derived key, the byte-identical retry
+        // of that same administrative write is already the object there —
+        // success without a second write — and any other bytes at the key
+        // are the containment case: refuse, and leave exactly what was
+        // stored where it was.
+        let cases = [
+            (
+                ControlRecordKind::Revocation,
+                format!("tenants/{TENANT}/v1/control/revocations/{CLIENT}/3.json"),
+                revocation_envelope(3),
+                replace_member(
+                    &revocation_envelope(3),
+                    "revoked_key_id",
+                    text(&key_id_of(&[0xef; 32])),
+                ),
+            ),
+            (
+                ControlRecordKind::Rotation,
+                format!("tenants/{TENANT}/v1/control/rotations/{CLIENT}/3.json"),
+                rotation_envelope(3),
+                replace_member(&rotation_envelope(3), "public_key", text(&"ef".repeat(32))),
+            ),
+            (
+                ControlRecordKind::ReceiptKey,
+                format!(
+                    "tenants/{TENANT}/v1/control/receipt-keys/{}.json",
+                    key_id_of(&[0x3c; 32])
+                ),
+                receipt_key_envelope(),
+                replace_member(
+                    &receipt_key_envelope(),
+                    "valid_until",
+                    text("2026-10-12T00:00:00Z"),
+                ),
+            ),
+        ];
+        for (kind, key, record_bytes, conflicting) in cases {
+            let store = store();
+
+            // A fresh write at an unoccupied derived key creates the object.
+            block_on(store.put_immutable_record(&record(kind, record_bytes.clone()))).unwrap();
+            assert_eq!(
+                store.backend.stored(&key).as_deref(),
+                Some(record_bytes.as_slice())
+            );
+            assert_eq!(store.backend.puts_at(&key), 1);
+
+            // The byte-identical re-put is an idempotent success that
+            // issues no second write.
+            block_on(store.put_immutable_record(&record(kind, record_bytes.clone()))).unwrap();
+            assert_eq!(store.backend.puts_at(&key), 1, "replay must not write");
+            assert_eq!(
+                store.backend.stored(&key).as_deref(),
+                Some(record_bytes.as_slice())
+            );
+
+            // Incompatible bytes at the same derived key are the EC-06
+            // integrity conflict — refused, and nothing of the
+            // conflicting record is written over what is stored.
+            assert_ne!(conflicting, record_bytes);
+            assert_eq!(
+                error_kind(block_on(
+                    store.put_immutable_record(&record(kind, conflicting.clone()))
+                )),
+                StorageErrorKind::IntegrityConflict
+            );
+            assert_eq!(store.backend.puts_at(&key), 1, "refusal must not write");
+            assert_eq!(
+                store.backend.stored(&key).as_deref(),
+                Some(record_bytes.as_slice())
+            );
+        }
+    }
+
+    #[test]
+    fn a_different_epoch_addresses_a_different_immutable_key() {
+        // The epoch-addressed families never conflict across epochs: the
+        // next epoch is a new object at a new derived key, which is why an
+        // immutable record is corrected by publishing the next epoch
+        // rather than rewriting this one.
         let store = store();
-        let key = format!("tenants/{TENANT}/v1/control/revocations/{CLIENT}/3.json");
-
-        // First write creates the object at the derived key.
-        let first = revocation_envelope(3);
-        block_on(store.put_immutable_record(&record(ControlRecordKind::Revocation, first.clone())))
-            .unwrap();
-        assert_eq!(
-            store.backend.stored(&key).as_deref(),
-            Some(first.as_slice())
-        );
-
-        // The byte-identical retry is an idempotent success.
-        block_on(store.put_immutable_record(&record(ControlRecordKind::Revocation, first.clone())))
-            .unwrap();
-
-        // Any different bytes at the same derived key are an integrity
-        // conflict — the acceptance clause.
-        let conflicting = replace_member(&first, "revoked_key_id", text(&key_id_of(&[0xef; 32])));
-        assert_ne!(conflicting, first);
-        let outcome = block_on(
-            store.put_immutable_record(&record(ControlRecordKind::Revocation, conflicting.clone())),
-        );
-        assert_eq!(error_kind(outcome), StorageErrorKind::IntegrityConflict);
-        // The stored object is unchanged by the refused write.
-        assert_eq!(
-            store.backend.stored(&key).as_deref(),
-            Some(first.as_slice())
-        );
-
-        // A different epoch is a different key: no conflict, new object.
+        block_on(store.put_immutable_record(&record(
+            ControlRecordKind::Revocation,
+            revocation_envelope(3),
+        )))
+        .unwrap();
+        block_on(
+            store.put_immutable_record(&record(ControlRecordKind::Rotation, rotation_envelope(3))),
+        )
+        .unwrap();
         block_on(store.put_immutable_record(&record(
             ControlRecordKind::Revocation,
             revocation_envelope(4),
@@ -1298,14 +1379,23 @@ mod tests {
                 ))
                 .is_some()
         );
-
-        // The receipt-key record is the immutable family that carries no
-        // epoch; it lands at its key-addressed layout the same way.
-        block_on(store.put_immutable_record(&record(
-            ControlRecordKind::ReceiptKey,
-            receipt_key_envelope(),
-        )))
-        .unwrap();
+        assert!(
+            store
+                .backend
+                .stored(&format!(
+                    "tenants/{TENANT}/v1/control/rotations/{CLIENT}/3.json"
+                ))
+                .is_some()
+        );
+        assert_eq!(
+            store
+                .backend
+                .stored(&format!(
+                    "tenants/{TENANT}/v1/control/revocations/{CLIENT}/3.json"
+                ))
+                .as_deref(),
+            Some(revocation_envelope(3).as_slice())
+        );
     }
 
     #[test]
@@ -1420,6 +1510,13 @@ mod tests {
                 revocation_envelope(9),
             )))),
             StorageErrorKind::IntegrityConflict
+        );
+        // The refusal issued no write: the corrupt object stays byte-for-
+        // byte what it was.
+        assert_eq!(store.backend.puts_at(&revocation_key), 0);
+        assert_eq!(
+            store.backend.stored(&revocation_key).as_deref(),
+            Some(b"not-a-record".as_slice())
         );
     }
 
