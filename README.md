@@ -37,7 +37,10 @@ crate purpose/cycle check, the dependency license gate, the error-code
 registry gate, the metrics registry gate (name, unit, label, span, and
 status conventions, the forbidden-label list, and export-name collision
 checking), byte-exact regeneration and a content scan of the synthetic
-fixture corpus, the requirement-verification register gate, a redacted
+fixture corpus, the requirement-verification register gate, the release
+container baseline gate (version equality, digest-pinned bases, the
+mtime-pinned reproducible install layer, the same-commit version rule),
+a redacted
 secret scan of the working tree and the git history, and a `cargo audit`
 dependency audit.
 The fast subset (`--fast`) is what the automation gate runs per change. See
@@ -86,6 +89,15 @@ committed.
   the plan's object-key table and timing sentences one contract; the
   per-record contracts live in
   [control trust schemas](docs/notes/control-trust-schemas.md).
+- [Release container conventions](docs/notes/release-container.md) define the
+  `containers/agent-archivist/` baseline — the strict-SemVer `VERSION`
+  record kept equal to the workspace version and moved only in the same
+  commit, and the digest-pinned two-stage Dockerfile whose builder tag
+  matches the pinned toolchain and whose single install layer pins every
+  mtime it stamps (verified reproducible by a double-build digest
+  comparison) — backed by a gate that walks the git
+  history of both version records and structurally validates the
+  Dockerfile.
 - [Synthetic fixtures](docs/notes/fixtures.md) define the deterministic,
   seeded generator behind the `fixtures/synthetic/` corpus — normal,
   malformed, rewritten, and large synthetic sessions — its byte-exact

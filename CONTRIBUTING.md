@@ -63,6 +63,7 @@ python3 tools/check-metrics.py --self-test         # metrics registry gate
 python3 tools/check-config.py --self-test          # config-key registry gate
 python3 tools/check-cli.py --self-test             # CLI command registry gate
 python3 tools/check-wire-schemas.py --self-test    # wire-schema coherence gate
+python3 tools/check-release-container.py --self-test  # release container baseline gate
 python3 tools/check-control-schemas.py --self-test  # control trust schema gate
 python3 tools/fixturegen.py --verify               # synthetic fixtures: byte-exact
                                                    # regeneration + content scan
@@ -79,7 +80,8 @@ The script's lanes keep per-change gating cheap:
   rustdoc, stub scan, crate graph, license gate, error-code registry gate,
   metrics registry gate, config-key registry gate, CLI command registry
   gate, wire-schema
-  coherence gate, control trust schema gate, synthetic-fixture
+  coherence gate, release container baseline gate, control trust schema
+  gate, synthetic-fixture
   regeneration and content scan, verification-register gate,
   working-tree secret scan — seconds, fully offline.
 - `--slow`: the workspace test suite.
@@ -137,7 +139,14 @@ a verification owner
 ([docs/notes/verification.md](docs/notes/verification.md)); a requirement
 marked implemented must have its mapped checks located in the evaluated
 commit, and a verification manifest recording absent, stale, cross-commit,
-or incomplete evidence for it is rejected.
+or incomplete evidence for it is rejected. The release container baseline
+gate keeps `containers/agent-archivist/VERSION` and the workspace version
+one fact written twice — strict SemVer, equal at every commit, moved only
+in the same commit — and the release Dockerfile digest-pinned to the
+pinned toolchain
+([docs/notes/release-container.md](docs/notes/release-container.md)); a
+commit that bumps one version record without the other fails the gate, as
+does a base reference without a digest.
 
 The Argo CI workflow that runs this baseline on Forgejo pushes is tracked as
 separate Phase 0 work; until it lands, run the script locally and state in

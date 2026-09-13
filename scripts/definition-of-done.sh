@@ -9,10 +9,11 @@
 #     graph, license gate, error-code registry gate, metrics registry
 #     gate, config-key registry gate, wire-schema coherence gate, CLI
 #     command registry gate,
-#     control trust schema gate, synthetic-fixture, conformance-corpus,
-#     and compat-corpus regeneration and content scan,
-#     verification-register gate, secret scan of the working tree
-#     (seconds, offline; safe as a gate)
+#     release container baseline gate, control trust schema gate,
+#     synthetic-fixture, conformance-corpus, and compat-corpus
+#     regeneration and content scan,
+#     verification-register gate, secret scan of the working
+#     tree (seconds, offline; safe as a gate)
 #   - Slow:  the workspace test suite
 #   - Audit: dependency audit (cargo audit; fetches the public RustSec
 #     advisory database — network, but no credentials) and a secret scan of
@@ -130,6 +131,12 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # enum/version metadata, reserved-name blocks, the construction registry,
   # and the error-message charset; `--self-test` proves the rejection paths.
   run_check "wire schema coherence"  python3 tools/check-wire-schemas.py --self-test
+  # Release container baseline (docs/notes/release-container.md): the
+  # VERSION grammar and its equality with the workspace version, the
+  # digest-pinned two-stage Dockerfile matching the pinned toolchain, and
+  # the same-commit rule for the two version records walked over git
+  # history; `--self-test` proves the rejection paths.
+  run_check "release container baseline"  python3 tools/check-release-container.py --self-test
   # Control trust family (docs/notes/control-trust.md and
   # docs/notes/control-trust-schemas.md): the archivist.control/v1
   # envelope registry, flat wrapper composition, closed shapes, the

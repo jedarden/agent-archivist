@@ -312,7 +312,7 @@ agent-archivist/
 ├── Cargo.lock
 ├── rust-toolchain.toml
 ├── containers/
-│   └── agent-archivist/
+│   └── agent-archivist/       # release image + version record (release-container.md)
 │       ├── Dockerfile
 │       └── VERSION
 ├── crates/
@@ -1718,6 +1718,13 @@ The 1.0 operational objectives are:
 No release is called production-ready solely because all crates compile. Release
 notes must state supported adapters, storage profiles, known coverage gaps, schema
 versions, and deduplication guarantees.
+
+The release image baseline — `containers/agent-archivist/` with its
+strict-SemVer `VERSION` record and its digest-pinned, two-stage Dockerfile —
+is defined in [docs/notes/release-container.md](../notes/release-container.md)
+and gated in the definition-of-done fast lane: the workspace version and
+`VERSION` move in the same commit or the change is rejected, and every
+release tag matches the `VERSION` content at its commit.
 
 ## 14. Risk register, Plan B, and mitigations
 

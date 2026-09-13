@@ -28,6 +28,13 @@ release states what it actually supports and what it does not.
 - A published tag is immutable: it is never moved or rewritten, and history is
   never force-pushed.
 
+The machine-checked baseline for this contract is
+[docs/notes/release-container.md](docs/notes/release-container.md):
+`tools/check-release-container.py` (definition-of-done fast lane) enforces the
+`VERSION` grammar, its equality with the workspace version at every commit,
+the same-commit rule over git history, release-tag matching, and the
+digest-pinned Dockerfile whose builder tag matches the pinned toolchain.
+
 ## Release sequence
 
 Releases follow the sequence fixed in the [implementation
