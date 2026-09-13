@@ -20,7 +20,10 @@
 //! with Phase 5; see [`state`]. The configuration loader — XDG-native TOML
 //! discovery, flag/environment/file/default precedence, protected secret
 //! references, and the stable exit-64 error surface — arrived with Phase 5
-//! as well; see [`config`]. The remaining surfaces are still the Phase 0
+//! as well; see [`config`]. The crash-safe spool — mode-`0600` bundle
+//! materialization, atomic rename, commit-after-rename ordering, and the
+//! startup reconciliation pass — arrived with Phase 5 too; see [`spool`].
+//! The remaining surfaces are still the Phase 0
 //! skeleton and deliberately contain no placeholder production code.
 //!
 //! # Dependency boundary
@@ -30,4 +33,5 @@
 //! harness adapter.
 
 pub mod config;
+pub mod spool;
 pub mod state;
