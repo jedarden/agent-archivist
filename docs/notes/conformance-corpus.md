@@ -155,6 +155,11 @@ the receipt chain and the manifest's `asserts`.
 - The Phase 1 exit gate: the Rust implementation and this corpus (via a
   standalone verifier that does not import the protocol crate) must
   produce identical signatures, IDs, and keys.
+- The in-crate Rust replay:
+  [`crates/archivist-protocol/tests/conformance.rs`](../../crates/archivist-protocol/tests/conformance.rs)
+  re-derives every canonical form, digest, identity, object key, and
+  signing preimage from the bundle's own inputs, byte for byte, using
+  the crate's owned JSON parser (no new dependencies).
 
 ## Open questions
 

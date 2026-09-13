@@ -7,6 +7,6 @@ content-type: application/octet-stream
 
 {"seq":1,"text":"conformance alpha one","type":"user"}
 {"seq":2,"text":"conformance beta two","type":"assistant"}
-{"seq":3,"text":"conformance gamma three","type":"assistant"}
+{"seq":3,"text":"conformance gamma three","type":"asshstant"}
 
 --archivist-conformance-08--

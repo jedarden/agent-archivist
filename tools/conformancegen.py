@@ -806,11 +806,15 @@ def derive_identity(envelope: dict) -> dict:
         "attestation_id": attestation_id,
         "blob_digest": blob,
         "blob_object_key": blob_object_key(tenant, blob),
+        # The keys take the re-derived occurrence, never the declared
+        # member, for the same reason attestation-v1 does (VAL-002:
+        # identities derive from inputs, and the one mismatch vector lies
+        # in exactly that member).
         "occurrence_object_key": occurrence_object_key(
             tenant, envelope["origin_client_id"], envelope["harness"],
-            session_hash, envelope["occurrence_id"]),
+            session_hash, occurrence_id),
         "attestation_object_key": attestation_object_key(
-            tenant, envelope["occurrence_id"], attestation_id),
+            tenant, occurrence_id, attestation_id),
     }
 
 
@@ -1754,17 +1758,9 @@ def scenario_manifest_entry(scenario: Scenario) -> dict:
 
 
 def build_manifest(scenarios: list[Scenario], files: dict[str, bytes]) -> dict:
-    entries = []
-    for scenario in scenarios:
-        if scenario.alteration is not None:
-            if scenario.alteration["kind"] == "payload-byte-flip":
-                payload = bytearray(scenario.payload)
-                offset = scenario.alteration["offset_in_payload"]
-                payload[offset] ^= scenario.alteration["bit"]
-                scenario.payload = bytes(payload)
-            body = scenario.body_bytes(boundary=scenario.alter_boundary)
-            scenario.altered_body = body
-        entries.append(scenario_manifest_entry(scenario))
+    # Alterations were applied by apply_alterations before file emission;
+    # this pass only records each scenario's manifest entry.
+    entries = [scenario_manifest_entry(scenario) for scenario in scenarios]
 
     # Fill the expected HTTP status and retryability from the registry:
     # the code pins the status, its class pins the retryability.
@@ -1933,13 +1929,41 @@ def load_error_registry() -> dict:
 # ---------------------------------------------------------------------------
 
 
+def apply_alterations(scenarios: list[Scenario]) -> None:
+    """Apply each altered-body scenario's in-transit tamper.
+
+    The covered values, the attempt record, and its signature are pinned
+    over the pristine bytes first — a tamperer cannot re-sign — and only
+    then is the transmitted body (and, for a payload flip, the payload
+    part) altered. This must run before any scenario files are emitted;
+    building it at manifest time left the alteration out of the emitted
+    bytes entirely, which the independent contract verifier caught as two
+    401 vectors whose bytes were fully self-consistent.
+    """
+    for scenario in scenarios:
+        if scenario.alteration is None:
+            continue
+        pristine_body = scenario.body_bytes()
+        covered = scenario.covered_values(pristine_body)
+        scenario.pristine_body = pristine_body
+        scenario.pristine_covered = covered
+        scenario.pristine_signature = scenario.uploader_key.sign(
+            scenario.attempt_input_bytes(covered))
+        if scenario.alteration["kind"] == "payload-byte-flip":
+            payload = bytearray(scenario.payload)
+            offset = scenario.alteration["offset_in_payload"]
+            payload[offset] ^= scenario.alteration["bit"]
+            scenario.payload = bytes(payload)
+        scenario.altered_body = scenario.body_bytes(
+            boundary=scenario.alter_boundary)
+        scenario.body_override = scenario.altered_body
+
+
 def build_bundle() -> dict[str, bytes]:
     scenarios = build_scenarios()
+    apply_alterations(scenarios)
     files: dict[str, bytes] = {}
     for scenario in scenarios:
-        # Rebuild altered bodies after the manifest-time mutation bookkeeping.
-        if getattr(scenario, "altered_body", None) is not None:
-            scenario.body_override = scenario.altered_body
         built = build_scenario_files(scenario)
         for name, data in built.items():
             files[f"scenarios/{scenario.id}/{name}"] = data
@@ -1954,12 +1978,13 @@ def build_bundle() -> dict[str, bytes]:
 def build_scenario_files(scenario: Scenario) -> dict[str, bytes]:
     """Build one scenario's files, applying any in-transit alteration."""
     if getattr(scenario, "body_override", None) is not None:
-        # The signature was taken over the original body; the transmitted
-        # body is the altered one.
-        original = scenario.body_bytes()
-        covered = scenario.covered_values(original)
+        # The signature was taken over the pristine body; the transmitted
+        # body is the altered one. Everything the attempt record and the
+        # manifest pin comes from apply_alterations' pristine snapshot.
+        original = scenario.pristine_body
+        covered = scenario.pristine_covered
+        signature = scenario.pristine_signature
         message = scenario.attempt_input_bytes(covered)
-        signature = scenario.uploader_key.sign(message)
         attempt = attempt_record(covered, signature)
         files = {
             "envelope.json": scenario.envelope_wire_bytes(),
