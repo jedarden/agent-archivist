@@ -33,6 +33,9 @@
 //!   time) shared by reads, listings, and the inventory.
 //! - [`raw_write`] — the raw writer: multipart blob commits and
 //!   deterministic manifest writes, and nothing else.
+//! - [`multipart`] — the streaming multipart writer: bounded 8 MiB part
+//!   sessions over [`raw_write::RawWriteStore`], cancellation-safe cleanup,
+//!   and the bounded manifest `PUT`.
 //! - [`control`] — the control-plane boundary: the read-only replica view,
 //!   the offline administrator store, and the record-kind vocabulary their
 //!   keys are derived from.
@@ -44,10 +47,13 @@
 //!
 //! # Status
 //!
-//! Phase 2 (storage core), first slice: the authority traits, the capability
-//! model, and the `inventory-v1` freeze contract are defined. Behavior — the
-//! portable S3 adapter, capability probing, and deterministic commits —
-//! arrives with its own deliverables (plan Section 8, Phase 2).
+//! Phase 2 (storage core): the authority traits, the capability model, and
+//! the `inventory-v1` freeze contract are defined, and the streaming
+//! multipart writer ([`multipart`]) orchestrates raw-write sessions with
+//! bounded memory, validate-before-complete, and cancellation-safe cleanup.
+//! Backend behavior — the portable S3 adapter, capability probing, and the
+//! deterministic commits that drive this writer — arrives with its own
+//! deliverables (plan Section 8, Phase 2).
 //!
 //! # Dependency boundary
 //!
@@ -60,4 +66,5 @@ pub mod control;
 pub mod error;
 pub mod ingest;
 pub mod metadata;
+pub mod multipart;
 pub mod raw_write;
