@@ -14,11 +14,16 @@
 //!
 //! # Status
 //!
-//! Skeleton scaffold (Phase 0). Behavior arrives with Phase 5 (durable client
-//! engine). It deliberately contains no placeholder production code.
+//! The client state schema — explicit `SQLite` (WAL) migrations for sources,
+//! generations, spool entries, frozen requests, ranges, upload attestations,
+//! receipts, and adapter health, with automated integrity checks — arrived
+//! with Phase 5; see [`state`]. The remaining surfaces are still the Phase 0
+//! skeleton and deliberately contain no placeholder production code.
 //!
 //! # Dependency boundary
 //!
 //! Depends on `archivist-protocol` and `archivist-adapter-sdk` only. Must
 //! not depend on the server, a concrete storage backend, or any specific
 //! harness adapter.
+
+pub mod state;

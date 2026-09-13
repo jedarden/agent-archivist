@@ -33,6 +33,12 @@ pedantic = "warn"
 broken_intra_doc_links = "deny"
 
 # Shared external dependencies are pinned here as crates adopt them so every
-# member resolves one version. None are required yet: the scaffold is
-# dependency-free, so the committed Cargo.lock currently describes only the
-# workspace members themselves.
+# member resolves one version. The scaffold started dependency-free; the list
+# below grows only when a crate adopts a dependency for a documented reason.
+
+[workspace.dependencies]
+# Backs the client state database (plan Section 7.9): WAL mode, explicit
+# migrations, one mutator. `bundled` compiles a pinned SQLite so client state
+# never depends on the host's library version; `default-features = false`
+# keeps the prepared-statement cache and wasm paths out of the build.
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }

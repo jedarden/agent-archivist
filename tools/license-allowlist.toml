@@ -6,8 +6,21 @@
 # unreviewed dependency) or when an entry outlives its dependency (a stale
 # record), so adding a dependency is always a deliberate license review.
 #
-# The workspace is dependency-free at present; the table is intentionally
-# empty and grows only when the first external crate is adopted.
+# The table grows only when a crate adopts an external dependency, and each
+# entry lands in the same commit as the adoption. The first external crate is
+# `rusqlite` (2026-09-13): the bundled SQLite engine behind the client state
+# database (plan Section 7.9), which brings its build and utility crates.
 
 [approved]
 # crate-name = "SPDX identifier as published by the crate"
+bitflags = "MIT OR Apache-2.0"
+cc = "MIT OR Apache-2.0"
+fallible-iterator = "MIT/Apache-2.0"
+fallible-streaming-iterator = "MIT/Apache-2.0"
+find-msvc-tools = "MIT OR Apache-2.0"
+libsqlite3-sys = "MIT"
+pkg-config = "MIT OR Apache-2.0"
+rusqlite = "MIT"
+shlex = "MIT OR Apache-2.0"
+smallvec = "MIT OR Apache-2.0"
+vcpkg = "MIT/Apache-2.0"

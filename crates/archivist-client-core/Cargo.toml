@@ -12,6 +12,7 @@ repository.workspace = true
 [dependencies]
 archivist-adapter-sdk = { path = "../archivist-adapter-sdk" }
 archivist-protocol = { path = "../archivist-protocol" }
+rusqlite.workspace = true
 
 [lints]
 workspace = true
