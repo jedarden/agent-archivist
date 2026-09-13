@@ -1,6 +1,6 @@
 # Agent Archivist requirements
 
-Status: accepted baseline · Last updated: 2026-09-08
+Status: accepted baseline · Last updated: 2026-09-13
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are
 to be interpreted as described by RFC 2119 and RFC 8174 when they appear in bold.
@@ -285,3 +285,65 @@ with synthetic fixtures:
 9. No server replica requires persistent local state, and replacement during
    retries does not change the result.
 10. Logs and metrics remain content-free during success and forced error cases.
+
+## 14. Release container baseline
+
+The versioning and reproducibility contract for the single release image is
+owned by [release-container.md](release-container.md); the requirement IDs
+below are that note's rule numbers, kept identical so the verification
+register maps one to one. The note's scope rules (RC-001 through RC-003) and
+its distribution pointer (RC-007) are contract framing owned by the note and
+[RELEASE.md](../../RELEASE.md) and carry no separate register entries.
+
+- **RC-004** — `containers/agent-archivist/VERSION` **MUST** contain exactly
+  one line: a core semantic version `X.Y.Z` in ASCII digits with no leading
+  zeros, one trailing newline, and no pre-release or build metadata.
+- **RC-005** — The `VERSION` record and the `[workspace.package] version` in
+  the root `Cargo.toml` **MUST** be the same string, and every member crate
+  **MUST** inherit it; no `crates/*/Cargo.toml` declares its own
+  `[package] version`.
+- **RC-006** — A release tag has the form `vX.Y.Z` and **MUST** point at a
+  commit whose `VERSION` is exactly `X.Y.Z`.
+- **RC-008** — A change to the workspace version and a change to the
+  `VERSION` record **MUST** land in the same commit; any commit at which the
+  two records diverge fails, and a later reconciling commit does not repair
+  it.
+- **RC-009** — From its introduction commit onward, the `VERSION` record
+  **MUST NOT** disappear from any later commit.
+- **RC-010** — The same-commit rule is scoped from the commit that introduced
+  `VERSION`: earlier history is grandfathered, and later history — including
+  merges and rebases rewritten after the contract landed — is fully policed.
+- **RC-011** — Every `FROM` reference **MUST** be digest-pinned
+  (`name:tag@sha256:<64 lowercase hex>`) with a version-exact tag that cannot
+  drift from the digest in meaning.
+- **RC-012** — The build stage's base tag **MUST** be exactly
+  `rust:<channel>-slim-bookworm` for the channel pinned in
+  `rust-toolchain.toml`, and the toolchain file **MUST NOT** be copied into
+  the build.
+- **RC-013** — The runtime stage's base **MUST** be
+  `debian:<major.minor>-slim`, both version components pinned, from the same
+  distribution generation as the build stage.
+- **RC-014** — The build stage **MUST** invoke exactly
+  `cargo build --release --frozen --offline --bin archivist` and nothing else
+  that compiles; `cargo install` and `rustup` invocations **MUST NOT** appear
+  in any stage.
+- **RC-015** — `COPY` **MUST** be the only directive that moves build-context
+  files into the image: `ADD` **MUST NOT** appear, and the release binary
+  crosses from the builder stage by the read-only bind mount of RC-017,
+  never by a plain `COPY --from=builder`.
+- **RC-016** — The build **MUST NOT** inject timestamps, commit identifiers,
+  or build-host names into the binary or the image config; the
+  `org.opencontainers.image.version` label **MUST** come only from the
+  `AGENT_ARCHIVIST_VERSION` build argument set from the `VERSION` content.
+- **RC-017** — The image **MUST** have exactly two stages, named `builder`
+  and `runtime`; the runtime stage installs no packages, adds exactly one
+  layer (the install `RUN`), sets a fixed numeric non-root `USER`, and
+  declares an exec-form `ENTRYPOINT` naming exactly the install destination.
+- **RC-018** — Wall-clock time **MUST NOT** be a build input: every `RUN`
+  **MUST** normalize the modification times of the files and directories it
+  stamps to `SOURCE_DATE_EPOCH`, and each stage **MUST** declare
+  `ARG SOURCE_DATE_EPOCH`.
+- **RC-019** — Identical repository bytes, Dockerfile, base digests, and one
+  pinned `SOURCE_DATE_EPOCH` **MUST** produce a bit-identical image digest
+  from the same builder, demonstrated by the recorded double-build in
+  [release-container.md](release-container.md) Section 6.

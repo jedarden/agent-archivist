@@ -1,6 +1,6 @@
 # Agent Archivist requirement-verification mapping
 
-Status: accepted baseline · Last updated: 2026-09-11
+Status: accepted baseline · Last updated: 2026-09-13
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are
 to be interpreted as described by RFC 2119 and RFC 8174 when they appear in bold.
@@ -71,11 +71,12 @@ two maps:
     `auth-conformance` (ID), `golden-ids` (SID), `adapter-suites` (CAP),
     `scheduler-simulation` (SCH), `protocol-corpus` (VAL),
     `compatibility-matrix` (STO), `fault-injection` (RCPT),
-    `security-scans` (SEC), `operations-exercises` (OPS), and `release-audit`
-    (PUB). A new requirement group extends this map in the tool and the plan
-    in the same commit.
-  - `locator` — repo-relative path of the mapped check's source (a test file
-    or suite entry). The key is omitted while a verification is unplanned;
+    `security-scans` (SEC), `operations-exercises` (OPS), `release-audit`
+    (PUB), and `release-container` (RC). A new requirement group extends
+    this map in the tool and the plan in the same commit.
+  - `locator` — repo-relative path of the mapped check's source (a test file,
+    a suite entry, or, for an operational verification, the document recording
+    its pilot evidence). The key is omitted while a verification is unplanned;
     `sync` writes no locator. When present the path **MUST** resolve inside
     the repository and exist in the evaluated commit — a locator naming a
     missing file is a register error even for a planned requirement.

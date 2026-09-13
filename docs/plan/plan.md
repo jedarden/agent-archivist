@@ -1810,6 +1810,7 @@ contracts; implementation defaults cannot silently override it.
 | Security (`SEC`) | All | Threat model, scans, adversarial tests |
 | Operations (`OPS`) | 5, 7, 11 | Crash, load, restore, and runbook exercises |
 | Public distribution (`PUB`) | 0, 7, 11 | Release and repository audit |
+| Release container (`RC`) | 0, 7 | Release-container baseline gate and the recorded reproducibility double-build |
 
 Every normative requirement receives a stable test or operational verification ID
 before its implementation is merged. CI fails when a requirement marked implemented

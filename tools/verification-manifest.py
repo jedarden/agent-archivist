@@ -95,8 +95,9 @@ ARTIFACT_KINDS = ("oci", "archive", "checksum")
 SBOM_FORMATS = ("cyclonedx", "spdx")
 
 # Verification owners, one per requirement group (plan Section 16). A new
-# requirement group is a reviewed change that extends this map in the same
-# commit as the requirements document.
+# requirement group is a reviewed change that extends this map, the plan's
+# traceability table, and the owner map in docs/notes/verification.md in the
+# same commit as the requirements document.
 GROUP_OWNERS = {
     "ARCH": "stateless-replacement",
     "ID": "auth-conformance",
@@ -109,6 +110,7 @@ GROUP_OWNERS = {
     "SEC": "security-scans",
     "OPS": "operations-exercises",
     "PUB": "release-audit",
+    "RC": "release-container",
 }
 OWNERS = frozenset(GROUP_OWNERS.values())
 

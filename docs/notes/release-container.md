@@ -94,9 +94,9 @@ Dockerfile, identical base digests, and one pinned `SOURCE_DATE_EPOCH`
 (see RC-018) produce a bit-identical image digest from the same builder —
 the comparison is two runs of one `docker build`, not
 docker-versus-kaniko; the release workflow's build is deterministic on its
-own terms and owns its own digest. The rules below are the
-static, machine-checkable subset of that property; the double-build digest
-comparison in Section 6 is its demonstration.
+own terms and owns its own digest. The rules RC-011 through RC-018 below are
+the static, machine-checkable subset of that property; the double-build
+digest comparison in Section 6 is its demonstration, pinned as RC-019.
 
 - **RC-011** — Every `FROM` reference **MUST** be digest-pinned:
   `name:tag@sha256:<64 lowercase hex>`. The digest is the pin; the tag
@@ -179,6 +179,13 @@ comparison in Section 6 is its demonstration.
   without it, two builds of identical content still produce different
   layer digests, because a layer tar records file mtimes — including,
   non-obviously, the mtimes of the directories a step writes into.
+- **RC-019** — The rules above **MUST** deliver the acceptance property this
+  section opens with: identical repository bytes, Dockerfile, base digests,
+  and one pinned `SOURCE_DATE_EPOCH` produce a bit-identical image digest
+  from the same builder. The property is demonstrated, not assumed: the
+  Section 6 double-build — two builds of one tree, the second fully
+  uncached — **MUST** produce one digest, and a divergence is a failed
+  baseline change no matter which rule loosened.
 
 ## 5. What is deliberately not yet true
 
@@ -226,7 +233,7 @@ rejection paths — mutated version files, mutated Dockerfiles, and
 synthetic divergent histories — the same way the other registry gates do.
 Output is content-free: paths, versions, digests, and commit counts only.
 
-The reproducibility property itself sits outside the per-commit
+The reproducibility property (RC-019) itself sits outside the per-commit
 gate — the gate is offline, seconds-fast, and never builds anything. It is
 demonstrated by building the image twice from the same tree — the second
 build fully uncached — and comparing digests, running the canonical
@@ -254,7 +261,8 @@ the release workflow's own build (RELEASE.md, release steps) is the
 authoritative producer and can run the same double-build check before
 publishing. Two builds from one tree under one builder produce one
 digest; a divergence is a failed baseline change no matter which rule
-loosened.
+loosened. The recorded run in the Examples section below is the pilot
+evidence registered for RC-019 (verification `OV-RC-019`).
 
 ## Examples
 

@@ -244,6 +244,96 @@
         "T-PUB-005"
       ]
     },
+    "RC-004": {
+      "status": "planned",
+      "verifications": [
+        "T-RC-004"
+      ]
+    },
+    "RC-005": {
+      "status": "planned",
+      "verifications": [
+        "T-RC-005"
+      ]
+    },
+    "RC-006": {
+      "status": "planned",
+      "verifications": [
+        "T-RC-006"
+      ]
+    },
+    "RC-008": {
+      "status": "planned",
+      "verifications": [
+        "T-RC-008"
+      ]
+    },
+    "RC-009": {
+      "status": "planned",
+      "verifications": [
+        "T-RC-009"
+      ]
+    },
+    "RC-010": {
+      "status": "planned",
+      "verifications": [
+        "T-RC-010"
+      ]
+    },
+    "RC-011": {
+      "status": "planned",
+      "verifications": [
+        "T-RC-011"
+      ]
+    },
+    "RC-012": {
+      "status": "planned",
+      "verifications": [
+        "T-RC-012"
+      ]
+    },
+    "RC-013": {
+      "status": "planned",
+      "verifications": [
+        "T-RC-013"
+      ]
+    },
+    "RC-014": {
+      "status": "planned",
+      "verifications": [
+        "T-RC-014"
+      ]
+    },
+    "RC-015": {
+      "status": "planned",
+      "verifications": [
+        "T-RC-015"
+      ]
+    },
+    "RC-016": {
+      "status": "planned",
+      "verifications": [
+        "T-RC-016"
+      ]
+    },
+    "RC-017": {
+      "status": "planned",
+      "verifications": [
+        "T-RC-017"
+      ]
+    },
+    "RC-018": {
+      "status": "planned",
+      "verifications": [
+        "T-RC-018"
+      ]
+    },
+    "RC-019": {
+      "status": "planned",
+      "verifications": [
+        "OV-RC-019"
+      ]
+    },
     "RCPT-001": {
       "status": "planned",
       "verifications": [
@@ -567,6 +657,16 @@
       "operational_kind": "review-record",
       "owner": "release-audit"
     },
+    "OV-RC-019": {
+      "evidence": [
+        "pilot_evidence"
+      ],
+      "kind": "operational",
+      "lane": "release",
+      "locator": "docs/notes/release-container.md",
+      "operational_kind": "review-record",
+      "owner": "release-container"
+    },
     "T-ARCH-001": {
       "evidence": [
         "outcomes"
@@ -887,6 +987,132 @@
       "kind": "test",
       "lane": "slow",
       "owner": "release-audit"
+    },
+    "T-RC-004": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "fast",
+      "locator": "tools/check-release-container.py",
+      "owner": "release-container"
+    },
+    "T-RC-005": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "fast",
+      "locator": "tools/check-release-container.py",
+      "owner": "release-container"
+    },
+    "T-RC-006": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "fast",
+      "locator": "tools/check-release-container.py",
+      "owner": "release-container"
+    },
+    "T-RC-008": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "fast",
+      "locator": "tools/check-release-container.py",
+      "owner": "release-container"
+    },
+    "T-RC-009": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "fast",
+      "locator": "tools/check-release-container.py",
+      "owner": "release-container"
+    },
+    "T-RC-010": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "fast",
+      "locator": "tools/check-release-container.py",
+      "owner": "release-container"
+    },
+    "T-RC-011": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "fast",
+      "locator": "tools/check-release-container.py",
+      "owner": "release-container"
+    },
+    "T-RC-012": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "fast",
+      "locator": "tools/check-release-container.py",
+      "owner": "release-container"
+    },
+    "T-RC-013": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "fast",
+      "locator": "tools/check-release-container.py",
+      "owner": "release-container"
+    },
+    "T-RC-014": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "fast",
+      "locator": "tools/check-release-container.py",
+      "owner": "release-container"
+    },
+    "T-RC-015": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "fast",
+      "locator": "tools/check-release-container.py",
+      "owner": "release-container"
+    },
+    "T-RC-016": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "fast",
+      "locator": "tools/check-release-container.py",
+      "owner": "release-container"
+    },
+    "T-RC-017": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "fast",
+      "locator": "tools/check-release-container.py",
+      "owner": "release-container"
+    },
+    "T-RC-018": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "fast",
+      "locator": "tools/check-release-container.py",
+      "owner": "release-container"
     },
     "T-RCPT-001": {
       "evidence": [
