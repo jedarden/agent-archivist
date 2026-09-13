@@ -1550,23 +1550,41 @@ mod tests {
         // of that same administrative write is already the object there —
         // success without a second write — and any other bytes at the key
         // are the containment case: refuse, and leave exactly what was
-        // stored where it was.
-        let cases = [
+        // stored where it was. "Incompatible" is a statement about the
+        // whole byte-exact envelope, so each family proves it twice: a
+        // payload member mutated, and a wrapper member mutated — a
+        // re-signed or re-timestamped variant of the same record is still
+        // different bytes at an occupied key, not the same record.
+        let cases = vec![
             (
                 ControlRecordKind::Revocation,
                 format!("tenants/{TENANT}/v1/control/revocations/{CLIENT}/3.json"),
                 revocation_envelope(3),
-                replace_member(
-                    &revocation_envelope(3),
-                    "revoked_key_id",
-                    text(&key_id_of(&[0xef; 32])),
-                ),
+                vec![
+                    replace_member(
+                        &revocation_envelope(3),
+                        "revoked_key_id",
+                        text(&key_id_of(&[0xef; 32])),
+                    ),
+                    replace_member(
+                        &revocation_envelope(3),
+                        "authority_signature",
+                        text(&"11".repeat(64)),
+                    ),
+                ],
             ),
             (
                 ControlRecordKind::Rotation,
                 format!("tenants/{TENANT}/v1/control/rotations/{CLIENT}/3.json"),
                 rotation_envelope(3),
-                replace_member(&rotation_envelope(3), "public_key", text(&"ef".repeat(32))),
+                vec![
+                    replace_member(&rotation_envelope(3), "public_key", text(&"ef".repeat(32))),
+                    replace_member(
+                        &rotation_envelope(3),
+                        "signed_at",
+                        text("2026-09-12T00:00:00Z"),
+                    ),
+                ],
             ),
             (
                 ControlRecordKind::ReceiptKey,
@@ -1575,14 +1593,21 @@ mod tests {
                     key_id_of(&[0x3c; 32])
                 ),
                 receipt_key_envelope(),
-                replace_member(
-                    &receipt_key_envelope(),
-                    "valid_until",
-                    text("2026-10-12T00:00:00Z"),
-                ),
+                vec![
+                    replace_member(
+                        &receipt_key_envelope(),
+                        "valid_until",
+                        text("2026-10-12T00:00:00Z"),
+                    ),
+                    replace_member(
+                        &receipt_key_envelope(),
+                        "authority_signature",
+                        text(&"22".repeat(64)),
+                    ),
+                ],
             ),
         ];
-        for (kind, key, record_bytes, conflicting) in cases {
+        for (kind, key, record_bytes, conflictings) in cases {
             let store = store();
 
             // A fresh write at an unoccupied derived key creates the object.
@@ -1602,21 +1627,23 @@ mod tests {
                 Some(record_bytes.as_slice())
             );
 
-            // Incompatible bytes at the same derived key are the EC-06
-            // integrity conflict — refused, and nothing of the
+            // Every incompatible variant at the same derived key is the
+            // EC-06 integrity conflict — refused, and nothing of the
             // conflicting record is written over what is stored.
-            assert_ne!(conflicting, record_bytes);
-            assert_eq!(
-                error_kind(block_on(
-                    store.put_immutable_record(&record(kind, conflicting.clone()))
-                )),
-                StorageErrorKind::IntegrityConflict
-            );
-            assert_eq!(store.backend.puts_at(&key), 1, "refusal must not write");
-            assert_eq!(
-                store.backend.stored(&key).as_deref(),
-                Some(record_bytes.as_slice())
-            );
+            for conflicting in &conflictings {
+                assert_ne!(conflicting, &record_bytes);
+                assert_eq!(
+                    error_kind(block_on(
+                        store.put_immutable_record(&record(kind, conflicting.clone()))
+                    )),
+                    StorageErrorKind::IntegrityConflict
+                );
+                assert_eq!(store.backend.puts_at(&key), 1, "refusal must not write");
+                assert_eq!(
+                    store.backend.stored(&key).as_deref(),
+                    Some(record_bytes.as_slice())
+                );
+            }
         }
     }
 
@@ -1707,7 +1734,10 @@ mod tests {
             )))),
             StorageErrorKind::StaleEpoch
         );
-        // The refused writes left the stored pointer where it was.
+        // The refused writes left the stored pointer where it was — and
+        // issued no write of their own: the two puts so far are the two
+        // accepted pointers, epochs 2 and 3.
+        assert_eq!(store.backend.puts_at(&key), 2);
         assert_eq!(
             store.backend.stored(&key).as_deref(),
             Some(linked_client_envelope(3).as_slice())
@@ -1720,6 +1750,33 @@ mod tests {
             linked_client_envelope(7),
         )))
         .unwrap();
+
+        // And the epoch, not the bytes, is the gate: different payload
+        // carrying the *stored* epoch is still stale — a pointer cannot
+        // be rewritten at epoch 7 with bytes the epoch-7 signature never
+        // covered, any more than a replay of the exact bytes can.
+        let rewrite = replace_member(
+            &linked_client_envelope(7),
+            "public_key",
+            text(&"ef".repeat(32)),
+        );
+        assert_ne!(rewrite, linked_client_envelope(7));
+        assert_eq!(
+            error_kind(block_on(store.put_current_pointer(&record(
+                ControlRecordKind::LinkedClient,
+                rewrite,
+            )))),
+            StorageErrorKind::StaleEpoch
+        );
+        assert_eq!(
+            store.backend.puts_at(&key),
+            3,
+            "a same-epoch rewrite must not write"
+        );
+        assert_eq!(
+            store.backend.stored(&key).as_deref(),
+            Some(linked_client_envelope(7).as_slice())
+        );
 
         // The delegation pointer is the same rule over the (relay, origin)
         // relation's own epoch sequence.
@@ -1756,6 +1813,9 @@ mod tests {
             store.backend.stored(&delegation_key).as_deref(),
             Some(delegation_envelope(2).as_slice())
         );
+        // Two accepted puts on this relation's sequence — epochs 1 and 2 —
+        // and neither stale refusal added a third.
+        assert_eq!(store.backend.puts_at(&delegation_key), 2);
     }
 
     #[test]
@@ -1814,6 +1874,14 @@ mod tests {
                 store.backend.stored(&key).as_deref(),
                 Some(stored_pointer.as_slice())
             );
+            // Stronger still: the epoch gate ran before the backend saw
+            // *any* request at all — the only requests ever issued are the
+            // initial pointer write's own read and put.
+            assert_eq!(
+                store.backend.requests(),
+                2,
+                "invalid epochs must be refused before any request is issued"
+            );
         }
     }
 
@@ -1841,6 +1909,33 @@ mod tests {
                 linked_client_envelope(2),
             )))),
             StorageErrorKind::IntegrityConflict
+        );
+        // And subtler: a *well-formed* record of the right family whose
+        // own members derive a *different* key. The stored pointer must
+        // re-derive to the very key it sits at; one that does not is
+        // bytes moved to the wrong address, and no replacement this store
+        // offers may interpret or displace it.
+        store.backend.preload(
+            &key,
+            &replace_member(&linked_client_envelope(5), "client_id", text(RELAY)),
+        );
+        assert_eq!(
+            error_kind(block_on(store.put_current_pointer(&record(
+                ControlRecordKind::LinkedClient,
+                linked_client_envelope(2),
+            )))),
+            StorageErrorKind::IntegrityConflict
+        );
+        // Every corrupt-pointer refusal issued no write either: the key
+        // still holds exactly the corrupt bytes last preloaded, unchanged.
+        assert_eq!(
+            store.backend.puts_at(&key),
+            0,
+            "a corrupt pointer must not be written over"
+        );
+        assert_eq!(
+            store.backend.stored(&key).as_deref(),
+            Some(replace_member(&linked_client_envelope(5), "client_id", text(RELAY)).as_slice())
         );
         // And a corrupt object at an immutable family's key is refused by
         // the immutable rule's compatibility arm.
