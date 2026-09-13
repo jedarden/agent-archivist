@@ -23,14 +23,17 @@
 //! could fill, the joint check refuses the one composition mistake the type
 //! split cannot see (a deployment reusing the reference string across both
 //! surfaces), and the store refuses any record outside the pinned tenant
-//! before a request is issued.
+//! before a request is issued — proven family by family, through the write
+//! method each family's own write class pins.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use archivist_protocol::json::{Object, Value};
 use archivist_protocol::vocabulary::{Ed25519PublicKey, KeyId, TenantId};
-use archivist_storage::control::{AdminControlRecord, ControlAdminStore, ControlRecordKind};
+use archivist_storage::control::{
+    AdminControlRecord, ControlAdminStore, ControlRecordKind, ControlWriteClass,
+};
 use archivist_storage::error::{StorageError, StorageErrorKind};
 use archivist_storage_s3::config::{
     ControlAdminConfig, EncryptionPolicy, S3ConfigErrorKind, S3StorageConfig,
@@ -659,33 +662,73 @@ fn a_foreign_tenant_record_is_refused_before_any_request_is_issued() {
     let backend = PolicyBackend::new(&tenant_id());
     let (_, store) = admin_store(backend.clone());
 
-    // A record signed under another tenant's authority is outside this
-    // administration identity: refused with the scope detail, and the
-    // backend saw nothing — no read, no write, nothing stored.
-    let error = block_on(store.put_current_pointer(&record(
-        ControlRecordKind::LinkedClient,
-        linked_client_envelope(OTHER_TENANT, 1),
-    )))
-    .expect_err("a foreign-tenant record must be refused");
-    assert_eq!(error.kind(), StorageErrorKind::ScopeViolation);
-    assert_eq!(
-        error.detail(),
-        "record tenant is outside this administration identity"
-    );
-    assert_eq!(backend.requests(), 0, "no request may be issued");
+    // Every family, through the write method its own write class pins: a
+    // record signed under another tenant's authority is outside this
+    // administration identity — refused with the scope detail, and the
+    // backend saw nothing at all: no read, no write, nothing stored.
+    let foreign_records = [
+        (
+            ControlRecordKind::LinkedClient,
+            linked_client_envelope(OTHER_TENANT, 1),
+        ),
+        (
+            ControlRecordKind::Delegation,
+            delegation_envelope(OTHER_TENANT, 1),
+        ),
+        (
+            ControlRecordKind::Revocation,
+            revocation_envelope(OTHER_TENANT, 1),
+        ),
+        (
+            ControlRecordKind::Rotation,
+            rotation_envelope(OTHER_TENANT, 3),
+        ),
+        (
+            ControlRecordKind::ReceiptKey,
+            receipt_key_envelope(OTHER_TENANT),
+        ),
+    ];
+    for (kind, bytes) in foreign_records {
+        let attempted = match kind.write_class() {
+            ControlWriteClass::CurrentPointer => {
+                block_on(store.put_current_pointer(&record(kind, bytes)))
+            }
+            ControlWriteClass::Immutable => {
+                block_on(store.put_immutable_record(&record(kind, bytes)))
+            }
+        };
+        let error = attempted.expect_err("a foreign-tenant record must be refused");
+        assert_eq!(error.kind(), StorageErrorKind::ScopeViolation);
+        assert_eq!(
+            error.detail(),
+            "record tenant is outside this administration identity"
+        );
+        // The counter is cumulative across the loop, so asserting zero
+        // here — per family, not only once at the end — is what makes
+        // this a per-family proof: any single family reaching the
+        // backend would fail its own iteration, not just the total.
+        assert_eq!(backend.requests(), 0, "no request may be issued");
+    }
     assert!(backend.granted_keys().is_empty());
     for key in one_key_per_family() {
         assert!(backend.stored(&key).is_none(), "{key} stored");
     }
 
-    // The immutable method refuses the same way, before any request.
-    let error = block_on(store.put_immutable_record(&record(
-        ControlRecordKind::Revocation,
-        revocation_envelope(OTHER_TENANT, 1),
-    )))
-    .expect_err("a foreign-tenant record must be refused");
+    // The backend seam itself denies a foreign-tenant control key even if
+    // one were somehow derived — the permission profile's denial, both
+    // verbs.
+    let foreign = ControlObjectKey::parse(&format!(
+        "tenants/{OTHER_TENANT}/v1/control/clients/{CLIENT}.json"
+    ))
+    .expect("a foreign control key is still a control key");
+    let error = block_on(backend.clone().get_control_object(&foreign))
+        .expect_err("foreign tenant must be denied");
     assert_eq!(error.kind(), StorageErrorKind::ScopeViolation);
-    assert_eq!(backend.requests(), 0);
+    let error = block_on(backend.clone().put_control_object(&foreign, b"{}"))
+        .expect_err("foreign tenant must be denied");
+    assert_eq!(error.kind(), StorageErrorKind::ScopeViolation);
+    assert_eq!(backend.requests(), 2, "only the direct probes asked");
+    assert_eq!(backend.denials(), 2);
 }
 
 #[test]

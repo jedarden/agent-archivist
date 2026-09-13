@@ -719,12 +719,12 @@ impl<B: ControlAdminBackend + Sync> ControlAdminStore for S3ControlAdminStore<B>
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::sync::{Arc, Mutex};
 
     use archivist_protocol::json::{Object, Value};
     use archivist_protocol::vocabulary::Ed25519PublicKey;
-    use archivist_storage::control::ControlRecordKind;
+    use archivist_storage::control::{ControlRecordKind, ControlWriteClass};
 
     use super::{
         AdminControlRecord, AuthorizationEpoch, ControlAdminBackend, ControlAdminStore,
@@ -888,12 +888,14 @@ mod tests {
     /// read-write below `tenants/<tenant>/v1/control/` and deny everything
     /// else — not a structural tenant compare, so the store's requests are
     /// proven to stay inside the prefix exactly as a live backend would
-    /// grant or refuse them.
+    /// grant or refuse them. Every request that reaches either verb is
+    /// counted, so a test can prove a refused record never issued one.
     #[derive(Clone, Debug)]
     struct MapBackend {
         control_prefix: String,
         objects: Arc<Mutex<HashMap<String, Vec<u8>>>>,
         writes: Arc<Mutex<HashMap<String, u32>>>,
+        requests: Arc<Mutex<u32>>,
     }
 
     impl MapBackend {
@@ -902,7 +904,15 @@ mod tests {
                 control_prefix: format!("tenants/{tenant}/v1/control/"),
                 objects: Arc::new(Mutex::new(HashMap::new())),
                 writes: Arc::new(Mutex::new(HashMap::new())),
+                requests: Arc::new(Mutex::new(0)),
             }
+        }
+
+        /// How many requests reached this backend at all, granted or
+        /// refused — the counter a refused-before-any-request proof holds
+        /// at zero.
+        fn requests(&self) -> u32 {
+            *self.requests.lock().expect("test backend lock")
         }
 
         /// The deployment policy for the administration credential, as a
@@ -944,6 +954,7 @@ mod tests {
             &self,
             key: &super::ControlObjectKey,
         ) -> Result<Option<Vec<u8>>, StorageError> {
+            *self.requests.lock().expect("test backend lock") += 1;
             if !self.policy_permits(key.as_str()) {
                 return Err(StorageError::of_kind(StorageErrorKind::ScopeViolation));
             }
@@ -960,6 +971,7 @@ mod tests {
             key: &super::ControlObjectKey,
             bytes: &[u8],
         ) -> Result<(), StorageError> {
+            *self.requests.lock().expect("test backend lock") += 1;
             if !self.policy_permits(key.as_str()) {
                 return Err(StorageError::of_kind(StorageErrorKind::ScopeViolation));
             }
@@ -991,50 +1003,285 @@ mod tests {
 
     #[test]
     fn derived_keys_agree_with_the_registry_layouts() {
-        // The layouts of tools/control-records.toml with the schema gate's
-        // golden identifiers substituted — layout, pattern, and key members
-        // are one contract, and this pins the Rust side into it.
+        // The agreement is mechanical, not transcribed: the registry's own
+        // `object_key` layouts, read from tools/control-records.toml and
+        // substituted with the schema gate's golden identifiers per each
+        // family's `key_members`, must equal the typed derivations, the
+        // wire-side parse, and the keys the store derives from each
+        // family's signed envelope — and the registry's write class must
+        // route each family to the write method the store pins for it.
+        let registry_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tools/control-records.toml");
+        let registry_text = std::fs::read_to_string(&registry_path)
+            .unwrap_or_else(|e| panic!("the control record registry must be readable: {e}"));
+        let registry = parse_registry(&registry_text)
+            .unwrap_or_else(|e| panic!("the control record registry must parse: {e}"));
+
+        // The derivation implements exactly the registry's record set —
+        // no family without a Rust layout, no layout without a family.
+        // (The registry's append-only rule lands a new family's schema,
+        // envelope entry, enum token, object-key pattern, and this
+        // derivation in one change; this assertion is the Rust side of
+        // that rule.)
+        let families: Vec<&str> = registry.keys().map(String::as_str).collect();
+        assert_eq!(
+            families,
+            [
+                "delegation",
+                "linked-client",
+                "receipt-key",
+                "revocation",
+                "rotation"
+            ],
+            "the registry and the derivation must name the same five families"
+        );
+
         let tenant = tenant();
         let client = client();
         let relay = relay();
         let epoch = AuthorizationEpoch::new(3).unwrap();
         let receipt_key =
             archivist_protocol::vocabulary::KeyId::parse(&key_id_of(&[0x3c; 32])).unwrap();
+        let golden: HashMap<&str, String> = HashMap::from([
+            ("tenant_id", TENANT.to_owned()),
+            ("client_id", CLIENT.to_owned()),
+            ("relay_client_id", RELAY.to_owned()),
+            ("origin_client_id", CLIENT.to_owned()),
+            ("authorization_epoch", epoch.get().to_string()),
+            ("key_id", key_id_of(&[0x3c; 32])),
+        ]);
 
-        let cases = [
-            (
-                ControlObjectKey::linked_client(&tenant, &client),
-                format!("tenants/{TENANT}/v1/control/clients/{CLIENT}.json"),
-                ControlRecordKind::LinkedClient,
-            ),
-            (
-                ControlObjectKey::delegation(&tenant, &relay, &client),
-                format!("tenants/{TENANT}/v1/control/delegations/{RELAY}/{CLIENT}.json"),
-                ControlRecordKind::Delegation,
-            ),
-            (
-                ControlObjectKey::revocation(&tenant, &client, epoch),
-                format!("tenants/{TENANT}/v1/control/revocations/{CLIENT}/3.json"),
-                ControlRecordKind::Revocation,
-            ),
-            (
-                ControlObjectKey::rotation(&tenant, &client, epoch),
-                format!("tenants/{TENANT}/v1/control/rotations/{CLIENT}/3.json"),
-                ControlRecordKind::Rotation,
-            ),
-            (
-                ControlObjectKey::receipt_key(&tenant, &receipt_key),
-                format!("tenants/{TENANT}/v1/control/receipt-keys/{receipt_key}.json"),
-                ControlRecordKind::ReceiptKey,
-            ),
-        ];
-        for (key, expected, kind) in cases {
-            assert_eq!(key.as_str(), expected);
-            assert_eq!(key.to_string(), expected);
-            assert_eq!(key.kind(), kind);
-            assert_eq!(key.tenant(), &tenant);
-            assert_eq!(ControlObjectKey::parse(&expected).unwrap(), key);
+        for (family, entry) in &registry {
+            let expected = entry
+                .substitute(family, &golden)
+                .unwrap_or_else(|e| panic!("{family}: {e}"));
+
+            let (kind, derived) = match family.as_str() {
+                "delegation" => (
+                    ControlRecordKind::Delegation,
+                    ControlObjectKey::delegation(&tenant, &relay, &client),
+                ),
+                "linked-client" => (
+                    ControlRecordKind::LinkedClient,
+                    ControlObjectKey::linked_client(&tenant, &client),
+                ),
+                "receipt-key" => (
+                    ControlRecordKind::ReceiptKey,
+                    ControlObjectKey::receipt_key(&tenant, &receipt_key),
+                ),
+                "revocation" => (
+                    ControlRecordKind::Revocation,
+                    ControlObjectKey::revocation(&tenant, &client, epoch),
+                ),
+                "rotation" => (
+                    ControlRecordKind::Rotation,
+                    ControlObjectKey::rotation(&tenant, &client, epoch),
+                ),
+                _ => unreachable!("the family set was proven equal above"),
+            };
+            assert_eq!(
+                derived.as_str(),
+                expected,
+                "{family}: the typed derivation must equal the registry layout"
+            );
+            assert_eq!(derived.to_string(), expected);
+            assert_eq!(derived.kind(), kind);
+            assert_eq!(derived.tenant(), &tenant);
+            assert_eq!(
+                ControlObjectKey::parse(&expected).unwrap(),
+                derived,
+                "{family}: the wire side must re-make the same key"
+            );
+
+            // The registry's write class is the routing the store pins.
+            let expected_class = match entry.write_class.as_str() {
+                "current-pointer" => ControlWriteClass::CurrentPointer,
+                "immutable" => ControlWriteClass::Immutable,
+                other => panic!("{family}: unknown registry write class {other:?}"),
+            };
+            assert_eq!(
+                kind.write_class(),
+                expected_class,
+                "{family}: the registry's write class must route the family"
+            );
+
+            // And the family's signed envelope derives that same key from
+            // its own validated members.
+            let bytes = match family.as_str() {
+                "delegation" => delegation_envelope(3),
+                "linked-client" => linked_client_envelope(3),
+                "receipt-key" => receipt_key_envelope(),
+                "revocation" => revocation_envelope(3),
+                "rotation" => rotation_envelope(3),
+                _ => unreachable!(),
+            };
+            let validated = super::validate_envelope(&bytes)
+                .unwrap_or_else(|e| panic!("{family}: the golden envelope must validate: {e}"));
+            assert_eq!(
+                validated.key.as_str(),
+                expected,
+                "{family}: the envelope's own members must derive the registry layout"
+            );
         }
+    }
+
+    // -------------------------------------------------------------------
+    // The control record registry, read at test time.
+    //
+    // The scanner is strict over the registry's own flat shape — a
+    // `[records.<family>]` header opens an entry; the `write_class`,
+    // `object_key`, and `key_members` lines fill it; comments, blanks, and
+    // every other key (summary, schema, status) pass — and anything it
+    // cannot understand fails the scan instead of passing silently.
+    // -------------------------------------------------------------------
+
+    /// One `[records.<family>]` entry, pared to the keys this proof reads.
+    struct RegistryRecord {
+        write_class: String,
+        object_key: String,
+        key_members: Vec<String>,
+    }
+
+    /// The registry's record table, family name to entry.
+    type Registry = BTreeMap<String, RegistryRecord>;
+
+    impl RegistryRecord {
+        /// Substitute the golden identifiers into the layout, in the
+        /// family's own `key_members` order: every declared member must
+        /// fill a placeholder of the layout and every placeholder must
+        /// carry a golden value, or the proof fails rather than guessing.
+        fn substitute(
+            &self,
+            family: &str,
+            golden: &HashMap<&str, String>,
+        ) -> Result<String, String> {
+            let mut key = self.object_key.clone();
+            for member in &self.key_members {
+                let placeholder = format!("<{member}>");
+                let value = golden.get(member.as_str()).ok_or_else(|| {
+                    format!("[records.{family}]: no golden identifier for key member {member}")
+                })?;
+                if !key.contains(&placeholder) {
+                    return Err(format!(
+                        "[records.{family}]: key member {member} fills no placeholder of {}",
+                        self.object_key
+                    ));
+                }
+                key = key.replacen(&placeholder, value, 1);
+            }
+            if key.contains('<') {
+                return Err(format!(
+                    "[records.{family}]: layout carries an unsubstituted placeholder: {key}"
+                ));
+            }
+            Ok(key)
+        }
+    }
+
+    /// Read the `[records.*]` table out of tools/control-records.toml.
+    fn parse_registry(text: &str) -> Result<Registry, String> {
+        // One entry under assembly: (family, write_class, object_key,
+        // key_members), opened by its header and flushed by the next.
+        type Assembling = (String, Option<String>, Option<String>, Option<Vec<String>>);
+        let at = |line: usize, message: String| {
+            format!("tools/control-records.toml:{}: {message}", line + 1)
+        };
+        let flush = |entry: Option<Assembling>,
+                     registry: &mut Registry,
+                     line: usize|
+         -> Result<(), String> {
+            let Some((family, write_class, object_key, key_members)) = entry else {
+                return Ok(());
+            };
+            let missing = |what: &str| at(line, format!("[records.{family}] declares no {what}"));
+            let record = RegistryRecord {
+                write_class: write_class.ok_or_else(|| missing("write_class"))?,
+                object_key: object_key.ok_or_else(|| missing("object_key"))?,
+                key_members: key_members.ok_or_else(|| missing("key_members"))?,
+            };
+            if record.key_members.is_empty() {
+                return Err(at(
+                    line,
+                    format!("[records.{family}] declares no key members"),
+                ));
+            }
+            if registry.insert(family.clone(), record).is_some() {
+                return Err(at(line, format!("[records.{family}] is declared twice")));
+            }
+            Ok(())
+        };
+
+        let mut registry = Registry::new();
+        let mut current: Option<Assembling> = None;
+        for (number, raw) in text.lines().enumerate() {
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some(header) = line
+                .strip_prefix('[')
+                .and_then(|rest| rest.strip_suffix(']'))
+            {
+                flush(current.take(), &mut registry, number)?;
+                if let Some(family) = header.strip_prefix("records.") {
+                    if family.is_empty() {
+                        return Err(at(number, "a record header names no family".to_owned()));
+                    }
+                    current = Some((family.to_owned(), None, None, None));
+                }
+                continue;
+            }
+            let Some((name, value)) = line.split_once('=') else {
+                return Err(at(number, format!("unrecognized line: {line}")));
+            };
+            if let Some((_, write_class, object_key, key_members)) = current.as_mut() {
+                match name.trim() {
+                    "write_class" => {
+                        *write_class = Some(unquote(value).map_err(|e| at(number, e))?);
+                    }
+                    "object_key" => {
+                        *object_key = Some(unquote(value).map_err(|e| at(number, e))?);
+                    }
+                    "key_members" => {
+                        *key_members = Some(parse_members(value).map_err(|e| at(number, e))?);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        flush(current.take(), &mut registry, text.lines().count())?;
+        Ok(registry)
+    }
+
+    /// Read one double-quoted string (the registry's only scalar shape).
+    /// Leading and trailing whitespace around the value — the space after
+    /// `=`, and any before a trailing comment-free newline — is not part
+    /// of it.
+    fn unquote(value: &str) -> Result<String, String> {
+        value
+            .trim()
+            .strip_prefix('"')
+            .and_then(|rest| rest.strip_suffix('"'))
+            .map(str::to_owned)
+            .ok_or_else(|| format!("expected a double-quoted string, found {value:?}"))
+    }
+
+    /// Read one TOML string array: `["a", "b"]`. The whitespace the
+    /// `=` leaves on the value side belongs to the separator, not the
+    /// array — trimmed before the brackets are read.
+    fn parse_members(value: &str) -> Result<Vec<String>, String> {
+        let body = value
+            .trim()
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+            .ok_or_else(|| format!("expected a string array, found {value:?}"))?;
+        let body = body.trim();
+        if body.is_empty() {
+            return Ok(Vec::new());
+        }
+        body.split(',')
+            .map(|member| unquote(member.trim()))
+            .collect()
     }
 
     #[test]
@@ -1069,6 +1316,9 @@ mod tests {
             format!("tenants/{TENANT}/v1/control/receipt-keys/{digest}.json.bak"),
             // An uppercase rendering is not canonical.
             format!("tenants/{TENANT}/v1/control/clients/{CLIENT}.json").to_uppercase(),
+            // Over the key-length bound the envelope's key patterns pin:
+            // refused on size before the shape is read at all.
+            "x".repeat(super::KEY_MAX + 1),
         ] {
             assert!(
                 ControlObjectKey::parse(&rejected).is_err(),
@@ -1668,6 +1918,13 @@ mod tests {
                 foreign,
             )))),
             StorageErrorKind::ScopeViolation
+        );
+        // The refusal happened in the store's validation, before the
+        // backend saw anything: no read, no write, no request at all.
+        assert_eq!(
+            store.backend.requests(),
+            0,
+            "a foreign-tenant record must be refused before any request is issued"
         );
         // And the backend seam denies a foreign-tenant control key even if
         // one were somehow derived — the permission profile's denial.
