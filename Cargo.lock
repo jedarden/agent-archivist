@@ -94,6 +94,7 @@ dependencies = [
 name = "archivist-storage-s3"
 version = "0.1.0"
 dependencies = [
+ "archivist-protocol",
  "archivist-storage",
 ]
 

@@ -10,6 +10,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+archivist-protocol = { path = "../archivist-protocol" }
 archivist-storage = { path = "../archivist-storage" }
 
 [lints]
