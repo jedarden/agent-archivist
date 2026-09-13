@@ -1472,7 +1472,79 @@ mod tests {
             delegation_envelope(2),
         )))
         .unwrap();
-        assert!(store.backend.stored(&delegation_key).is_some());
+        // Lower epoch is stale on this family's own sequence too — the
+        // relation's epochs advance independently of the linked-client
+        // pointer's, and the same strict-increase rule gates them.
+        assert_eq!(
+            error_kind(block_on(store.put_current_pointer(&record(
+                ControlRecordKind::Delegation,
+                delegation_envelope(1),
+            )))),
+            StorageErrorKind::StaleEpoch
+        );
+        assert_eq!(
+            store.backend.stored(&delegation_key).as_deref(),
+            Some(delegation_envelope(2).as_slice())
+        );
+    }
+
+    #[test]
+    fn an_invalid_epoch_fails_closed_before_any_write() {
+        // The epoch gate runs on the presented record before the store
+        // touches the backend: an epoch that is missing, not an integer,
+        // zero, negative, or past the 18-digit ceiling is a malformed
+        // record, refused with the epoch detail — and the pointer already
+        // stored stays byte-for-byte what it was, because no put is ever
+        // issued on a refused path.
+        let cases = [
+            (
+                ControlRecordKind::LinkedClient,
+                format!("tenants/{TENANT}/v1/control/clients/{CLIENT}.json"),
+                linked_client_envelope(1),
+                linked_client_envelope(2),
+            ),
+            (
+                ControlRecordKind::Delegation,
+                format!("tenants/{TENANT}/v1/control/delegations/{RELAY}/{CLIENT}.json"),
+                delegation_envelope(1),
+                delegation_envelope(2),
+            ),
+        ];
+        for (kind, key, stored_pointer, candidate) in cases {
+            let store = store();
+            block_on(store.put_current_pointer(&record(kind, stored_pointer.clone()))).unwrap();
+            assert_eq!(store.backend.puts_at(&key), 1);
+
+            let broken_epochs = [
+                // Unsigned: the epoch member is absent altogether.
+                without_member(&candidate, "authorization_epoch"),
+                // Present but not an epoch: text, zero, negative, and one
+                // past the ceiling the envelope's epoch bound pins.
+                replace_member(&candidate, "authorization_epoch", text("2")),
+                replace_member(&candidate, "authorization_epoch", Value::Int(0)),
+                replace_member(&candidate, "authorization_epoch", Value::Int(-1)),
+                replace_member(
+                    &candidate,
+                    "authorization_epoch",
+                    Value::Int(1_000_000_000_000_000_000),
+                ),
+            ];
+            for broken in &broken_epochs {
+                let error = block_on(store.put_current_pointer(&record(kind, broken.clone())))
+                    .expect_err("an invalid epoch must fail the write");
+                assert_eq!(error.kind(), StorageErrorKind::MalformedInput);
+                assert_eq!(error.detail(), super::DETAIL_EPOCH);
+            }
+
+            // Every refusal happened before any request that could write:
+            // the initial pointer is still the only put, and the object at
+            // the key is still the pointer that was stored first.
+            assert_eq!(store.backend.puts_at(&key), 1, "refusals must not write");
+            assert_eq!(
+                store.backend.stored(&key).as_deref(),
+                Some(stored_pointer.as_slice())
+            );
+        }
     }
 
     #[test]
