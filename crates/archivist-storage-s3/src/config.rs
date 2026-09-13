@@ -35,6 +35,24 @@
 //! deliberately grant them ([`StorageRole::RawReader`] preflight, offline
 //! restore tooling).
 //!
+//! # The control-administration surface
+//!
+//! [`ControlAdminConfig`] is deliberately *not* an ingest configuration.
+//! It is the separate, offline surface the administrator CLI assembles —
+//! its own endpoint and bucket settings, its own dedicated credential
+//! reference, and the one tenant whose control prefix that credential
+//! provisions. "Ingest replicas never receive this credential" (plan
+//! Section 5) holds three ways: the ingest builder has no setter and
+//! [`StorageRole`] no role for the administration credential;
+//! [`S3StorageConfig::reject_administration_credential`] refuses a
+//! deployment that maps any ingest role onto the administration reference
+//! anyway — the one composition mistake the type split alone cannot see;
+//! and [`ControlAdminConfig::permits_key`] models the reference's
+//! provisioned scope, admitting only the five control layouts under the
+//! pinned tenant's control prefix. The administration credential has no
+//! registry key yet: it is assembled by the offline tooling directly, and
+//! the registry format gains optional reference keys in a later phase.
+//!
 //! # Transport security
 //!
 //! The endpoint scheme and the [`Tls`] setting must agree: an `https://`
@@ -55,7 +73,9 @@
 
 use std::fmt;
 
-use archivist_protocol::vocabulary::GrammarError;
+use archivist_protocol::vocabulary::{GrammarError, TenantId};
+
+use crate::control_admin::ControlObjectKey;
 
 /// Why a configuration failed validation: a closed class of failure
 /// carrying the decision the operator must make next.
@@ -67,7 +87,9 @@ pub enum S3ConfigErrorKind {
     MalformedSetting,
     /// The endpoint scheme and the TLS setting disagree.
     TransportMismatch,
-    /// Two storage roles were mapped to the same credential reference.
+    /// Two storage roles were mapped to the same credential reference —
+    /// or one ingest identity is the offline control-administration
+    /// credential.
     DuplicateIdentity,
 }
 
@@ -120,6 +142,8 @@ enum Setting {
     RawBucket,
     ControlBucket,
     Credentials,
+    Tenant,
+    AdminCredentials,
 }
 
 impl Setting {
@@ -134,6 +158,8 @@ impl Setting {
             Self::RawBucket,
             Self::ControlBucket,
             Self::Credentials,
+            Self::Tenant,
+            Self::AdminCredentials,
         ]
     }
 
@@ -146,6 +172,8 @@ impl Setting {
             Self::RawBucket => "raw bucket is required",
             Self::ControlBucket => "control bucket is required",
             Self::Credentials => "raw-write and control-read credentials are required",
+            Self::Tenant => "tenant is required",
+            Self::AdminCredentials => "control-administration credential is required",
         }
     }
 
@@ -158,6 +186,10 @@ impl Setting {
             Self::RawBucket => "raw bucket is outside the bounded string grammar",
             Self::ControlBucket => "control bucket is outside the bounded string grammar",
             Self::Credentials => "credential reference is outside the closed grammar",
+            Self::Tenant => "tenant is outside the canonical uuid grammar",
+            Self::AdminCredentials => {
+                "control-administration credential is outside the closed grammar"
+            }
         }
     }
 }
@@ -838,6 +870,39 @@ impl S3StorageConfig {
     pub const fn identities(&self) -> &StorageIdentities {
         &self.identities
     }
+
+    /// Refuse the one composition mistake the type split cannot prevent on
+    /// its own: an ingest role mapped onto the offline
+    /// control-administration credential (plan Section 5: "Ingest replicas
+    /// never receive this credential").
+    ///
+    /// The ingest surface cannot *express* the administration credential —
+    /// no builder setter and no [`StorageRole`] names it — so an ingest
+    /// configuration that carries it can only mean a deployment reused the
+    /// same reference string on both surfaces. That collapses the
+    /// authority split this crate exists to keep, so validation reports it
+    /// as the duplicate-identity failure it is. The check is joint by
+    /// necessity: each configuration is valid on its own, and only the
+    /// pair states the violation.
+    ///
+    /// # Errors
+    /// [`S3ConfigErrorKind::DuplicateIdentity`] when any mapped ingest
+    /// role — present or optional — holds the administration credential
+    /// reference. The offending reference is not echoed.
+    pub fn reject_administration_credential(
+        &self,
+        admin: &ControlAdminConfig,
+    ) -> Result<(), S3ConfigError> {
+        for role in StorageRole::all() {
+            if self.identities.role(*role) == Some(admin.control_admin_credentials()) {
+                return Err(S3ConfigError::new(
+                    S3ConfigErrorKind::DuplicateIdentity,
+                    "an ingest identity is the control-administration credential",
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The unvalidated configuration under assembly: every registry-backed
@@ -956,22 +1021,7 @@ impl S3StorageConfigBuilder {
     /// offending value.
     pub fn build(self) -> Result<S3StorageConfig, S3ConfigError> {
         let endpoint_text = required_string(self.endpoint_url, Setting::EndpointUrl)?;
-        let endpoint = EndpointUrl::parse(&endpoint_text)?;
-
-        let tls = self.tls.unwrap_or_default();
-        // The scheme and the TLS setting are one decision stated twice;
-        // contradicting statements are a configuration error, and
-        // plaintext is only ever reached affirmatively (SEC-001).
-        if endpoint.tls() != tls {
-            let detail = match (endpoint.is_secure(), tls) {
-                (true, Tls::Disabled) => "https endpoint requires tls enabled",
-                _ => "plaintext endpoint requires explicit tls disabled",
-            };
-            return Err(S3ConfigError::new(
-                S3ConfigErrorKind::TransportMismatch,
-                detail,
-            ));
-        }
+        let (endpoint, tls) = agreed_transport(&endpoint_text, self.tls)?;
 
         let region_text = required_string(self.region, Setting::Region)?;
         check_bounded_string(
@@ -1040,6 +1090,245 @@ impl S3StorageConfigBuilder {
     }
 }
 
+/// The validated configuration of the offline control-administration
+/// identity (plan Section 5): the dedicated, protected credential that can
+/// put only validated, tenant-authority-signed control records below one
+/// tenant's control prefix — and nothing else.
+///
+/// This is a separate surface from [`S3StorageConfig`] by design. The
+/// ingest configuration maps read/write roles for the replica; this one
+/// configures the single-writer authority the administrator CLI composes
+/// into [`crate::control_admin::S3ControlAdminStore`]. It carries no raw
+/// bucket, no encryption policy, and no role mapping, because the
+/// administration identity has exactly one capability and no optional
+/// companions.
+#[derive(Clone, Debug)]
+pub struct ControlAdminConfig {
+    endpoint: EndpointUrl,
+    tls: Tls,
+    region: Box<str>,
+    path_style: PathStyle,
+    control_bucket: Box<str>,
+    tenant: TenantId,
+    admin_credentials: CredentialReference,
+}
+
+impl ControlAdminConfig {
+    /// Start assembling an administration configuration from its tier
+    /// values.
+    #[must_use]
+    pub fn builder() -> ControlAdminConfigBuilder {
+        ControlAdminConfigBuilder::default()
+    }
+
+    /// The validated endpoint.
+    #[must_use]
+    pub fn endpoint(&self) -> &EndpointUrl {
+        &self.endpoint
+    }
+
+    /// The configured transport security.
+    #[must_use]
+    pub const fn tls(&self) -> Tls {
+        self.tls
+    }
+
+    /// The region string the endpoint expects.
+    #[must_use]
+    pub fn region(&self) -> &str {
+        &self.region
+    }
+
+    /// The bucket addressing style.
+    #[must_use]
+    pub const fn path_style(&self) -> PathStyle {
+        self.path_style
+    }
+
+    /// The control bucket: signed control-plane records.
+    #[must_use]
+    pub fn control_bucket(&self) -> &str {
+        &self.control_bucket
+    }
+
+    /// The one tenant whose control prefix this credential provisions.
+    /// Every record the store accepts must belong to this tenant, and
+    /// every key it derives lives under this tenant's prefix.
+    #[must_use]
+    pub const fn tenant(&self) -> &TenantId {
+        &self.tenant
+    }
+
+    /// The dedicated administration credential reference. Distinct by
+    /// construction from every ingest credential:
+    /// [`S3StorageConfig::reject_administration_credential`] refuses a
+    /// deployment that maps an ingest role onto it.
+    #[must_use]
+    pub const fn control_admin_credentials(&self) -> &CredentialReference {
+        &self.admin_credentials
+    }
+
+    /// Whether a raw object key is inside this credential's provisioned
+    /// scope: one of the five canonical control layouts under this
+    /// tenant's control prefix (plan Section 7.5), and nothing else.
+    ///
+    /// This is the Rust-side model of the deployment's backend policy for
+    /// the administration credential — read-write below
+    /// `tenants/<tenant>/v1/control/`, deny every other prefix. Raw blobs,
+    /// occurrences, attestations, catalog checkpoints, derived objects,
+    /// tombstones, legal holds, and every other tenant's prefix (control
+    /// included) are denied; a control-layout key with a non-canonical
+    /// identifier or epoch segment is denied rather than normalized. The
+    /// compatibility-suite profiles prove the live policy agrees.
+    #[must_use]
+    pub fn permits_key(&self, key: &str) -> bool {
+        ControlObjectKey::parse(key).is_ok_and(|derived| derived.tenant() == &self.tenant)
+    }
+}
+
+/// The unvalidated administration configuration under assembly;
+/// [`ControlAdminConfigBuilder::build`] is its single fail-closed gate,
+/// with the same endpoint/TLS agreement rule the ingest surface pins.
+#[derive(Clone, Debug, Default)]
+pub struct ControlAdminConfigBuilder {
+    endpoint_url: Option<String>,
+    tls: Option<Tls>,
+    region: Option<String>,
+    path_style: Option<PathStyle>,
+    control_bucket: Option<String>,
+    tenant: Option<String>,
+    admin_credentials: Option<String>,
+}
+
+impl ControlAdminConfigBuilder {
+    /// Set the S3-compatible endpoint URL of the control bucket.
+    #[must_use]
+    pub fn endpoint_url(mut self, value: impl Into<String>) -> Self {
+        self.endpoint_url = Some(value.into());
+        self
+    }
+
+    /// Set the transport security. Defaults to [`Tls::Enabled`]; a
+    /// plaintext endpoint is valid only with an explicit
+    /// [`Tls::Disabled`].
+    #[must_use]
+    pub fn tls(mut self, value: Tls) -> Self {
+        self.tls = Some(value);
+        self
+    }
+
+    /// Set the region string.
+    #[must_use]
+    pub fn region(mut self, value: impl Into<String>) -> Self {
+        self.region = Some(value.into());
+        self
+    }
+
+    /// Set the bucket addressing style. Defaults to [`PathStyle::Path`].
+    #[must_use]
+    pub fn path_style(mut self, value: PathStyle) -> Self {
+        self.path_style = Some(value);
+        self
+    }
+
+    /// Set the control bucket.
+    #[must_use]
+    pub fn control_bucket(mut self, value: impl Into<String>) -> Self {
+        self.control_bucket = Some(value.into());
+        self
+    }
+
+    /// Set the tenant whose control prefix this credential provisions.
+    /// Required: the administration identity is single-tenant by design.
+    #[must_use]
+    pub fn tenant(mut self, value: impl Into<String>) -> Self {
+        self.tenant = Some(value.into());
+        self
+    }
+
+    /// Set the dedicated administration credential reference (CFG-029
+    /// grammar). Required.
+    #[must_use]
+    pub fn control_admin_credentials(mut self, value: impl Into<String>) -> Self {
+        self.admin_credentials = Some(value.into());
+        self
+    }
+
+    /// Validate everything assembled so far into a
+    /// [`ControlAdminConfig`].
+    ///
+    /// # Errors
+    /// [`S3ConfigErrorKind::MissingSetting`] when a required setting never
+    /// arrived; [`S3ConfigErrorKind::MalformedSetting`] when a setting is
+    /// outside its grammar; [`S3ConfigErrorKind::TransportMismatch`] when
+    /// the endpoint scheme and the TLS setting disagree. No error echoes
+    /// the offending value.
+    pub fn build(self) -> Result<ControlAdminConfig, S3ConfigError> {
+        let endpoint_text = required_string(self.endpoint_url, Setting::EndpointUrl)?;
+        let (endpoint, tls) = agreed_transport(&endpoint_text, self.tls)?;
+
+        let region_text = required_string(self.region, Setting::Region)?;
+        check_bounded_string(
+            &region_text,
+            S3ConfigError::new(
+                S3ConfigErrorKind::MalformedSetting,
+                Setting::Region.malformed_detail(),
+            ),
+        )?;
+
+        let control_bucket = bucket_string(self.control_bucket, Setting::ControlBucket)?;
+
+        let tenant_text = required_string(self.tenant, Setting::Tenant)?;
+        let tenant = TenantId::parse(&tenant_text).map_err(|_| {
+            S3ConfigError::new(
+                S3ConfigErrorKind::MalformedSetting,
+                Setting::Tenant.malformed_detail(),
+            )
+        })?;
+
+        let admin_text = required_string(self.admin_credentials, Setting::AdminCredentials)?;
+        let admin_credentials = CredentialReference::parse(&admin_text).map_err(|_| {
+            S3ConfigError::new(
+                S3ConfigErrorKind::MalformedSetting,
+                Setting::AdminCredentials.malformed_detail(),
+            )
+        })?;
+
+        Ok(ControlAdminConfig {
+            endpoint,
+            tls,
+            region: Box::from(region_text),
+            path_style: self.path_style.unwrap_or_default(),
+            control_bucket: Box::from(control_bucket),
+            tenant,
+            admin_credentials,
+        })
+    }
+}
+
+/// Parse the endpoint and settle the TLS setting, refusing contradiction
+/// between the two statements of one decision: the scheme and the TLS
+/// setting must agree, and plaintext is only ever reached affirmatively
+/// (SEC-001).
+fn agreed_transport(
+    endpoint_text: &str,
+    tls: Option<Tls>,
+) -> Result<(EndpointUrl, Tls), S3ConfigError> {
+    let endpoint = EndpointUrl::parse(endpoint_text)?;
+    let tls = tls.unwrap_or_default();
+    if endpoint.tls() != tls {
+        let detail = match (endpoint.is_secure(), tls) {
+            (true, Tls::Disabled) => "https endpoint requires tls enabled",
+            _ => "plaintext endpoint requires explicit tls disabled",
+        };
+        return Err(S3ConfigError::new(
+            S3ConfigErrorKind::TransportMismatch,
+            detail,
+        ));
+    }
+    Ok((endpoint, tls))
+}
+
 fn required_string(value: Option<String>, setting: Setting) -> Result<String, S3ConfigError> {
     value.ok_or(S3ConfigError::new(
         S3ConfigErrorKind::MissingSetting,
@@ -1070,9 +1359,9 @@ mod tests {
     use archivist_protocol::vocabulary::{GrammarError, SafeMessage};
 
     use super::{
-        CredentialKind, CredentialReference, EncryptionPolicy, EndpointUrl, PathStyle,
-        S3ConfigError, S3ConfigErrorKind, S3StorageConfig, S3StorageConfigBuilder, STRING_MAX,
-        StorageRole, Tls,
+        ControlAdminConfig, ControlAdminConfigBuilder, CredentialKind, CredentialReference,
+        EncryptionPolicy, EndpointUrl, PathStyle, S3ConfigError, S3ConfigErrorKind,
+        S3StorageConfig, S3StorageConfigBuilder, STRING_MAX, StorageRole, Tls,
     };
 
     const ENDPOINT: &str = "https://s3.example.invalid";
@@ -1484,12 +1773,13 @@ mod tests {
                 );
             }
         }
-        // The TransportMismatch literals are call sites, not kind
-        // defaults; pin them here too.
+        // The TransportMismatch and DuplicateIdentity literals are call
+        // sites, not kind defaults; pin them here too.
         for detail in [
             "https endpoint requires tls enabled",
             "plaintext endpoint requires explicit tls disabled",
             "two storage roles map to one credential reference",
+            "an ingest identity is the control-administration credential",
         ] {
             assert_eq!(
                 SafeMessage::parse(detail)
@@ -1515,5 +1805,169 @@ mod tests {
                 "offline-restore"
             ]
         );
+    }
+
+    const ADMIN_TENANT: &str = "1a2b3c4d-5e6f-4a1b-9c2d-3e4f5a6b7c8d";
+    const ADMIN_REF: &str = "file:/etc/archivist/storage/control-admin-credentials";
+
+    fn admin_builder() -> ControlAdminConfigBuilder {
+        ControlAdminConfig::builder()
+            .endpoint_url(ENDPOINT)
+            .region(REGION)
+            .control_bucket(CONTROL_BUCKET)
+            .tenant(ADMIN_TENANT)
+            .control_admin_credentials(ADMIN_REF)
+    }
+
+    #[test]
+    fn control_admin_configuration_is_its_own_surface() {
+        let config = admin_builder().build().expect("valid");
+        assert_eq!(config.endpoint().as_str(), ENDPOINT);
+        assert_eq!(config.tls(), Tls::Enabled, "tls defaults to enabled");
+        assert_eq!(config.path_style(), PathStyle::Path, "registry default");
+        assert_eq!(config.region(), REGION);
+        assert_eq!(config.control_bucket(), CONTROL_BUCKET);
+        assert_eq!(config.tenant().as_str(), ADMIN_TENANT);
+        assert_eq!(
+            config.control_admin_credentials().kind(),
+            CredentialKind::File
+        );
+        // The dedicated credential reference never renders.
+        let rendered = format!("{config:?}");
+        for never_rendered in [ADMIN_REF, "/etc/archivist"] {
+            assert!(
+                !rendered.contains(never_rendered),
+                "admin debug rendering leaked a reference target"
+            );
+        }
+    }
+
+    #[test]
+    fn control_admin_validation_is_fail_closed() {
+        let missing: [(ControlAdminConfigBuilder, &str); 3] = [
+            (ControlAdminConfig::builder(), "endpoint url is required"),
+            (
+                ControlAdminConfig::builder()
+                    .endpoint_url(ENDPOINT)
+                    .region(REGION),
+                "control bucket is required",
+            ),
+            (
+                ControlAdminConfig::builder()
+                    .endpoint_url(ENDPOINT)
+                    .region(REGION)
+                    .control_bucket(CONTROL_BUCKET),
+                "tenant is required",
+            ),
+        ];
+        for (builder, detail) in missing {
+            let error = builder.build().expect_err("this builder must fail");
+            assert_eq!(error.kind(), S3ConfigErrorKind::MissingSetting);
+            assert_eq!(error.detail(), detail);
+        }
+        let error = ControlAdminConfig::builder()
+            .endpoint_url(ENDPOINT)
+            .region(REGION)
+            .control_bucket(CONTROL_BUCKET)
+            .tenant(ADMIN_TENANT)
+            .build()
+            .expect_err("credential is required");
+        assert_eq!(error.kind(), S3ConfigErrorKind::MissingSetting);
+        assert_eq!(
+            error.detail(),
+            "control-administration credential is required"
+        );
+
+        for (builder, detail) in [
+            (
+                admin_builder().tenant("not-a-uuid"),
+                "tenant is outside the canonical uuid grammar",
+            ),
+            (
+                admin_builder().tenant(""),
+                "tenant is outside the canonical uuid grammar",
+            ),
+            (
+                admin_builder().control_admin_credentials("relative-path"),
+                "control-administration credential is outside the closed grammar",
+            ),
+            (
+                admin_builder().control_admin_credentials(""),
+                "control-administration credential is outside the closed grammar",
+            ),
+        ] {
+            let error = builder.build().expect_err("this builder must fail");
+            assert_eq!(error.kind(), S3ConfigErrorKind::MalformedSetting);
+            assert_eq!(error.detail(), detail);
+        }
+
+        // The transport agreement rule is the ingest surface's rule, on
+        // this surface too.
+        let error = admin_builder()
+            .tls(Tls::Disabled)
+            .build()
+            .expect_err("https needs tls enabled");
+        assert_eq!(error.kind(), S3ConfigErrorKind::TransportMismatch);
+        let error = admin_builder()
+            .endpoint_url("http://minio.local:9000")
+            .build()
+            .expect_err("plaintext needs explicit opt-out");
+        assert_eq!(error.kind(), S3ConfigErrorKind::TransportMismatch);
+        admin_builder()
+            .endpoint_url("http://minio.local:9000")
+            .tls(Tls::Disabled)
+            .build()
+            .expect("explicit plaintext is a valid reference profile");
+    }
+
+    #[test]
+    fn ingest_configuration_refuses_the_administration_credential() {
+        let admin = admin_builder().build().expect("valid");
+        // Disjoint credentials compose: the ingest replica and the offline
+        // administrator coexist on one deployment.
+        valid_builder()
+            .build()
+            .expect("valid")
+            .reject_administration_credential(&admin)
+            .expect("disjoint credentials are fine");
+        full_builder()
+            .build()
+            .expect("valid")
+            .reject_administration_credential(&admin)
+            .expect("disjoint credentials are fine");
+        // Every ingest role mapped onto the administration reference is
+        // refused — required or optional alike.
+        for (role, builder) in [
+            (
+                "raw-writer",
+                valid_builder().raw_write_credentials(ADMIN_REF),
+            ),
+            (
+                "control-reader",
+                valid_builder().control_read_credentials(ADMIN_REF),
+            ),
+            (
+                "raw-reader",
+                valid_builder().raw_read_credentials(ADMIN_REF),
+            ),
+            (
+                "offline-restore",
+                valid_builder().offline_restore_credentials(ADMIN_REF),
+            ),
+        ] {
+            let config = builder.build().unwrap_or_else(|e| panic!("{role}: {e}"));
+            let error = config
+                .reject_administration_credential(&admin)
+                .expect_err("{role} must be refused");
+            assert_eq!(error.kind(), S3ConfigErrorKind::DuplicateIdentity);
+            assert_eq!(
+                error.detail(),
+                "an ingest identity is the control-administration credential"
+            );
+            assert!(
+                !error.to_string().contains(ADMIN_REF),
+                "the refusal must not echo the reference"
+            );
+        }
     }
 }

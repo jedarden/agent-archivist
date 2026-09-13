@@ -17,7 +17,13 @@
 //! ([`config`]) — endpoint, region, path style, transport security,
 //! at-rest encryption policy, buckets, and the four-role credential
 //! identity mapping — validated fail-closed before any store is built.
-//! The adapter behavior arrives with its own deliverables: capability
+//! Second slice: the offline control administrator ([`control_admin`]) —
+//! the portable `ControlAdminStore` over the dedicated, protected
+//! credential reference the [`config`] module's `ControlAdminConfig`
+//! surface validates, deriving each object key from the record envelope's
+//! own validated members, writing immutable families once and replacing
+//! current pointers only on a strictly higher signed epoch. The remaining
+//! adapter behavior arrives with its own deliverables: capability
 //! probing, the synthetic compatibility suite against the local reference
 //! backend, B2, and ARMOR, and the deterministic commits.
 //!
@@ -28,3 +34,4 @@
 //! (`archivist-cli`) selects this implementation.
 
 pub mod config;
+pub mod control_admin;
