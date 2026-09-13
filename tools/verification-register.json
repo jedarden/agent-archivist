@@ -1332,7 +1332,7 @@
       ],
       "kind": "test",
       "lane": "slow",
-      "locator": "crates/archivist-storage-s3/src/config.rs",
+      "locator": "crates/archivist-storage-s3/tests/control_admin_scope.rs",
       "owner": "security-scans"
     },
     "T-SEC-012": {
