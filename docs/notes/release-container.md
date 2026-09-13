@@ -1,6 +1,6 @@
 # Agent Archivist release container conventions
 
-Status: accepted baseline · Last updated: 2026-09-12
+Status: accepted baseline · Last updated: 2026-09-13
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are
 to be interpreted as described in RFC 2119 and RFC 8174 when they appear in bold.
@@ -263,12 +263,17 @@ workspace version is `0.1.0`, the build stage is
 `rust:1.97.1-slim-bookworm@sha256:2775…bdd3` matching the pinned
 `1.97.1` channel, and the runtime stage is
 `debian:12.15-slim@sha256:8820…4171`. The double-build comparison above
-was run on 2026-09-12, on the lab machine over ssh (codinghome has no
-docker daemon), from a clean `git archive` of `main` at `328a774` with
-`SOURCE_DATE_EPOCH` pinned to that commit's timestamp: both builds — the
-second under `--no-cache`, recompiling every workspace crate — produced
-the single digest `sha256:4bb784d9…cbc4c7`, which is what the
-RC-015/RC-018 pin set buys. Getting there took the evidence path this
+was run to completion on 2026-09-13, on the lab machine over ssh
+(codinghome has no docker daemon; the builder is Docker 27.5.1 with
+BuildKit v0.18.2 through the default docker driver, linux/amd64), from a
+clean `git archive` of `main` at `7da3150` with `SOURCE_DATE_EPOCH`
+pinned to that commit's timestamp (`1789272549`) and
+`AGENT_ARCHIVIST_VERSION=0.1.0` from the `VERSION` file: both builds —
+the second under `--no-cache`, recompiling every workspace crate from
+the digest-pinned bases — produced byte-identical `--iidfile` outputs
+naming the single digest
+`sha256:19f6409fc406e436a988e3c9d4b41e477b6060859ab4d5ccb491fb1e36124536`,
+which is what the RC-015/RC-018 pin set buys. Getting there took the evidence path this
 note records: the plain `COPY --from=builder` form was built first and
 demonstrably diverged (`sha256:5216…d69` versus `sha256:ca8f…b88` from
 one tree), and diffing the layer tars of a still-diverging successor
