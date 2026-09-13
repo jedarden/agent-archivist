@@ -3,11 +3,17 @@
 //! The client state database: explicit `SQLite` (WAL) migrations and the
 //! automated integrity checks around them (plan Section 7.9).
 //!
-//! One mutating process owns the state database. Opening it configures the
-//! connection before anything else runs: WAL journaling with `synchronous =
-//! FULL` so a committed transaction is durable, `foreign_keys = ON` so the
-//! schema's referential contract is enforced rather than decorative, and a
-//! busy timeout so a `status` reader's snapshot never fails an upload.
+//! One mutating process owns the state directory, enforced by the OS
+//! advisory lock in [`lock`]; a second mutator exits 75 with a versioned,
+//! content-free JSON error. Readers never take that lock: [`StateSnapshot`]
+//! opens the database read-only and stays available while the daemon owns
+//! the lock (the `read_only` command class, CLI-007).
+//!
+//! Opening a mutator connection configures it before anything else runs:
+//! WAL journaling with `synchronous = FULL` so a committed transaction is
+//! durable, `foreign_keys = ON` so the schema's referential contract is
+//! enforced rather than decorative, and a busy timeout so a `status`
+//! reader's snapshot never fails an upload.
 //!
 //! Migrations are hand-written steps in [`migrations`], applied in order in
 //! one transaction each, recorded in a `schema_migrations` history table,
@@ -28,8 +34,9 @@
 use std::fmt;
 use std::path::Path;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 
+pub mod lock;
 pub mod migrations;
 
 #[cfg(test)]
@@ -55,6 +62,12 @@ pub enum StateErrorKind {
     /// mutating process owns the state directory (plan Section 7.9); this
     /// is the signal to exit, not to wait harder.
     Busy,
+    /// Another process owns the state directory's advisory mutator lock —
+    /// the single-mutator contract refused this process before any state
+    /// was touched. The refused mutator exits 75 with the registered
+    /// `client.lock_held` surface ([`lock`]); it never waits, because the
+    /// owner may be a daemon that runs indefinitely.
+    LockHeld,
     /// A migration step failed inside its transaction; the database is
     /// left at the previous version.
     MigrationFailed,
@@ -76,6 +89,7 @@ impl StateErrorKind {
         &[
             Self::Unavailable,
             Self::Busy,
+            Self::LockHeld,
             Self::MigrationFailed,
             Self::IrreversibleMigration,
             Self::VersionOutOfBounds,
@@ -90,6 +104,7 @@ impl StateErrorKind {
         match self {
             Self::Unavailable => "state database could not be opened",
             Self::Busy => "state database is locked by another process",
+            Self::LockHeld => "state directory is owned by another mutator",
             Self::MigrationFailed => "migration step failed and was rolled back",
             Self::IrreversibleMigration => "migration step has no reverse sql",
             Self::VersionOutOfBounds => "schema version target is outside the migration range",
@@ -103,6 +118,7 @@ impl fmt::Display for StateErrorKind {
         let text = match self {
             Self::Unavailable => "unavailable",
             Self::Busy => "busy",
+            Self::LockHeld => "lock-held",
             Self::MigrationFailed => "migration-failed",
             Self::IrreversibleMigration => "irreversible-migration",
             Self::VersionOutOfBounds => "version-out-of-bounds",
@@ -280,6 +296,14 @@ impl StateStore {
     /// it: WAL journaling, `synchronous = FULL`, foreign keys on, busy
     /// timeout. The schema is not touched until [`StateStore::migrate`].
     ///
+    /// Opening the database itself mutates nothing, but a caller of this
+    /// method is a mutator: single-mutator ownership (plan Section 7.9)
+    /// requires holding [`lock::StateDirLock`] on the containing state
+    /// directory for the connection's whole life, and a refused second
+    /// mutator reports [`StateErrorKind::LockHeld`] from that acquisition.
+    /// Readers open [`StateSnapshot`] instead, which takes neither the
+    /// lock nor a write path.
+    ///
     /// # Errors
     ///
     /// [`StateErrorKind::Unavailable`] when the file cannot be opened or
@@ -440,34 +464,7 @@ impl StateStore {
     /// [`StateErrorKind::Unavailable`] when a check cannot be executed.
     pub fn integrity(&mut self) -> Result<IntegrityReport, StateError> {
         self.ensure_history()?;
-        let integrity_ok = {
-            let mut statement = self
-                .conn
-                .prepare("PRAGMA integrity_check")
-                .map_err(|ref err| driver_error(err))?;
-            let mut rows = statement.query([]).map_err(|ref err| driver_error(err))?;
-            match rows.next().map_err(|ref err| driver_error(err))? {
-                Some(row) => {
-                    let verdict: String = row.get(0).map_err(|ref err| driver_error(err))?;
-                    verdict == "ok"
-                }
-                None => false,
-            }
-        };
-        let foreign_keys_ok = {
-            let mut statement = self
-                .conn
-                .prepare("PRAGMA foreign_key_check")
-                .map_err(|ref err| driver_error(err))?;
-            let mut rows = statement.query([]).map_err(|ref err| driver_error(err))?;
-            rows.next().map_err(|ref err| driver_error(err))?.is_none()
-        };
-        let schema_objects_ok = first_missing_object(&self.conn).is_none();
-        Ok(IntegrityReport {
-            integrity_ok,
-            foreign_keys_ok,
-            schema_objects_ok,
-        })
+        integrity_report(&self.conn)
     }
 
     /// Create the migration history table when absent. Kept out of the
@@ -488,6 +485,93 @@ impl StateStore {
     }
 }
 
+// Deliberately field-free, for the same reason as [`StateStore`]: the
+// driver's own `Debug` renders the database path, which must never reach a
+// diagnostic.
+impl fmt::Debug for StateSnapshot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("StateSnapshot")
+    }
+}
+
+/// A read-only snapshot of the client state database: what `status`,
+/// `doctor`, and `verify-state` open while the daemon owns the advisory
+/// mutator lock (plan Section 7.9; the `read_only` command class, CLI-007).
+///
+/// The connection is opened with the driver's read-only flag, so the
+/// snapshot can neither create nor write the database it reads — the type
+/// system keeps the reader from ever contending with the mutator for the
+/// write path, and WAL journaling lets it read a consistent snapshot while
+/// the owner commits. A read-only open never mutates: no missing history
+/// table is created ([`StateSnapshot::schema_version`] reads around that),
+/// and no journal mode is negotiated.
+///
+/// A snapshot of a database whose write-ahead log still needs crash
+/// recovery cannot be opened read-only by the driver; that condition
+/// surfaces as [`StateErrorKind::Unavailable`], and `doctor` — itself a
+/// reader — is the surface that diagnoses it.
+pub struct StateSnapshot {
+    conn: Connection,
+}
+
+impl StateSnapshot {
+    /// Open the state database at `path` read-only. The file is never
+    /// created: opening a path with no database fails rather than
+    /// materializing one.
+    ///
+    /// # Errors
+    ///
+    /// [`StateErrorKind::Unavailable`] when the file cannot be opened for
+    /// reading or the connection cannot be configured; the path never
+    /// appears in the error.
+    pub fn open(path: &Path) -> Result<Self, StateError> {
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|ref err| driver_error(err))?;
+        configure(&conn, false)?;
+        Ok(Self { conn })
+    }
+
+    /// The underlying read-only connection, for the reader's own queries
+    /// against the schema. Any statement that would write fails at the
+    /// driver.
+    #[must_use]
+    pub fn connection(&self) -> &Connection {
+        &self.conn
+    }
+
+    /// The recorded schema version, or 0 before any migration. Never
+    /// creates the history table: a read-only connection cannot, and a
+    /// snapshot must not need to.
+    ///
+    /// # Errors
+    ///
+    /// [`StateErrorKind::Unavailable`] when the version cannot be read.
+    pub fn schema_version(&self) -> Result<i64, StateError> {
+        if history_table_present(&self.conn)? {
+            version_of(&self.conn)
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// The automated integrity checks, read-only: `PRAGMA
+    /// integrity_check`, `PRAGMA foreign_key_check`, and the
+    /// expected-object scan. Unlike [`StateStore::integrity`] this
+    /// variant has no history-table precondition and creates nothing — a
+    /// not-yet-migrated database reports its missing objects honestly
+    /// instead of being migrated by a reader.
+    ///
+    /// # Errors
+    ///
+    /// [`StateErrorKind::Unavailable`] when a check cannot be executed.
+    pub fn integrity(&self) -> Result<IntegrityReport, StateError> {
+        integrity_report(&self.conn)
+    }
+}
+
 /// The current applied version, after the history table exists.
 fn version_of(conn: &Connection) -> Result<i64, StateError> {
     conn.query_row(
@@ -496,6 +580,53 @@ fn version_of(conn: &Connection) -> Result<i64, StateError> {
         |row| row.get(0),
     )
     .map_err(|ref err| driver_error(err))
+}
+
+/// Whether the migration history table exists. Read-only snapshots must
+/// not create it the way [`StateStore::ensure_history`] does, so they
+/// look first and treat absence as version 0.
+fn history_table_present(conn: &Connection) -> Result<bool, StateError> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master
+         WHERE type = 'table' AND name = 'schema_migrations'",
+        [],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|count| count == 1)
+    .map_err(|ref err| driver_error(err))
+}
+
+/// Run the three automated checks against an existing connection: the
+/// `integrity_check` verdict, the foreign-key orphan scan, and the
+/// expected-object scan. Per-check verdicts only — a failing check
+/// reports itself, never the rows that failed it.
+fn integrity_report(conn: &Connection) -> Result<IntegrityReport, StateError> {
+    let integrity_ok = {
+        let mut statement = conn
+            .prepare("PRAGMA integrity_check")
+            .map_err(|ref err| driver_error(err))?;
+        let mut rows = statement.query([]).map_err(|ref err| driver_error(err))?;
+        match rows.next().map_err(|ref err| driver_error(err))? {
+            Some(row) => {
+                let verdict: String = row.get(0).map_err(|ref err| driver_error(err))?;
+                verdict == "ok"
+            }
+            None => false,
+        }
+    };
+    let foreign_keys_ok = {
+        let mut statement = conn
+            .prepare("PRAGMA foreign_key_check")
+            .map_err(|ref err| driver_error(err))?;
+        let mut rows = statement.query([]).map_err(|ref err| driver_error(err))?;
+        rows.next().map_err(|ref err| driver_error(err))?.is_none()
+    };
+    let schema_objects_ok = first_missing_object(conn).is_none();
+    Ok(IntegrityReport {
+        integrity_ok,
+        foreign_keys_ok,
+        schema_objects_ok,
+    })
 }
 
 /// Configure a fresh connection. `wal` requests WAL journaling and is only

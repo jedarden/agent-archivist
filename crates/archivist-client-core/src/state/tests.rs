@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Tests for the client state schema: migration application and reversal,
-//! the automated integrity checks, constraint enforcement, and the rule
-//! that diagnostics stay content-free.
+//! the automated integrity checks, constraint enforcement, read-only
+//! snapshots, and the rule that diagnostics stay content-free.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -11,7 +11,9 @@ use archivist_protocol::vocabulary::SafeMessage;
 use rusqlite::Connection;
 
 use super::migrations::{EXPECTED_INDEXES, EXPECTED_TABLES, MIGRATIONS, Migration};
-use super::{IntegrityReport, LATEST_SCHEMA_VERSION, StateError, StateErrorKind, StateStore};
+use super::{
+    IntegrityReport, LATEST_SCHEMA_VERSION, StateError, StateErrorKind, StateSnapshot, StateStore,
+};
 
 static NEXT_TEMP_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -708,7 +710,7 @@ fn open_failures_never_name_the_path() {
 #[test]
 fn kinds_are_distinct_and_complete() {
     let all = StateErrorKind::all();
-    assert_eq!(all.len(), 6);
+    assert_eq!(all.len(), 7);
     let displays: Vec<_> = all.iter().map(std::string::ToString::to_string).collect();
     let mut sorted = displays.clone();
     sorted.sort_unstable();
@@ -740,4 +742,63 @@ fn in_memory_store_round_trips_through_connection_handle() {
     assert_eq!(state, "degraded");
     assert_eq!(failures, 2);
     assert_eq!(code, "capture-record-invalid");
+}
+
+// --- Read-only snapshots -----------------------------------------------------
+
+#[test]
+fn a_snapshot_stays_readable_while_a_write_is_in_flight() {
+    let dir = TempDir::new("snapshot-mid-write");
+    let database = dir.path().join("state.db");
+    let mut mutator = StateStore::open(&database).expect("open the mutator");
+    mutator.migrate().expect("migrate");
+
+    // The owner's write begins and stays open: in WAL mode it holds the
+    // write path for as long as the daemon keeps the transaction, which is
+    // exactly the condition `status` must survive.
+    let tx = mutator
+        .connection()
+        .unchecked_transaction()
+        .expect("begin the in-flight write");
+    tx.execute_batch("CREATE TABLE in_flight (id INTEGER NOT NULL)")
+        .expect("stage an uncommitted table");
+
+    let snapshot = StateSnapshot::open(&database).expect("open during the in-flight write");
+    assert_eq!(
+        snapshot.schema_version().expect("schema version"),
+        LATEST_SCHEMA_VERSION,
+        "the committed history is visible mid-write"
+    );
+    assert!(
+        snapshot.integrity().expect("integrity").healthy(),
+        "the checks pass against the committed view"
+    );
+    let seen: i64 = snapshot
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name = 'in_flight'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("sqlite_master query");
+    assert_eq!(seen, 0, "an uncommitted table is never visible to a reader");
+}
+
+#[test]
+fn a_snapshot_of_a_missing_database_fails_without_creating_it() {
+    let dir = TempDir::new("snapshot-missing");
+    let database = dir.path().join("absent.db");
+    let error = StateSnapshot::open(&database).expect_err("no database to open");
+    assert_eq!(error.kind(), StateErrorKind::Unavailable);
+    let rendered = error.to_string();
+    let path_text = database.to_string_lossy();
+    assert!(
+        !rendered.contains(path_text.as_ref()),
+        "error leaked the path: {rendered}"
+    );
+    assert!(
+        !database.exists(),
+        "a read-only open never materializes the database"
+    );
 }
