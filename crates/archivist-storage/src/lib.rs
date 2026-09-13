@@ -29,6 +29,12 @@
 //!   content-safe error type that carries them.
 //! - [`capability`] — the capability model every raw writer reports;
 //!   observed optional capabilities are advisory, never assumed.
+//! - [`probe`] — the capability probe: it observes conditional create,
+//!   multipart commit/abort, stored checksum form, versioning, and
+//!   server-side encryption without mutating arbitrary keys, reduces every
+//!   unestablished fact to the weaker model value, caches only advisory
+//!   results, and renders each run as a digestible
+//!   `archivist.capability-report/v1` evidence record.
 //! - [`metadata`] — observation metadata (`ETag`, storage version, observation
 //!   time) shared by reads, listings, and the inventory.
 //! - [`raw_write`] — the raw writer: multipart blob commits and
@@ -47,11 +53,12 @@
 //!
 //! # Status
 //!
-//! Phase 2 (storage core): the authority traits, the capability model, and
-//! the `inventory-v1` freeze contract are defined, and the streaming
-//! multipart writer ([`multipart`]) orchestrates raw-write sessions with
-//! bounded memory, validate-before-complete, and cancellation-safe cleanup.
-//! Backend behavior — the portable S3 adapter, capability probing, and the
+//! Phase 2 (storage core): the authority traits, the capability model, the
+//! capability probe ([`probe`]), and the `inventory-v1` freeze contract
+//! are defined, and the streaming multipart writer ([`multipart`])
+//! orchestrates raw-write sessions with bounded memory,
+//! validate-before-complete, and cancellation-safe cleanup. Backend
+//! behavior — the portable S3 adapter's probe source and store, and the
 //! deterministic commits that drive this writer — arrives with its own
 //! deliverables (plan Section 8, Phase 2).
 //!
@@ -67,4 +74,5 @@ pub mod error;
 pub mod ingest;
 pub mod metadata;
 pub mod multipart;
+pub mod probe;
 pub mod raw_write;

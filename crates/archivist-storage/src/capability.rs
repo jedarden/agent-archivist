@@ -23,7 +23,7 @@
 //! route around — the failure class for acting on a missing capability is
 //! [`crate::error::StorageErrorKind::CapabilityUnavailable`]. Capability
 //! *probing* that produces these reports without mutating arbitrary keys is
-//! its own Phase 2 deliverable and is not behavior of the traits.
+//! the [`crate::probe`] module's contract, not behavior of the traits.
 
 use archivist_protocol::vocabulary::GrammarError;
 
@@ -223,6 +223,25 @@ pub struct StoreCapabilities {
     pub versioning: VersioningState,
     /// Server-side encryption state as far as the deployment knows.
     pub server_side_encryption: EncryptionState,
+}
+
+impl StoreCapabilities {
+    /// The report nothing has established: every observed capability at
+    /// its weakest model value — conditional create `unavailable`, no
+    /// stored checksum, versioning `unknown`, encryption `unavailable`.
+    ///
+    /// This is the value every probe failure lands on ([`crate::probe`]) —
+    /// the one report that can never overstate a backend, and therefore
+    /// the only safe default before or without a probe.
+    #[must_use]
+    pub fn unprobed() -> Self {
+        Self {
+            conditional_create: ConditionalCreate::Unavailable,
+            stored_checksum: StoredChecksum::Unavailable,
+            versioning: VersioningState::Unknown,
+            server_side_encryption: EncryptionState::Unavailable,
+        }
+    }
 }
 
 #[cfg(test)]
