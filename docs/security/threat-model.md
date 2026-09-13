@@ -207,3 +207,11 @@ adds relay abuse and receipt trust. Each maps to findings above:
   or mechanism beyond what the plan, the requirements, and the cited
   registries state; where it records an acceptance, the accepted bound is
   the plan's own.
+- **Machine check.** Every clause above except "No new contract" (a review
+  judgement) is enforced by [`tools/check-threat-model.py`](../../tools/check-threat-model.py)
+  in the definition-of-done fast lane: register shape and STRIDE vocabulary,
+  row-for-row coverage across the domain registers and the declared ranges,
+  the per-row mitigation-or-acceptance rule, accepted-risk register
+  expansion with closed-vocabulary owners mapping one to one with the
+  owner-bearing rows, backticked crate owners naming real crates, and the
+  nine plan-named families each mapping to existing findings.

@@ -65,8 +65,11 @@ python3 tools/check-cli.py --self-test             # CLI command registry gate
 python3 tools/check-wire-schemas.py --self-test    # wire-schema coherence gate
 python3 tools/check-release-container.py --self-test  # release container baseline gate
 python3 tools/check-control-schemas.py --self-test  # control trust schema gate
+python3 tools/check-threat-model.py --self-test     # threat-model acceptance gate
 python3 tools/fixturegen.py --verify               # synthetic fixtures: byte-exact
                                                    # regeneration + content scan
+python3 tools/contract-verifier.py self-test        # standalone contract verifier
+python3 tools/contract-verifier.py compare --quiet  # Rust vs standalone answer sheets
 python3 tools/verification-manifest.py check       # this tree's verification register
 python3 tools/verification-manifest.py self-test   # verification map rejection paths
 gitleaks dir --redact .                            # secret scan, working tree
@@ -81,13 +84,21 @@ The script's lanes keep per-change gating cheap:
   metrics registry gate, config-key registry gate, CLI command registry
   gate, wire-schema
   coherence gate, release container baseline gate, control trust schema
-  gate, synthetic-fixture
-  regeneration and content scan, verification-register gate,
-  working-tree secret scan — seconds, fully offline.
+  gate, threat-model acceptance gate, synthetic-fixture
+  regeneration and content scan, the standalone contract verifier and its
+  cross-implementation comparison against the Rust implementation (the plan
+  Section 8 Phase 1 exit gate), verification-register gate,
+  working-tree secret scan — seconds, fully offline once the workspace is
+  built.
 - `--slow`: the workspace test suite.
 - `--audit`: `cargo audit` and the git-history secret scan. The audit
   downloads the public RustSec advisory database; no credentials are involved.
 - `--all`: every lane.
+- `--outcomes FILE`: append one `name<TAB>pass|fail` line per check as it
+  completes — the run-evidence feed for
+  `python3 tools/verification-manifest.py emit --outcomes FILE`, which
+  writes the versioned `verification-manifest.json` keyed to the evaluated
+  commit (see [docs/notes/verification.md](docs/notes/verification.md)).
 
 A missing prerequisite tool is reported as a failure, never skipped: the gate
 does not pass because a scanner was absent. Prerequisites beyond the pinned
@@ -146,7 +157,17 @@ in the same commit — and the release Dockerfile digest-pinned to the
 pinned toolchain
 ([docs/notes/release-container.md](docs/notes/release-container.md)); a
 commit that bumps one version record without the other fails the gate, as
-does a base reference without a digest.
+does a base reference without a digest. The threat-model acceptance gate
+keeps the consolidated register and the four domain documents one contract
+([docs/security/threat-model.md](docs/security/threat-model.md)): every
+finding carries a mitigation or an explicitly accepted risk with a
+closed-vocabulary owner, coverage is row for row across the domain
+registers and the declared ranges, and the accepted-risk register maps one
+to one with the owner-bearing rows. The contract verifier replays the
+conformance corpus with implementations derived from the normative sources
+alone and, via `compare`, requires the Rust implementation's answer sheet
+to be byte-identical — the plan Section 8 Phase 1 exit gate that
+signatures, IDs, and keys agree across two independent implementations.
 
 The Argo CI workflow that runs this baseline on Forgejo pushes is tracked as
 separate Phase 0 work; until it lands, run the script locally and state in

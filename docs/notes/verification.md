@@ -172,11 +172,13 @@ rejected against another. It runs in the fast lane.
    VER-006, against this tree) and `self-test` (the Section 4 rejection
    paths, including that the committed register validates). Both are
    offline and content-free.
-3. A full verification run (CI, release) runs the lanes, collects the
-   outcomes file, emits the manifest for the evaluated commit, adds the
-   non-outcomes sections as the lanes produce them, and runs `check
-   --manifest` as the release gate (plan Section 10: a gate fails if
-   evidence comes from a different commit or any required entry is missing).
+3. A full verification run (CI, release) runs the lanes with
+   `scripts/definition-of-done.sh --all --outcomes FILE` (one
+   `name<TAB>pass|fail` line per check), emits the manifest for the
+   evaluated commit from that file, adds the non-outcomes sections as the
+   lanes produce them, and runs `check --manifest` as the release gate
+   (plan Section 10: a gate fails if evidence comes from a different commit
+   or any required entry is missing).
 4. `sync` is idempotent and refuses to proceed over an inconsistent
    register; repair the register first.
 

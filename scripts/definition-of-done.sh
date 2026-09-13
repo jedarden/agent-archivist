@@ -10,8 +10,12 @@
 #     gate, config-key registry gate, wire-schema coherence gate, CLI
 #     command registry gate,
 #     release container baseline gate, control trust schema gate,
+#     threat-model acceptance gate,
 #     synthetic-fixture, conformance-corpus, and compat-corpus
 #     regeneration and content scan,
+#     the standalone contract verifier and its cross-implementation
+#     comparison against the Rust implementation (the plan Section 8
+#     Phase 1 exit gate),
 #     verification-register gate, secret scan of the working
 #     tree (seconds, offline; safe as a gate)
 #   - Slow:  the workspace test suite
@@ -21,11 +25,18 @@
 #
 # Usage:
 #   scripts/definition-of-done.sh [--fast|--slow|--audit|--all]
+#                                 [--outcomes FILE]
 #
 #   --fast   Fast lane only (default; this is what the NEEDLE gate runs)
 #   --slow   Test suite only
 #   --audit  Dependency audit + history secret scan only
 #   --all    Every lane; what a developer runs before pushing
+#   --outcomes FILE
+#            Append one `name<TAB>pass|fail` line per check as it completes.
+#            This is the run-evidence feed for `tools/verification-manifest.py
+#            emit --outcomes` (docs/notes/verification.md, Section 5): a
+#            full run's outcomes become the versioned verification-manifest
+#            entry keyed to the evaluated commit.
 #
 # Behaviour: aggregates failures rather than aborting on the first one, so a
 # single run reports everything that is wrong. Exits non-zero if any check
@@ -45,12 +56,16 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$REPO_ROOT" || exit 1
 
 LANE="fast"
+OUTCOMES_FILE=""
 while [ $# -gt 0 ]; do
   case $1 in
     --fast) LANE="fast" ;;
     --slow) LANE="slow" ;;
     --audit) LANE="audit" ;;
     --all)  LANE="all" ;;
+    --outcomes)
+      [ $# -ge 2 ] || { echo "--outcomes needs a FILE argument" >&2; exit 2; }
+      OUTCOMES_FILE="$2"; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -61,16 +76,22 @@ CHECKS=0
 
 run_check() {
   local name="$1"; shift
+  local outcome
   CHECKS=$((CHECKS + 1))
   echo "Running: ${name}..."
   if "$@" >/tmp/dod-$$.log 2>&1; then
     echo "  ok  ${name}"
+    outcome="pass"
   else
     echo "  FAIL ${name}"
     sed 's/^/    /' /tmp/dod-$$.log | tail -40
     FAILURES+=("${name}")
+    outcome="fail"
   fi
   rm -f /tmp/dod-$$.log
+  if [ -n "$OUTCOMES_FILE" ]; then
+    printf '%s\t%s\n' "${name}" "${outcome}" >> "$OUTCOMES_FILE"
+  fi
 }
 
 # A missing prerequisite is a failure, never a silent skip: the gate must not
@@ -146,6 +167,13 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # its object-key patterns, and the plan's Section 7.5 layouts and
   # timing sentences; `--self-test` proves the rejection paths.
   run_check "control trust schemas"  python3 tools/check-control-schemas.py --self-test
+  # Threat-model acceptance (docs/security/threat-model.md): the Phase 1
+  # exit-gate rule that every finding carries a mitigation or an explicitly
+  # accepted risk with a closed-vocabulary owner, the consolidated register
+  # covers the four domain documents row for row and the declared ranges,
+  # and the accepted-risk register maps one to one with the owner-bearing
+  # rows; `--self-test` proves the rejection paths.
+  run_check "threat model"          python3 tools/check-threat-model.py --self-test
   # Byte-exact regeneration from the recorded seed plus the closed-
   # vocabulary content scan (docs/notes/fixtures.md). Output is
   # content-free: counts, bytes, and digests only.
@@ -157,6 +185,15 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # pure-Python Ed25519 verifier and every golden error body is checked
   # against the error-code registry.
   run_check "conformance corpus"  python3 tools/conformancegen.py --verify
+  # Standalone contract verifier (plan Section 8, Phase 1 exit gate): the
+  # verifier re-derives every golden from the normative sources alone
+  # (schemas, RFC 8785, RFC 8032), and `compare` requires the Rust
+  # implementation's answer sheet to be byte-identical — signatures, IDs,
+  # and keys agree across two independent implementations on the evaluated
+  # tree. `compare` implies `verify`.
+  run_check "contract verifier"    python3 tools/contract-verifier.py self-test
+  run_check "contract cross-implementation" \
+                                   python3 tools/contract-verifier.py compare --quiet
   # Schema compatibility corpus (docs/notes/schema-compatibility.md):
   # byte-exact regeneration of the two-reader-generation matrix; the
   # manifest coverage check proves every plan Section 7.1 version-axis
