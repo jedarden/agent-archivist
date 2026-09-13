@@ -1809,6 +1809,10 @@ mod tests {
 
     const ADMIN_TENANT: &str = "1a2b3c4d-5e6f-4a1b-9c2d-3e4f5a6b7c8d";
     const ADMIN_REF: &str = "file:/etc/archivist/storage/control-admin-credentials";
+    // The same dedicated reference through the grammar's other kind: the
+    // administration credential is as likely to arrive from a secret's env
+    // channel as from its file channel (CFG-029).
+    const ENV_ADMIN_REF: &str = "env:CONTROL_ADMIN_CREDENTIAL_TARGET";
 
     fn admin_builder() -> ControlAdminConfigBuilder {
         ControlAdminConfig::builder()
@@ -1968,6 +1972,156 @@ mod tests {
                 !error.to_string().contains(ADMIN_REF),
                 "the refusal must not echo the reference"
             );
+        }
+    }
+
+    #[test]
+    fn the_refusal_covers_both_credential_reference_kinds() {
+        // The reference grammar has exactly two kinds, and the dedicated
+        // administration reference can arrive as either. Reusing it on the
+        // ingest surface is the same composition mistake through both: every
+        // ingest role is refused for a file-kind and an env-kind
+        // administration credential alike, with no echo of the reference in
+        // either rendering.
+        for admin_ref in [ADMIN_REF, ENV_ADMIN_REF] {
+            let admin = admin_builder()
+                .control_admin_credentials(admin_ref)
+                .build()
+                .expect("administration configuration validates");
+            for (role, builder) in [
+                (
+                    "raw-writer",
+                    valid_builder().raw_write_credentials(admin_ref),
+                ),
+                (
+                    "control-reader",
+                    valid_builder().control_read_credentials(admin_ref),
+                ),
+                (
+                    "raw-reader",
+                    valid_builder().raw_read_credentials(admin_ref),
+                ),
+                (
+                    "offline-restore",
+                    valid_builder().offline_restore_credentials(admin_ref),
+                ),
+            ] {
+                let config = builder.build().unwrap_or_else(|e| panic!("{role}: {e}"));
+                let error = config
+                    .reject_administration_credential(&admin)
+                    .expect_err("this ingest role must be refused");
+                assert_eq!(error.kind(), S3ConfigErrorKind::DuplicateIdentity);
+                assert_eq!(
+                    error.detail(),
+                    "an ingest identity is the control-administration credential"
+                );
+                assert!(
+                    !error.to_string().contains(admin_ref),
+                    "the refusal must not echo the reference"
+                );
+                assert!(
+                    !format!("{error:?}").contains(admin_ref),
+                    "the refusal's debug rendering must not echo the reference"
+                );
+            }
+        }
+
+        // Mixed kinds compose: a file-kind administration credential over
+        // env-kind ingest identities is a split deployment, not a collision —
+        // the two kinds name different references by construction.
+        let file_admin = admin_builder().build().expect("valid");
+        let env_ingest = valid_builder()
+            .raw_write_credentials("env:RAW_WRITE_CREDENTIAL_TARGET")
+            .control_read_credentials("env:CONTROL_READ_CREDENTIAL_TARGET")
+            .build()
+            .expect("env-kind ingest identities validate");
+        env_ingest
+            .reject_administration_credential(&file_admin)
+            .expect("disjoint kinds are disjoint references");
+    }
+
+    #[test]
+    fn every_validation_failure_message_is_free_of_credential_material() {
+        // Credential-shaped material pushed through every failure path the
+        // two surfaces have that involves a credential: a pasted value where
+        // a reference belongs, a shared reference across two ingest roles,
+        // an ingest role carrying the administration reference, and a
+        // missing administration credential. Whatever fails, the rendered
+        // error — Display and Debug — carries none of the material, because
+        // the detail is a static literal by construction.
+        let shared_ref = "file:/run/secrets/SHARED_INGEST_CREDENTIAL";
+        let pasted_value = "pasted-credential-value";
+        let pasted_env = "env:admin_pasted_secret";
+        let material = [
+            pasted_value,
+            pasted_env,
+            shared_ref,
+            ADMIN_REF,
+            "/run/secrets",
+            "SHARED_INGEST_CREDENTIAL",
+            "admin_pasted_secret",
+            "control-admin-credentials",
+        ];
+        let admin = admin_builder().build().expect("valid");
+        let failures: [(S3ConfigErrorKind, S3ConfigError); 5] = [
+            // A pasted value where the raw-writer reference belongs.
+            (
+                S3ConfigErrorKind::MalformedSetting,
+                error_of(valid_builder().raw_write_credentials(pasted_env)),
+            ),
+            // A pasted value where the administration reference belongs.
+            (
+                S3ConfigErrorKind::MalformedSetting,
+                admin_builder()
+                    .control_admin_credentials(pasted_value)
+                    .build()
+                    .expect_err("a pasted value is not a reference"),
+            ),
+            // Two storage roles on one shared reference.
+            (
+                S3ConfigErrorKind::DuplicateIdentity,
+                error_of(
+                    valid_builder()
+                        .raw_write_credentials(shared_ref)
+                        .control_read_credentials(shared_ref),
+                ),
+            ),
+            // An ingest role carrying the administration reference.
+            (
+                S3ConfigErrorKind::DuplicateIdentity,
+                valid_builder()
+                    .raw_write_credentials(ADMIN_REF)
+                    .build()
+                    .expect("structurally valid on its own")
+                    .reject_administration_credential(&admin)
+                    .expect_err("the joint check refuses it"),
+            ),
+            // No administration credential at all.
+            (
+                S3ConfigErrorKind::MissingSetting,
+                ControlAdminConfig::builder()
+                    .endpoint_url(ENDPOINT)
+                    .region(REGION)
+                    .control_bucket(CONTROL_BUCKET)
+                    .tenant(ADMIN_TENANT)
+                    .build()
+                    .expect_err("the credential is required"),
+            ),
+        ];
+        for (expected_kind, error) in failures {
+            assert_eq!(error.kind(), expected_kind);
+            let text = error.to_string();
+            let debug = format!("{error:?}");
+            for fragment in material {
+                assert!(
+                    !text.contains(fragment),
+                    "the display rendering echoed credential material: {text}"
+                );
+                assert!(
+                    !debug.contains(fragment),
+                    "the debug rendering echoed credential material"
+                );
+            }
         }
     }
 }

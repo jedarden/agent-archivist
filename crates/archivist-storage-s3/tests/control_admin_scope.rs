@@ -59,6 +59,9 @@ const CONTROL_READ_REF: &str = "file:/etc/archivist/storage/control-read-credent
 const RAW_READ_REF: &str = "file:/etc/archivist/storage/raw-read-credentials";
 const RESTORE_REF: &str = "env:RESTORE_CREDENTIALS_TARGET";
 const ADMIN_REF: &str = "file:/etc/archivist/storage/control-admin-credentials";
+// The dedicated administration reference through the grammar's other kind
+// (CFG-029): a secret's env channel instead of its file channel.
+const ENV_ADMIN_REF: &str = "env:CONTROL_ADMIN_CREDENTIAL_TARGET";
 
 fn tenant_id() -> TenantId {
     TENANT.parse().expect("golden tenant parses")
@@ -412,6 +415,82 @@ fn ingest_configuration_refuses_the_administration_credential_across_every_role(
         assert!(
             !error.to_string().contains(ADMIN_REF),
             "the refusal echoed the reference"
+        );
+    }
+}
+
+#[test]
+fn the_dedicated_reference_stays_dedicated_for_either_reference_kind() {
+    // The reference grammar has exactly two kinds, and the administration
+    // credential can arrive as either. The split holds for both: every
+    // ingest role mapped onto an env-kind administration reference is
+    // refused exactly as a file-kind one is, with no echo of the reference
+    // or its variable name, and mixed-kind disjoint references compose.
+    let env_admin = ControlAdminConfig::builder()
+        .endpoint_url(ENDPOINT)
+        .region(REGION)
+        .control_bucket(CONTROL_BUCKET)
+        .tenant(TENANT)
+        .control_admin_credentials(ENV_ADMIN_REF)
+        .build()
+        .expect("env-kind administration configuration validates");
+
+    for (role, builder) in [
+        (
+            "raw-writer",
+            ingest_builder().raw_write_credentials(ENV_ADMIN_REF),
+        ),
+        (
+            "control-reader",
+            ingest_builder().control_read_credentials(ENV_ADMIN_REF),
+        ),
+        (
+            "raw-reader",
+            ingest_builder().raw_read_credentials(ENV_ADMIN_REF),
+        ),
+        (
+            "offline-restore",
+            ingest_builder().offline_restore_credentials(ENV_ADMIN_REF),
+        ),
+    ] {
+        let ingest = builder.build().unwrap_or_else(|e| panic!("{role}: {e}"));
+        let error = ingest
+            .reject_administration_credential(&env_admin)
+            .expect_err("this ingest role must be refused");
+        assert_eq!(error.kind(), S3ConfigErrorKind::DuplicateIdentity);
+        assert_eq!(
+            error.detail(),
+            "an ingest identity is the control-administration credential"
+        );
+        for never_echoed in [ENV_ADMIN_REF, "CONTROL_ADMIN_CREDENTIAL_TARGET"] {
+            assert!(
+                !error.to_string().contains(never_echoed),
+                "the refusal echoed the reference"
+            );
+            assert!(
+                !format!("{error:?}").contains(never_echoed),
+                "the refusal's debug rendering echoed the reference"
+            );
+        }
+    }
+
+    // Mixed kinds compose: the env-kind administration credential over the
+    // file-kind golden ingest identities is a split deployment — different
+    // kinds name different references by construction.
+    ingest_builder()
+        .build()
+        .expect("golden ingest validates")
+        .reject_administration_credential(&env_admin)
+        .expect("mixed-kind disjoint references compose");
+
+    // The dedicated reference keeps its own grammar either way: an env-kind
+    // administration credential is a reference, never a value, and its
+    // configuration renders without the variable name.
+    let rendered = format!("{env_admin:?}");
+    for never_rendered in [ENV_ADMIN_REF, "CONTROL_ADMIN_CREDENTIAL_TARGET"] {
+        assert!(
+            !rendered.contains(never_rendered),
+            "admin debug rendering leaked the reference target"
         );
     }
 }
