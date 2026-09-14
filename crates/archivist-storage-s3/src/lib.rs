@@ -22,10 +22,16 @@
 //! credential reference the [`config`] module's `ControlAdminConfig`
 //! surface validates, deriving each object key from the record envelope's
 //! own validated members, writing immutable families once and replacing
-//! current pointers only on a strictly higher signed epoch. The remaining
-//! adapter behavior arrives with its own deliverables: capability
-//! probing, the synthetic compatibility suite against the local reference
-//! backend, B2, and ARMOR, and the deterministic commits.
+//! current pointers only on a strictly higher signed epoch. Third slice:
+//! the raw writer ([`raw_write`]) — the portable `RawWriteStore` over the
+//! raw-writer credential for one pinned tenant: bounded manifest `PUT`s
+//! through the atomic conditional-create decision layer when the observed
+//! capability report establishes it and deterministic overwrite otherwise,
+//! multipart sessions committed on exactly their own recorded
+//! commitments, and idempotent abort as the cancellation-safe cleanup. The
+//! remaining adapter behavior arrives with its own deliverables:
+//! capability probing, the synthetic compatibility suite against the
+//! local reference backend, B2, and ARMOR, and the ingest reads.
 //!
 //! # Dependency boundary
 //!
@@ -35,3 +41,4 @@
 
 pub mod config;
 pub mod control_admin;
+pub mod raw_write;
