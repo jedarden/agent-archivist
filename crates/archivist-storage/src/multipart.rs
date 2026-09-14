@@ -630,7 +630,9 @@ impl<S: RawWriteStore + ?Sized> Drop for MultipartWriter<'_, S> {
 /// ([`CANONICAL_MAX_BYTES`], the same 64 KiB class as the canonical
 /// envelope): the `PUT` path must never become a way to stream payload
 /// scale through a manifest key, so it refuses empty and oversized input
-/// before touching the store.
+/// before touching the store. The bound check itself is
+/// [`bounded_manifest_bytes`], shared verbatim with the deterministic
+/// commit layer so no manifest write path can skip it.
 ///
 /// # Errors
 /// [`StorageErrorKind::MalformedInput`] for empty or oversized input
@@ -640,6 +642,18 @@ pub async fn put_manifest<S: RawWriteStore + ?Sized>(
     key: &ManifestKey,
     bytes: &[u8],
 ) -> Result<StorageOutcome, StorageError> {
+    bounded_manifest_bytes(bytes)?;
+    store.write_manifest(key, bytes).await
+}
+
+/// Enforce the manifest payload bounds shared by every manifest write
+/// path — the simple `PUT` and the deterministic commit layer
+/// ([`crate::commit`]) alike: non-empty, and within the pinned
+/// canonical-document maximum.
+///
+/// # Errors
+/// [`StorageErrorKind::MalformedInput`] for empty or oversized input.
+pub(crate) fn bounded_manifest_bytes(bytes: &[u8]) -> Result<(), StorageError> {
     if bytes.is_empty() {
         return Err(StorageError::new(
             StorageErrorKind::MalformedInput,
@@ -652,7 +666,7 @@ pub async fn put_manifest<S: RawWriteStore + ?Sized>(
             OVERSIZED_MANIFEST_DETAIL,
         ));
     }
-    store.write_manifest(key, bytes).await
+    Ok(())
 }
 
 /// Mint the next part ordinal, enforcing the portable bound before the

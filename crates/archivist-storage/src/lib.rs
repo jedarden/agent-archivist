@@ -42,6 +42,11 @@
 //! - [`multipart`] — the streaming multipart writer: bounded 8 MiB part
 //!   sessions over [`raw_write::RawWriteStore`], cancellation-safe cleanup,
 //!   and the bounded manifest `PUT`.
+//! - [`commit`] — the deterministic commit decision layer over
+//!   [`raw_write::RawWriteStore`]: primitive selection from the reported
+//!   capability (atomic conditional create when established, deterministic
+//!   overwrite when writer-only), already-exists convergence with
+//!   integrity-conflict validation, and the honest writer-only outcome.
 //! - [`control`] — the control-plane boundary: the read-only replica view,
 //!   the offline administrator store, and the record-kind vocabulary their
 //!   keys are derived from.
@@ -55,11 +60,13 @@
 //!
 //! Phase 2 (storage core): the authority traits, the capability model, the
 //! capability probe ([`probe`]), and the `inventory-v1` freeze contract
-//! are defined, and the streaming multipart writer ([`multipart`])
+//! are defined. The streaming multipart writer ([`multipart`])
 //! orchestrates raw-write sessions with bounded memory,
-//! validate-before-complete, and cancellation-safe cleanup. Backend
-//! behavior — the portable S3 adapter's probe source and store, and the
-//! deterministic commits that drive this writer — arrives with its own
+//! validate-before-complete, and cancellation-safe cleanup. The
+//! deterministic commit decision layer ([`commit`]) selects the write
+//! primitive from the reported capability and resolves replays honestly.
+//! Backend behavior — the portable S3 adapter's probe source and store,
+//! which implement the primitives these layers drive — arrives with its own
 //! deliverables (plan Section 8, Phase 2).
 //!
 //! # Dependency boundary
@@ -69,6 +76,7 @@
 
 pub mod audit_restore;
 pub mod capability;
+pub mod commit;
 pub mod control;
 pub mod error;
 pub mod ingest;
