@@ -7,7 +7,7 @@ contracts of ``docs/notes/control-trust-schemas.md`` and
 7.5, and 7.8; requirements ID-003, ID-005, ID-006, ID-008, ID-009,
 SEC-006):
 
-1. all seven family schemas parse, declare draft 2020-12, and carry the
+1. all eight family schemas parse, declare draft 2020-12, and carry the
    ``urn:agent-archivist:schema:v1:<stem>`` id matching the filename, and
    the envelope really is a conventions registry (shared defs plus metadata,
    no instance shape of its own);
@@ -23,8 +23,9 @@ SEC-006):
    the store derives object keys from exactly those validated fields, so
    the revocation and rotation records must require the epochs their
    keys name, the delegation record the relay and origin its key
-   names, and the authority-rotation record the retired authority key
-   ID its key names;
+   names, the authority-rotation record the retired authority key
+   ID its key names, and the retention record the occurrence and
+   retention-history epoch its key names;
 4. every shipped record schema composes the wrapper flat: each member the
    wrapper registry requires for that record's kind is present, required,
    and references the registry's declared source (a narrowing ``const``
@@ -46,39 +47,49 @@ SEC-006):
    300-second clock-skew allowance (Sections 5 and 7.2), the 24-hour
    rotation verification overlap (Section 5 — one constant for both
    tiers the sentence covers: the client authorization key and the
-   tenant authority key), and the 30-day receipt-key rotation with its
-   7-day signing overlap (Section 7.8), and each consuming schema pins
+   tenant authority key), the 30-day receipt-key rotation with its
+   7-day signing overlap (Section 7.8), and the 30-day deletion grace
+   the retention record's tombstone anchors (Section 7.10), and each
+   consuming schema pins
    the same number where it applies — the linked-client TTL and
    overlap, the delegation and rotation TTLs, the rotation overlap, the
    revocation propagation bound, the receipt-key record's rotation,
    overlap, and TTL, the authority-rotation record's TTL and signing
-   overlap, the certificate's rotation and overlap in
+   overlap, the retention record's deletion grace, the certificate's
+   rotation and overlap in
    ``ingest-receipt.json``, and the two wire-family pins in
    ``ingest-request.json`` — with agreement proven mechanically, never
    assumed;
 7. behaviourally (draft 2020-12, cross-file refs resolved through a
    referencing registry over ``schemas/v1``): pinned synthetic
-   linked-client, revocation, delegation, rotation, receipt-key, and
-   authority-rotation records validate — one coherent trust story: the
+   linked-client, revocation, delegation, rotation, receipt-key,
+   authority-rotation, and retention records validate — one coherent
+   trust story: the
    client at epoch 3 whose key that epoch's golden rotation
    established, the relay grant presenting that client as origin, the
    revocation of that epoch, the receipt-key certification the same
    pinned authority root signs (window spanning exactly the rotation
-   and overlap constants summed), and the authority-rotation link that
+   and overlap constants summed), the authority-rotation link that
    retires that same pinned root and establishes the tenant's successor
-   authority half, signed by the root it retires — with key IDs
+   authority half, signed by the root it retires, and the retention
+   tombstone the same root signs over one stored occurrence — the
+   deletion the plan Section 7.10 workflow runs on, grace anchored at
+   its own ``signed_at`` — with key IDs
    computed by the pinned SHA-256-of-encoded-public-key derivation and
    object keys re-derived from each record's own identifiers, proving
    the computable-from-published-records property on the golden
-   instances, on the revocation and rotation keys at the epoch ceiling
-   (the 18-digit lockstep between the epoch bound and both key
-   grammars), and on the delegation record's withdrawn variant (the
+   instances, on the revocation, rotation, and retention keys at the
+   epoch ceiling
+   (the 18-digit lockstep between the epoch bound and each key
+   grammar), and on the delegation record's withdrawn variant (the
    only withdrawal a current-pointer shape permits) — and every
-   mutation of any of the six is rejected (unknown namespace, undeclared
+   mutation of any of the seven is rejected (unknown namespace, undeclared
    member, private-key member, epoch member on a key-addressed record,
    zero, fractional, and above-bound epochs, empty, wildcard, and
-   unknown scope values, unknown delegation state, unknown kind, wrong
-   or unshipped record type, malformed key material and window
+   unknown scope values, unknown delegation state, unknown retention
+   action and reason class, unknown kind, wrong
+   or unshipped record type, malformed key material, audit identity,
+   and window
    timestamps, missing wrapper, identity, and window members). The
    receipt-key
    record and the certificate in ``schemas/v1/ingest-receipt.json`` are
@@ -153,7 +164,7 @@ DRAFT = "https://json-schema.org/draft/2020-12/schema"
 ENVELOPE_STEM = "control-envelope"
 RECORD_STEMS = ("control-client", "control-revocation", "control-delegation",
                 "control-rotation", "control-receipt-key",
-                "control-authority-rotation")
+                "control-authority-rotation", "control-retention")
 CERTIFICATE_PATH = ("$defs", "receipt-key-certificate")
 
 NAMESPACE = "archivist.control/v1"
@@ -169,11 +180,12 @@ ENVELOPE_DEFS = (
     "rotation-object-key",
     "receipt-key-object-key",
     "authority-rotation-object-key",
+    "retention-object-key",
 )
 # Key patterns still awaiting their record type: no shipped type may claim
-# one. The revocation, delegation, rotation, receipt-key, and
-# authority-rotation patterns left this set as their records shipped, and
-# the set is empty again.
+# one. The revocation, delegation, rotation, receipt-key,
+# authority-rotation, and retention patterns left this set as their
+# records shipped, and the set is empty again.
 RESERVED_KEY_DEFS: tuple[str, ...] = ()
 BANNED_MEMBER = re.compile(r"private|secret|seed", re.IGNORECASE)
 PUBLIC_KEY_REF = URN_PREFIX + "common#/$defs/ed25519-public-key-hex"
@@ -187,6 +199,7 @@ CONSTANT_NAMES = (
     "rotationVerificationOverlapHours",
     "receiptKeyRotationDays",
     "receiptKeySigningOverlapDays",
+    "deletionGraceDays",
 )
 
 # Plan-pinned constants (Sections 5, 7.2, 7.5, and EC-09). Changing one is
@@ -206,6 +219,8 @@ PINNED = {
                           "receiptKeyRotationDays", "value")): 30,
     ("control-envelope", ("x-archivist", "constants",
                           "receiptKeySigningOverlapDays", "value")): 7,
+    ("control-envelope", ("x-archivist", "constants",
+                          "deletionGraceDays", "value")): 30,
     ("control-client", ("x-archivist", "trustRecordCacheTtlSeconds")): 60,
     ("control-client", ("x-archivist", "rotationVerificationOverlapHours")): 24,
     ("control-revocation",
@@ -223,6 +238,7 @@ PINNED = {
      ("x-archivist", "trustRecordCacheTtlSeconds")): 60,
     ("control-authority-rotation",
      ("x-archivist", "rotationVerificationOverlapHours")): 24,
+    ("control-retention", ("x-archivist", "deletionGraceDays")): 30,
     ("ingest-request", ("x-archivist", "authorizationWindowSeconds")): 300,
     ("ingest-request", ("x-archivist", "clockSkewAllowanceSeconds")): 300,
     ("ingest-receipt", CERTIFICATE_PATH + ("x-archivist",
@@ -291,6 +307,9 @@ CONSTANT_AGREEMENTS = (
                            "receiptKeySigningOverlapDays", "value")),
      ("ingest-receipt", CERTIFICATE_PATH + ("x-archivist",
                                             "receiptKeySigningOverlapDays"))),
+    (("control-envelope", ("x-archivist", "constants",
+                           "deletionGraceDays", "value")),
+     ("control-retention", ("x-archivist", "deletionGraceDays"))),
 )
 CERTIFICATE_KEY_TEMPLATE = (
     "tenants/<tenant_id>/v1/control/receipt-keys/<key_id>.json"
@@ -341,6 +360,8 @@ NEXT_AUTHORITY_PUBLIC_KEY = "d4" * 32
 RECEIPT_PUBLIC_KEY = "3c" * 32
 SYNTHETIC_SIGNATURE = "00" * 64
 SIGNED_AT = "2026-09-11T00:00:00Z"
+OCCURRENCE_ID = "5e" * 32
+AUDIT_IDENTITY = "archive-operator"
 # The golden receipt key's signing window: 2026-09-04 to 2026-10-11 is
 # exactly 37 days — receiptKeyRotationDays (30) + receiptKeySigningOverlapDays
 # (7) — certified as the window opens, so the gate can prove the window
@@ -368,6 +389,7 @@ LAYOUT_GOLDENS = {
     "<authorization_epoch>": "3",
     "<key_id>": key_id(RECEIPT_PUBLIC_KEY),
     "<previous_key_id>": key_id(AUTHORITY_PUBLIC_KEY),
+    "<occurrence_id>": OCCURRENCE_ID,
 }
 
 
@@ -515,6 +537,34 @@ def golden_authority_rotation_record() -> dict:
     }
 
 
+def golden_retention_record() -> dict:
+    """The tombstone that opens the golden occurrence's retention history:
+    signed by the same pinned authority root every other golden carries,
+    addressed to the golden occurrence's content identity, and carrying
+    the closed action, reason class, and audit identity the plan Section
+    7.10 deletion workflow runs on. The first retention event for the
+    occurrence (epoch 1): no record preceded it, which is the indefinite
+    default the record type exists to act on. Its ``signed_at`` anchors
+    the deletion grace — ``deletionGraceDays`` (30, plan Section 7.10),
+    pinned here and proven equal by the gate — and the record pins no
+    trust-cache TTL, the deliberate non-consumer: nothing online reads
+    it to serve stale."""
+    return {
+        "schema": NAMESPACE,
+        "record_type": "retention",
+        "record_kind": "immutable",
+        "tenant_id": TENANT_ID,
+        "occurrence_id": OCCURRENCE_ID,
+        "authorization_epoch": 1,
+        "retention_action": "tombstone",
+        "reason_class": "operator-request",
+        "audit_identity": AUDIT_IDENTITY,
+        "signed_at": SIGNED_AT,
+        "authority_key_id": key_id(AUTHORITY_PUBLIC_KEY),
+        "authority_signature": SYNTHETIC_SIGNATURE,
+    }
+
+
 # Behavioural mutations of the golden records: label -> must-be-rejected
 # mutation. Each names the acceptance clause it proves.
 CLIENT_REJECTIONS = [
@@ -646,6 +696,32 @@ AUTHORITY_ROTATION_REJECTIONS = [
     ("missing identity member", lambda r: r.pop("previous_key_id")),
     ("missing retiring half", lambda r: r.pop("previous_public_key")),
     ("missing successor half", lambda r: r.pop("public_key")),
+]
+
+RETENTION_REJECTIONS = [
+    ("unknown namespace", lambda r: r.__setitem__("schema", NAMESPACE + "2")),
+    ("undeclared member", lambda r: r.__setitem__("notes", "leaked credentials")),
+    ("private-key member", lambda r: r.__setitem__("deletion_private_key", "ab" * 32)),
+    ("unknown record kind", lambda r: r.__setitem__("record_kind", "pointer")),
+    ("wrong record type token",
+     lambda r: r.__setitem__("record_type", "revocation")),
+    ("unshipped record type token",
+     lambda r: r.__setitem__("record_type", "trust-anchor")),
+    ("unknown retention action",
+     lambda r: r.__setitem__("retention_action", "purge")),
+    ("unknown reason class", lambda r: r.__setitem__("reason_class", "because")),
+    ("empty audit identity", lambda r: r.__setitem__("audit_identity", "")),
+    ("non-canonical audit identity", lambda r: r.__setitem__("audit_identity", " ops")),
+    ("non-canonical occurrence digest",
+     lambda r: r.__setitem__("occurrence_id", r["occurrence_id"].upper())),
+    ("short occurrence digest",
+     lambda r: r.__setitem__("occurrence_id", r["occurrence_id"][:-2])),
+    ("malformed authority signature", lambda r: r.__setitem__("authority_signature", "00" * 63)),
+    ("missing wrapper member", lambda r: r.pop("signed_at")),
+    ("missing identity member", lambda r: r.pop("occurrence_id")),
+    ("missing epoch member", lambda r: r.pop("authorization_epoch")),
+    ("missing action member", lambda r: r.pop("retention_action")),
+    ("missing audit member", lambda r: r.pop("audit_identity")),
 ]
 
 
@@ -1462,6 +1538,7 @@ def check_behaviour(schemas: dict[str, dict]) -> list[str]:
     rotation = golden_rotation_record()
     receipt_key = golden_receipt_key_record()
     authority_rotation = golden_authority_rotation_record()
+    retention = golden_retention_record()
     if client["key_id"] != key_id(client["public_key"]):
         violations.append("golden client record: key_id is not SHA-256(public_key)")
     if revocation["revoked_key_id"] != key_id(client["public_key"]):
@@ -1509,6 +1586,12 @@ def check_behaviour(schemas: dict[str, dict]) -> list[str]:
             "golden authority-rotation record: the link must retire the "
             "same pinned root every other golden is signed by — one trust "
             "story, one root")
+    if retention["authority_key_id"] != client["authority_key_id"]:
+        violations.append(
+            "golden retention record: the tombstone must be signed by the "
+            "same pinned root every other golden is signed by — deletion "
+            "authority is the tenant authority's alone, one trust story, "
+            "one root")
 
     # Per-type golden behaviour: factory, rejections, key pattern, key
     # derivation from the record's own identifiers, and the near-miss keys
@@ -1644,6 +1727,38 @@ def check_behaviour(schemas: dict[str, dict]) -> list[str]:
                  f"tenants/{r['tenant_id'].upper()}/v1/control/"
                  f"authority-rotations/{r['previous_key_id']}.json"),
          }),
+        ("control-retention", retention, RETENTION_REJECTIONS,
+         "retention-object-key",
+         lambda r: (f"tenants/{r['tenant_id']}/v1/control/retention/"
+                    f"{r['occurrence_id']}/{r['authorization_epoch']}.json"),
+         lambda r: {
+             "leading-zero epoch segment": (
+                 f"tenants/{r['tenant_id']}/v1/control/retention/"
+                 f"{r['occurrence_id']}/0{r['authorization_epoch']}.json"),
+             "zero epoch segment": (
+                 f"tenants/{r['tenant_id']}/v1/control/retention/"
+                 f"{r['occurrence_id']}/0.json"),
+             "19-digit epoch segment": (
+                 f"tenants/{r['tenant_id']}/v1/control/retention/"
+                 f"{r['occurrence_id']}/{10 ** 18}.json"),
+             "non-canonical occurrence segment": (
+                 f"tenants/{r['tenant_id']}/v1/control/retention/"
+                 f"{r['occurrence_id'].upper()}/"
+                 f"{r['authorization_epoch']}.json"),
+             "short occurrence segment": (
+                 f"tenants/{r['tenant_id']}/v1/control/retention/"
+                 f"{r['occurrence_id'][:-2]}/"
+                 f"{r['authorization_epoch']}.json"),
+             "another record type's key": (
+                 f"tenants/{r['tenant_id']}/v1/control/revocations/"
+                 f"{CLIENT_ID}/3.json"),
+             "missing .json suffix": (
+                 f"tenants/{r['tenant_id']}/v1/control/retention/"
+                 f"{r['occurrence_id']}/{r['authorization_epoch']}"),
+             "non-canonical tenant segment": (
+                 f"tenants/{r['tenant_id'].upper()}/v1/control/retention/"
+                 f"{r['occurrence_id']}/{r['authorization_epoch']}.json"),
+         }),
     )
     for stem, record, rejections, pattern_def, derive, near_misses in specs:
         validator = build_validator(schemas, stem)
@@ -1725,6 +1840,24 @@ def check_behaviour(schemas: dict[str, dict]) -> list[str]:
                     and re.match(pattern, derive(ceiling))):
                 violations.append(
                     "rotation-object-key must accept the epoch-ceiling "
+                    "key — 18 canonical digits, exactly the bound "
+                    "authorization-epoch carries")
+        if stem == "control-retention":
+            # The epoch ceiling is schema-valid and its object key
+            # satisfies the grammar: the same 18-digit lockstep the
+            # revocation and rotation keys keep, proven on the
+            # retention key too.
+            ceiling = copy.deepcopy(record)
+            ceiling["authorization_epoch"] = 999999999999999999
+            if not validator.is_valid(ceiling):
+                violations.append(
+                    "golden retention record: the epoch ceiling "
+                    "999999999999999999 must be schema-valid — the epoch "
+                    "bound and the key grammar are held in lockstep")
+            if not (isinstance(pattern, str)
+                    and re.match(pattern, derive(ceiling))):
+                violations.append(
+                    "retention-object-key must accept the epoch-ceiling "
                     "key — 18 canonical digits, exactly the bound "
                     "authorization-epoch carries")
         if stem == "control-receipt-key":
@@ -1889,6 +2022,27 @@ SELF_TEST_CASES = [
     ("record-registry authority-rotation key-member drift", REGISTRY_TARGET,
      lambda r: r["records"]["authority-rotation"].__setitem__(
          "key_members", ["tenant_id", "key_id"])),
+    ("retention identity epoch dropped", "control-retention",
+     lambda s: (s["properties"].pop("authorization_epoch"),
+                s["required"].remove("authorization_epoch"))),
+    ("retention action enum opened", "control-retention",
+     lambda s: s["properties"]["retention_action"]["enum"].append("purge")),
+    ("retention key-pattern drift", "control-envelope",
+     lambda s: s["$defs"]["retention-object-key"].__setitem__(
+         "pattern", "^tenants/.+$")),
+    ("retention grace constant dropped", "control-retention",
+     lambda s: s["x-archivist"].pop("deletionGraceDays")),
+    ("retention registry unshipped drift", "control-envelope",
+     lambda s: [e.update({"status": "pending", "schema": None})
+                for e in s["x-archivist"]["recordTypes"]
+                if e.get("type") == "retention"]),
+    ("record-registry retention record dropped", REGISTRY_TARGET,
+     lambda r: r["records"].pop("retention")),
+    ("record-registry retention key-member drift", REGISTRY_TARGET,
+     lambda r: r["records"]["retention"].__setitem__(
+         "key_members", ["tenant_id", "occurrence_id"])),
+    ("record-registry deletion-grace constant dropped", REGISTRY_TARGET,
+     lambda r: r["constants"].pop("deletionGraceDays")),
     ("cross-file receipt-key rotation fork", "ingest-receipt",
      lambda s: s["$defs"]["receipt-key-certificate"]["x-archivist"]
      .__setitem__("receiptKeyRotationDays", 60)),
@@ -2004,7 +2158,8 @@ def main(argv: list[str]) -> int:
     rejections = (len(CLIENT_REJECTIONS) + len(REVOCATION_REJECTIONS)
                   + len(DELEGATION_REJECTIONS) + len(ROTATION_REJECTIONS)
                   + len(RECEIPT_KEY_REJECTIONS)
-                  + len(AUTHORITY_ROTATION_REJECTIONS))
+                  + len(AUTHORITY_ROTATION_REJECTIONS)
+                  + len(RETENTION_REJECTIONS))
     record_types = registry.get("records", {})
     constants = registry.get("constants", {})
     print(f"agent-archivist control trust family: {len(RECORD_STEMS) + 1} schemas")

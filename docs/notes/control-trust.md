@@ -2,9 +2,10 @@
 
 Authority: the implementation plan, Section 5 (control-plane boundary),
 Section 7.1 (version axes), Section 7.2 (wire authentication), Section
-7.5 (object keys), Section 7.8 (receipts), and Section 7.11 EC-09 (the
+7.5 (object keys), Section 7.8 (receipts), Section 7.10 (retention and
+deletion), and Section 7.11 EC-09 (the
 trust-record cache); requirements ID-003, ID-005, ID-006, ID-008,
-ID-009, and SEC-006. This note is the map of the control trust family —
+ID-009, SEC-006, SEC-007, and SEC-008. This note is the map of the control trust family —
 what it is, where each contract lives, and how the pieces check each
 other. The per-record normative contracts (the envelope's decisions,
 member-by-member shapes, the signing construction, the write rules) live
@@ -22,9 +23,9 @@ runs on: objects below `tenants/<tenant>/v1/control/`, written only by
 the offline `ControlAdminStore` — which can put nothing but validated,
 tenant-authority-signed control objects — read by every ingestion
 replica when it authenticates an uploader, and cacheable for at most 60
-seconds. Seven schema files carry the family
+seconds. Eight schema files carry the family
 ([`schemas/v1/control-envelope.json`](../../schemas/v1/control-envelope.json)
-plus six record schemas), and the trust they describe is one story:
+plus seven record schemas), and the trust they describe is one story:
 
 1. **Link.** The linked-client record is one installation's identity in
    one tenant: its Ed25519 public key, base scopes, and the current
@@ -73,6 +74,19 @@ plus six record schemas), and the trust they describe is one story:
    receipt-key certifications and both verify; the window bounds
    signing acceptance, never what was already signed, and the pin
    never moves.
+8. **Retain and delete.** The retention record is the tenant
+   authority's durable decision about one stored occurrence — one
+   closed action per record: a `tombstone` schedules deletion with the
+   30-day grace anchored at its `signed_at`, a `legal-hold` bars
+   deletion and overrides any tombstone regardless of epoch order, and
+   a `release` ends the active hold. Epoch-addressed and immutable
+   like the revocation, one object per (occurrence, epoch), the
+   current state is the fold of the records in ascending epoch order,
+   and the default — no records at all — is indefinite retention (plan
+   Section 7.10). The one record type no ingestion replica reads: the
+   ingestion API has no delete route, so the ingest path stays
+   retention-blind and the record serves the offline deletion workflow
+   and audit.
 
 No private-key material appears anywhere in the family (SEC-006):
 key members are public halves under the shared common shapes, key IDs
@@ -88,7 +102,7 @@ drift from the others:
 |---|---|
 | The record schemas, `schemas/v1/control-*.json` | The normative shapes: the envelope's shared defs, wrapper registry, object-key patterns, and in-band `x-archivist` registries (record types, write classes, timing constants), plus each record type's complete object. |
 | [`tools/control-records.toml`](../../tools/control-records.toml) | The external, append-only index: every record type with its write class, schema, object-key layout, key members, and status, and every timing constant with its value, unit, plan sections, and the verbatim plan sentence that pins it. |
-| The plan, `docs/plan/plan.md` Sections 5, 7.2, 7.5, 7.8, 7.11 | The authority: the object-key table (Section 7.5) and the timing sentences the registry quotes verbatim. |
+| The plan, `docs/plan/plan.md` Sections 5, 7.2, 7.5, 7.8, 7.10, 7.11 | The authority: the object-key table (Section 7.5) and the timing sentences the registry quotes verbatim. |
 
 `tools/check-control-schemas.py` holds the three together: the
 registry's record types agree with the envelope's `recordTypes` registry
@@ -122,6 +136,7 @@ fast lane. The shipped set:
 | `rotation` | immutable | `tenants/<tenant_id>/v1/control/rotations/<client_id>/<authorization_epoch>.json` | `tenant_id`, `client_id`, `authorization_epoch` |
 | `receipt-key` | immutable | `tenants/<tenant_id>/v1/control/receipt-keys/<key_id>.json` | `tenant_id`, `key_id` |
 | `authority-rotation` | immutable | `tenants/<tenant_id>/v1/control/authority-rotations/<previous_key_id>.json` | `tenant_id`, `previous_key_id` |
+| `retention` | immutable | `tenants/<tenant_id>/v1/control/retention/<occurrence_id>/<authorization_epoch>.json` | `tenant_id`, `occurrence_id`, `authorization_epoch` |
 
 Object-key layouts are written with the record's own member names as
 placeholders, in the order the store concatenates them
@@ -135,13 +150,13 @@ placeholders `<tenant>`, `<client>`, `<epoch>`, `<key>`; the gate maps
 them onto the member names and requires the plan's control lines to
 appear in the registry exactly under that mapping. The plan's table
 currently pins the client, revocation, and receipt-key control keys;
-the delegation, rotation, and authority-rotation layouts extend it
-from the envelope registry (a documented plan follow-up the schemas
-note's open questions track).
+the delegation, rotation, authority-rotation, and retention layouts
+extend it from the envelope registry (a documented plan follow-up the
+schemas note's open questions track).
 
 ## The timing constants
 
-Six named constants, each encoded exactly once — the envelope's
+Seven named constants, each encoded exactly once — the envelope's
 `x-archivist.constants` registry is the one authoritative encoding
 inside the schemas, `tools/control-records.toml` is its index, and
 every consuming schema pins the same number where it applies, with the
@@ -155,14 +170,22 @@ gate proving agreement and rejecting any second encoding:
 | `rotationVerificationOverlapHours` | 24 h | "Key rotation accepts old and new keys for 24 hours" | linked-client, rotation, authority-rotation records |
 | `receiptKeyRotationDays` | 30 d | "Receipt keys rotate every 30 days" | receipt-key record, receipt certificate |
 | `receiptKeySigningOverlapDays` | 7 d | "with seven days of old/new signing overlap" | receipt-key record, receipt certificate |
+| `deletionGraceDays` | 30 d | "wait 30 days" | retention record (the tombstone's grace, anchored at its `signed_at`) |
 
 Two of the values are deliberately equal but separately named — the
 authorization window protects the signer's freshness, the clock-skew
 allowance the verifier's clock — and two five-minute values must not
-silently become one ten-minute window. The revocation propagation bound
-is the cache TTL re-expressed where the revocation record needs it: the
-same number, never a second value, and the exactly-once walk treats it
-as the TTL's alias.
+silently become one ten-minute window. Two more are deliberately equal
+by coincidence of the plan's own numbers — the 30-day receipt-key
+rotation and the 30-day deletion grace guard unrelated calendars (a
+signing cadence; a deletion delay) and must never be unified. The
+revocation propagation bound is the cache TTL re-expressed where the
+revocation record needs it: the same number, never a second value, and
+the exactly-once walk treats it as the TTL's alias. The retention
+record is the one type that pins no TTL on purpose: nothing online
+reads it to serve stale — the ingest path is retention-blind (plan
+Section 7.10's no-delete-route rule) and its offline readers re-read
+rather than cache.
 
 ## Verification
 

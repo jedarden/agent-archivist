@@ -2,8 +2,10 @@
 
 Authority: the implementation plan, Section 5 (control-plane boundary),
 Section 7.1 (version axes), Section 7.2 (wire authentication),
-Section 7.5 (object keys), and Section 7.8 (receipts); requirements
-ID-001, ID-003, ID-005, ID-006, ID-008, ID-009, RCPT-006, and SEC-006.
+Section 7.5 (object keys), Section 7.8 (receipts), and Section 7.10
+(retention and deletion); requirements
+ID-001, ID-003, ID-005, ID-006, ID-008, ID-009, RCPT-006, SEC-006,
+SEC-007, and SEC-008.
 This note holds the per-record contracts; the family overview, the
 external record registry (`tools/control-records.toml`), and the
 plan-citation checks that bind the two notes' constants to the plan's
@@ -19,13 +21,14 @@ The family is:
 | [`schemas/v1/control-revocation.json`](../../schemas/v1/control-revocation.json) | The revocation record (plan Section 7.5 `tenants/<tenant>/v1/control/revocations/<client>/<epoch>.json`): the append-only, epoch-addressed revocation of one client's authorization at one epoch. |
 | [`schemas/v1/control-receipt-key.json`](../../schemas/v1/control-receipt-key.json) | The receipt-key record (`tenants/<tenant>/v1/control/receipt-keys/<key>.json`, plan Section 7.5): the tenant-authority certification of one server receipt-signing key — the authoritative control-prefix source of the certificate embedded in every receipt (plan Section 7.8). |
 | [`schemas/v1/control-authority-rotation.json`](../../schemas/v1/control-authority-rotation.json) | The authority-rotation record (`tenants/<tenant>/v1/control/authority-rotations/<previous_key_id>.json`): the durable chain link that retires one tenant-authority key and establishes its successor — both public halves and the 24-hour signing overlap, signed by the key it retires. |
+| [`schemas/v1/control-retention.json`](../../schemas/v1/control-retention.json) | The retention record (`tenants/<tenant>/v1/control/retention/<occurrence_id>/<epoch>.json`): the tenant-authority's durable retention decision about one stored occurrence — tombstone, legal hold, or release — the append-only event history the plan Section 7.10 deletion workflow runs on. |
 
 Control records are what the control-plane boundary runs on: objects
 below `tenants/<tenant>/v1/control/`, written only by the offline
 `ControlAdminStore` (which can put nothing but validated,
 tenant-authority-signed control objects), read by every ingestion replica
 when it authenticates an uploader, and cacheable for at most 60 seconds
-(plan Section 5). The six record types below are all composed from the
+(plan Section 5). The seven record types below are all composed from the
 same envelope — the decision list is what binds them.
 
 ## The envelope: decisions every record type follows
@@ -87,18 +90,22 @@ them is wrong, not a variation:
    requires publishing another higher-epoch record, never repointing to an
    older one. The epoch is required for current-pointer records and carried
    by immutable types only when it is part of their identity — the
-   revocation and rotation records are the shipped types that do, because
-   their object keys name their epochs, the revoked and the established
+   revocation, rotation, and retention records are the shipped types
+   that do, because
+   their object keys name their epochs, the revoked, the established,
+   and the retention-history epoch
    (the registry's `keyMembers` names the members the store derives each
    type's key from, and the gate proves every one is a required property
    of the shipped record). The receipt-key and authority-rotation
    records are the key-addressed immutables that do not — their
    identities are the certified key ID and the retired authority key ID
    their keys name. Monotonicity is per subject, and a subject is
-   a client or a relation: the linked-client pointer's epoch only
+   a client, a relation, or a stored occurrence: the linked-client
+   pointer's epoch only
    increases, a delegation record's epoch is its (relay, origin)
    relation's own sequence, and the immutable types permanently fix the
-   rungs they name.
+   rungs they name — for the retention record, the rungs of one
+   occurrence's retention history, which no later write reorders.
 6. **One signing construction.** `control-record-v1`: Ed25519 by the tenant
    authority key named by `authority_key_id`, over the RFC 8785
    canonicalization of the complete record object with the
@@ -132,8 +139,10 @@ them is wrong, not a variation:
    record's own identifiers (`tenant_id`; `client_id`; for a delegation
    the relay and origin in order; for a revocation or rotation, the
    epoch its key names; for a receipt-key record, the certified
-   key ID under the pinned derivation; and for an authority-rotation
-   record, the retired authority key ID under the same derivation);
+   key ID under the pinned derivation; for an authority-rotation
+   record, the retired authority key ID under the same derivation; and
+   for a retention record, the occurrence's content identity and the
+   retention-history epoch its key names);
    the store refuses a mismatch and
    any reader can re-make the check. The receipt-key pattern is
    cross-checked against the certificate's documented `objectKey` so the
@@ -181,7 +190,18 @@ them is wrong, not a variation:
     `receiptKeySigningOverlapDays` (7) in the receipt-key record and —
     under the same names, so agreement is plain equality — in the
     certificate definition inside `schemas/v1/ingest-receipt.json`, the
-    one wire-family member of the registry's agreement set.
+    one wire-family member of the registry's agreement set. The seventh
+    constant is the 30-day deletion grace the retention record's
+    tombstone anchors (plan Section 7.10: "wait 30 days"), pinned as
+    `deletionGraceDays` in the envelope registry and in the retention
+    record. It bounds the calendar only, never the decision: a tombstone
+    whose grace has elapsed still deletes nothing while an unreleased
+    hold stands, because the hold, not the clock, is what the reader
+    obeys. Deliberately absent from the retention record is the 60-second
+    cache TTL: the retention record is the one shipped type no ingestion
+    replica reads — the plan's no-delete-route rule keeps the ingest path
+    retention-blind, and its offline readers re-read rather than cache —
+    so there is no online staleness for the constant to bound.
 
 ## The linked-client record
 
@@ -557,6 +577,103 @@ rotation record's overlap, anchored at its `signed_at`): the window is
 anchored by `valid_from`, carried inside the signed bytes, and the
 certification is signed no later than the window opens.
 
+## The retention record
+
+The record publishes one retention decision about one stored occurrence
+(plan Section 7.10: occurrence tombstones, legal holds, and the offline
+deletion workflow that honors them; SEC-007, SEC-008). It lives at
+`tenants/<tenant>/v1/control/retention/<occurrence_id>/<epoch>.json`,
+where the occurrence segment is the manifest's own content identity —
+the `occurrence_id` the occurrence manifest derives and every receipt
+for the same commit re-derives — and the epoch segment is the
+occurrence's retention-history sequence. Retention addresses
+occurrences, never raw blob digests: several occurrences may reference
+one blob (EC-05), which is exactly why the record is per-occurrence and
+the blob-level decision belongs to the workflow that folds every
+referencing occurrence's history (SEC-008).
+
+**One closed action per record, and the state is the fold.** Each
+record carries `retention_action` — `tombstone`, `legal-hold`, or
+`release` — and the current retention state of an occurrence is the
+fold of its records in ascending epoch order: a tombstone marks the
+occurrence scheduled for deletion with the grace anchored at that
+record's `signed_at`, a hold marks deletion barred, a release clears
+the hold and nothing else. There is no current-pointer object and no
+state member, deliberately: retention state is derived, and the
+records are the evidence. Three properties the fold guarantees:
+
+- **Holds override deletion in either order.** A tombstone never
+  clears a hold, so a tombstone written while a hold stands — whatever
+  the epochs say — deletes nothing until the hold is released. The
+  action semantics, not epoch comparison, carry the override.
+- **A tombstone is permanent.** No action un-tombstones: the tombstone
+  is the audit evidence the workflow ran on, and the plan's only route
+  to shorter retention is a policy that still uses "tombstones and
+  reference-safe GC" (plan Section 7.10 revisit trigger).
+- **The default is no records.** An occurrence with no retention
+  history is retained indefinitely (plan Section 7.10), so silence
+  creates neither retention nor deletion — a hold or tombstone exists
+  only where the tenant authority signed one.
+
+**Epoch-addressed and immutable, like the revocation.** One object per
+(occurrence, epoch); the first retention record for an occurrence is
+epoch 1 and every later record strictly increases; an incompatible
+overwrite is rejected outright. The history is append-only evidence —
+each tombstone, hold, and release is its own object, nothing removes
+or rewrites one, and the fold is recomputable from the store alone at
+any later time, which is what makes the deletion workflow's audit
+trail durable. Unlike the client family there is no pointer to bump
+and no authorization to fail: the record's enforcement surface is the
+offline workflow's own read of the store, which is why the record
+carries no propagation bound either.
+
+**The one record type no ingestion replica reads.** The ingestion API
+has no delete route (plan Section 7.10), so the ingest path never
+consults retention state — an uploader is authenticated by the
+linked-client, delegation, rotation, and revocation records exactly as
+before, and a hold or tombstone changes no authorization decision on
+that path. The record's readers are the deletion workflow, the
+auditors who re-verify it, and the quarterly restore drill's evidence,
+and they re-read rather than cache — so this record pins no
+`trustRecordCacheTtlSeconds`, the deliberate non-consumer among the
+seven: the 60-second TTL bounds what an online replica may serve
+stale, and nothing online reads this record to serve stale. The grace
+it does pin is `deletionGraceDays` (30, plan Section 7.10: "wait 30
+days"), anchored at the tombstone's `signed_at` — the calendar bound
+on the workflow, never the decision itself, since a lapsed grace still
+deletes nothing while a hold stands.
+
+**Audit members are evidence, never authorization.** `reason_class` —
+`legal-hold`, `tenant-policy`, `operator-request`, or
+`privacy-request` — records why the action was directed, and
+`audit_identity` names the offline administrator who directed it: a
+bounded principal label, never a network endpoint or hostname (ID-002).
+Neither changes what a record does — enforcement reads
+`retention_action` and nothing else — because a record's force comes
+from the tenant-authority signature, not from who is named inside it.
+Both are still closed or fail-closed as their natures demand: an
+unknown reason token is rejected outright (an audit trail a reader
+cannot interpret is not an audit trail), and the audit identity's
+grammar keeps it bounded and printable. No key material appears
+anywhere in the record — the addressed occurrence contributes a digest,
+not a key (SEC-006).
+
+Structural rules, all cross-checked by the gate:
+
+- **Occurrence-addressed, epoch-addressed, immutable.** One object per
+  (occurrence, epoch); the occurrence segment must equal the record's
+  `occurrence_id` and the epoch segment its `authorization_epoch`, in
+  lowercase canonical hex and canonical decimal respectively, and the
+  tenant segment its `tenant_id` (ID-008, VAL-002).
+- **Closed action and reason enums, fail-closed.** An unknown
+  `retention_action` or `reason_class` fails closed — a reader never
+  guesses whether a record it cannot interpret schedules deletion or
+  bars it; new tokens arrive as in-place enum appends shipped with the
+  readers that understand them, the delegation-state rule.
+- **The grace is a named constant, not a member.** The record carries
+  no expiry; `deletionGraceDays` (30) is read from the envelope
+  registry, pinned in the record schema, and gate-proven equal.
+
 ## Verification
 
 `tools/check-control-schemas.py` proves the family's coherence
@@ -572,30 +689,36 @@ proven (envelope ↔ linked-client, delegation, rotation, receipt-key,
 and authority-rotation TTLs ↔ revocation propagation bound; envelope ↔
 ingest-request window and skew allowance; envelope ↔ linked-client,
 rotation, and authority-rotation overlap; envelope ↔ receipt-key record
-and certificate rotation and overlap),
+and certificate rotation and overlap; envelope ↔ retention record
+deletion grace),
 draft 2020-12 validity, zero-entropy golden linked-client, delegation,
-rotation, revocation, receipt-key, and authority-rotation records — one
+rotation, revocation, receipt-key, authority-rotation, and retention
+records — one
 coherent story: the
 client at epoch 3, its key established by the golden rotation from a
 synthetic previous half, the relay grant presenting that client as
 origin, the revocation of that epoch naming that client's key, the
 receipt-key certification the same pinned authority root signs, window
-spanning exactly the rotation and overlap constants summed, and the
+spanning exactly the rotation and overlap constants summed, the
 authority-rotation link that retires that same root and establishes the
-tenant's successor half, signed by the root it retires — whose key
+tenant's successor half, signed by the root it retires, and the
+retention tombstone the same root signs over one stored occurrence,
+grace anchored at its own `signed_at` — whose key
 IDs are computed by the pinned SHA-256 derivation (the rotation's
 previous and current halves, the receipt key's own half, and the
 authority link's retiring and successor halves) and whose
 object keys are re-derived from their own identifiers, with the
-revocation and rotation keys also checked at the epoch ceiling so the
-18-digit epoch bound and both key grammars are proven in lockstep, the
+revocation, rotation, and retention keys also checked at the epoch
+ceiling so the
+18-digit epoch bound and each key grammar are proven in lockstep, the
 delegation record's withdrawn variant proven valid (the only withdrawal
 a current-pointer shape permits), the receipt-key record and the
 certificate in `ingest-receipt.json` proven one certification statement
 (object-key agreement, member-for-member shape agreement, and the
 golden record's certificate projection validating against the
-certificate definition itself), ninety-four behavioural rejections
-across the six records, and the receipt-key pattern cross-check
+certificate definition itself), one hundred twelve behavioural
+rejections across the seven records, and the receipt-key pattern
+cross-check
 against `ingest-receipt.json`.
 Its `--self-test` proves the rejection paths. The registry layer of the
 same gate — `tools/control-records.toml` two-way agreement with the
@@ -625,10 +748,11 @@ proven.
 - Plan Section 7.5's object-key list still names only the client,
   revocation, and receipt-key control keys. The delegation
   (`delegations/<relay>/<origin>.json`), rotation
-  (`rotations/<client>/<epoch>.json`), and authority-rotation
-  (`authority-rotations/<previous_key_id>.json`) patterns extend that
+  (`rotations/<client>/<epoch>.json`), authority-rotation
+  (`authority-rotations/<previous_key_id>.json`), and retention
+  (`retention/<occurrence_id>/<epoch>.json`) patterns extend that
   list from the envelope registry; the plan's list should gain the
-  three lines as a
+  four lines as a
   documentation follow-up — the plan file was under concurrent edit when
   these records shipped, so the amendment is deliberately not bundled
   with them.

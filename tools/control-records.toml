@@ -91,6 +91,14 @@ object_key = "tenants/<tenant_id>/v1/control/authority-rotations/<previous_key_i
 key_members = ["tenant_id", "previous_key_id"]
 status = "shipped"
 
+[records.retention]
+summary = "The tenant-authority's durable retention decision about one stored occurrence — one closed action per record (tombstone, legal-hold, release), epoch-addressed and immutable like the revocation; the current state of an occurrence is the fold of its records in ascending epoch order, a hold overrides any tombstone, and the default is indefinite retention. The one record type no ingestion replica reads: the ingest path is retention-blind, and the offline deletion workflow re-reads rather than caches."
+write_class = "immutable"
+schema = "schemas/v1/control-retention.json"
+object_key = "tenants/<tenant_id>/v1/control/retention/<occurrence_id>/<authorization_epoch>.json"
+key_members = ["tenant_id", "occurrence_id", "authorization_epoch"]
+status = "shipped"
+
 # ---------------------------------------------------------------------------
 # Named timing constants — each is pinned by the plan sentence it quotes,
 # and the gate proves the quote is verbatim plan text that states this
@@ -140,3 +148,10 @@ value = 7
 unit = "days"
 plan_sections = ["Section 7.8"]
 plan_quote = "with seven days of old/new signing overlap"
+
+[constants.deletionGraceDays]
+summary = "How long deletion waits after an occurrence tombstone; bounds the calendar, never the decision — a tombstone whose grace has elapsed still deletes nothing while an unreleased legal hold stands."
+value = 30
+unit = "days"
+plan_sections = ["Section 7.10"]
+plan_quote = "wait 30 days"

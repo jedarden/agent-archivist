@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:control-retention",
+  "title": "Agent Archivist retention record (archivist.control/v1)",
+  "description": "The tenant-authority-signed record that publishes one retention decision about one stored occurrence (plan Section 7.10: occurrence tombstones, legal holds, and the offline deletion workflow that honors them; requirements SEC-007 and SEC-008). Stored at `tenants/<tenant>/v1/control/retention/<occurrence_id>/<epoch>.json`, written only by the offline ControlAdminStore through the deletion workflow, read by that workflow, by auditors, and by nothing else — the ingestion API has no delete route (plan Section 7.10), so the ingest path never consults retention state and no replica ever loads this record. One closed action per record: `tombstone` schedules the occurrence for deletion and anchors the 30-day grace at its `signed_at`; `legal-hold` bars deletion — a hold overrides any tombstone regardless of which epoch came first; `release` ends the active hold and nothing else. The record is the append-only event history the workflow runs on, by the same three structural axes as the revocation record: epoch-addressed (the object key names the occurrence and the retention-history epoch, so each event is its own object), immutable (an incompatible overwrite is rejected outright, so nothing can rewrite or retract an event), and strictly increasing per occurrence (each event permanently extends the history no later record can reorder). There is no current-pointer object and no state member: the current retention state of an occurrence is the fold of its records in ascending epoch order, and the default — no records at all — is indefinite retention (plan Section 7.10), so silence creates neither retention nor deletion. The flat object is the complete record: the seven wrapper members every immutable control record carries (schemas/v1/control-envelope.json) plus `authorization_epoch` as an identity member — the envelope's write-class rule: an immutable type carries the epoch exactly when it is part of the record's identity, and here it is the history epoch the object key names — plus `occurrence_id`, `retention_action`, `reason_class`, and `audit_identity`, closed with `additionalProperties: false` (docs/notes/control-trust-schemas.md). Public material only: the record carries an occurrence identifier — a SHA-256 digest — and otherwise identifiers, actions, timestamps, and signatures; no key material exists anywhere in it (SEC-006).",
+  "type": "object",
+  "x-archivist": {
+    "namespace": "archivist.control/v1",
+    "namespaceField": "schema",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "canonicalization": "rfc8785",
+    "objectKey": "schemas/v1/control-envelope.json#/$defs/retention-object-key",
+    "writeClass": "immutable",
+    "signature": "control-record-v1 (schemas/v1/control-envelope.json): Ed25519 by the tenant authority named by `authority_key_id` over the RFC 8785 canonicalization of this object with the `authority_signature` member removed. The same construction, key namespace, and verifier core as every other control record; domain separation comes from `record_type`, so a retention record can never be replayed as another control record or the reverse. The signing key is the pinned root or the successor an authority-rotation chain establishes (ID-009) — a retention record is an administrative act of the tenant, and a signature from any other key is not a retention decision.",
+    "epochRule": "This record's `authorization_epoch` is the addressed occurrence's retention-history sequence — not a client authorization epoch and not a pointer guard: retention has no pointer, because the occurrence has no current object to guard, only a history to extend. It equals the object key's epoch segment in canonical decimal without leading zeros (VAL-002), and the envelope holds the member's bound and that grammar in lockstep — 18 digits at the ceiling. The first retention record for an occurrence is epoch 1 and every later record strictly increases; the store accepts a new record only at an epoch higher than every one present at the occurrence's retention prefix. A lost-response retry of identical bytes is the idempotent repair, as with every immutable record — one object per epoch, and an incompatible second write at the same epoch is rejected by the immutable-overwrite rule. Order is the only constraint the sequence carries: gaps are harmless, because state is the fold of the records in epoch order, never a distance between them.",
+    "retentionRule": "The current retention state of an occurrence is the fold of its retention records in ascending epoch order, each mark set by its action and cleared only where stated: `tombstone` marks the occurrence scheduled for deletion, and the plan Section 7.10 grace runs from that record's `signed_at`; `legal-hold` marks a hold standing; `release` clears the hold and nothing else. Three properties the fold guarantees, and the deletion workflow depends on all three. Holds override deletion in either order: a tombstone never clears a hold, so a tombstone written under an active hold — whatever the epochs say — deletes nothing while the hold stands (SEC-007). A tombstone is permanent: no action un-tombstones, because the tombstone is the audit evidence the workflow ran on, and the plan's only route to shorter retention is a policy that still uses 'tombstones and reference-safe GC' (plan Section 7.10 revisit trigger). The default is no records: an occurrence with no retention history is retained indefinitely (plan Section 7.10: raw occurrences, attestations, and blobs default to indefinite retention). A referenced blob becomes collectible only when every occurrence referencing it is tombstoned, every such tombstone's grace has elapsed, and no hold on any of them stands — the shared-blob rule that makes per-occurrence records safe on shared storage (plan Section 7.10; SEC-008; EC-05).",
+    "deletionGraceDays": 30,
+    "offlineReader": "The one shipped record type no ingestion replica reads, and the reason it pins no `trustRecordCacheTtlSeconds`: the 60-second cache TTL bounds how long an online replica may serve a stale trust record, and nothing online reads this record to serve stale. The plan's no-delete-route rule (plan Section 7.10) keeps the ingest path retention-blind — an uploader is authenticated by the linked-client, delegation, rotation, and revocation records exactly as before, and a hold or tombstone changes no authorization decision on that path. The record's readers are the offline deletion workflow and the auditors who re-verify it, and they re-read rather than cache: a hold or release takes effect when the store is next read, with no propagation bound to name, because the workflow's ordering guarantees (grace, two scans, HEAD revalidation) are the workflow's own beads of work, not members of this record.",
+    "privateKey": "no private material exists anywhere in this record — `occurrence_id` is a SHA-256 digest of published occurrence fields, and every other member is an action, a bounded audit label, a timestamp, or a signature (SEC-006, ID-001). The gate's banned-name grammar plus the closed shape leave no member for material to ride in.",
+    "compatibility": "member additions, redefinitions, and new required members are all v2 namespace events — the closed shape is the compatibility rule for control records (docs/notes/control-trust-schemas.md). The only in-place appends this schema tolerates are new tokens inside already-closed enums (record_type in the envelope; retention_action and reason_class here), each shipped together with the readers that understand it — an old workflow fails closed on a new action token and neither tombstones nor releases anything it cannot interpret, which is the plan Section 7.1 rule for security-bearing values, not a compatibility break"
+  },
+  "additionalProperties": false,
+  "required": [
+    "authority_key_id",
+    "authority_signature",
+    "audit_identity",
+    "authorization_epoch",
+    "occurrence_id",
+    "reason_class",
+    "record_kind",
+    "record_type",
+    "retention_action",
+    "schema",
+    "signed_at",
+    "tenant_id"
+  ],
+  "properties": {
+    "schema": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/schema-namespace",
+      "description": "The control trust namespace this record belongs to. Pinned by the shared definition; an unknown namespace fails closed before anything else is read.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "record_type": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/record-type",
+      "const": "retention",
+      "description": "This is a retention record. Narrowed from the envelope's closed record-type enum to a const of this schema's own token, so this file both names and is the type's complete contract.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "record_kind": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/record-kind",
+      "const": "immutable",
+      "description": "The retention record is an immutable record: written once at the epoch-addressed key derived from its own identifiers, never overwritten — the store rejects an incompatible overwrite outright, so the only writer-visible repetition is a lost-response retry of identical bytes (the envelope's writeClasses rule). Immutability plus epoch addressing is what makes the retention history append-only evidence: each tombstone, hold, and release is its own object, no operation removes or rewrites one, and the fold over the history is recomputable from the store alone at any later time — the property that makes the deletion workflow's audit trail durable.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "tenant_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "The tenant whose authority directs this retention decision (plan Section 5). Must equal the tenant segment of the object key — the store derives the key from validated fields and refuses any mismatch (ID-008), and a reader can re-make the check, so a record served under another tenant's prefix is rejected as a cross-tenant forgery, not a naming oddity. A retention decision has no force outside this tenant.",
+      "x-archivist": {
+        "bearing": "identity",
+        "compat": "required-v1"
+      }
+    },
+    "occurrence_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "The stored occurrence this record addresses — the manifest's own deterministic identity (plan Section 7.4; SID-005): the `occurrence_id` the occurrence manifest carries and every receipt for the same commit re-derives, under the common lowercase-hex SHA-256 shape. Retention addresses occurrences, never raw blob digests: several occurrences may reference one blob (EC-05), which is exactly why the record is per-occurrence and the blob-level decision belongs to the workflow that folds every referencing occurrence's history (SEC-008). Must equal the occurrence segment of the object key (VAL-002 cross-field check) — computable from the occurrence manifest's published fields, so the key segment is derived, never chosen (ID-008).",
+      "x-archivist": {
+        "bearing": "identity",
+        "compat": "required-v1"
+      }
+    },
+    "authorization_epoch": {
+      "$ref": "urn:agent-archivist:schema:v1:control-envelope#/$defs/authorization-epoch",
+      "description": "The occurrence's retention-history epoch. Identity member of an immutable record (the envelope's write-class rule): it equals the object key's epoch segment in canonical decimal without leading zeros, and the envelope holds this member's bound and that grammar in lockstep — 18 digits at the ceiling (VAL-002 cross-field checks at the store and at any reader). Signed, so an event cannot be re-dated, re-ordered, or moved to a different occurrence after the fact; the fold that produces current state walks the records in this member's ascending order, and no later write can reorder what an earlier one fixed.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    },
+    "retention_action": {
+      "type": "string",
+      "enum": ["tombstone", "legal-hold", "release"],
+      "description": "The retention event this record publishes — one action per record, the event vocabulary of the plan Section 7.10 deletion workflow. `tombstone`: the occurrence is scheduled for deletion; the grace anchors at this record's `signed_at` and runs for `deletionGraceDays` (30, plan Section 7.10), after which the workflow may collect a referenced blob only when no occurrence referencing it carries an unreleased hold. `legal-hold`: deletion of the occurrence is barred — a hold overrides any tombstone regardless of which epoch came first, and stands until a release supersedes it. `release`: the active hold ends; every earlier record stands — a release lifts a hold, never a tombstone, and no action un-tombstones. Security-bearing: an unknown value fails closed — a reader must never guess whether a retention record it cannot interpret schedules deletion or bars it.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "reason_class": {
+      "type": "string",
+      "enum": ["legal-hold", "tenant-policy", "operator-request", "privacy-request"],
+      "description": "Why the action was directed — audit context, closed so it stays interpretable and bounded. `legal-hold`: a preservation demand — litigation or a regulatory requirement. `tenant-policy`: the tenant's retention policy, the plan Section 7.10 revisit trigger made explicit — a policy that shortens the default must still use tombstones and reference-safe GC. `operator-request`: the offline administrator's direct direction — the plan's deletion workflow itself. `privacy-request`: material ingested in error, superseded, or subject to withdrawal — the transcript-carries-secrets case the redaction pipeline exists to contain (plan Phase 10). Deliberately not security-bearing in effect: enforcement reads `retention_action`, never this member — a record's force is its action, and a mis-typed reason cannot change what the record does, only what the audit says about it. An unknown value fails closed all the same: an audit trail a reader cannot interpret is not an audit trail.",
+      "x-archivist": {
+        "bearing": "provenance",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "audit_identity": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.@_:/-]{0,127}$",
+      "maxLength": 128,
+      "description": "The audit identity of the offline administrator who directed the action — who the audit trail names for the question 'why is this occurrence held or tombstoned' (plan Section 7.10: deletion is an offline administrator workflow). A bounded principal label the operator supplies at write time — an account or role name the tenant defines, never a network endpoint or hostname: the record identifies who directed the action, never where they connected from (ID-002). Evidence, never authorization: the record's force comes from the tenant-authority signature, not from who is named here — an attacker who cannot sign gains nothing by naming an innocent principal, and a mis-typed label cannot change what the record does.",
+      "x-archivist": {
+        "bearing": "provenance",
+        "compat": "required-v1"
+      }
+    },
+    "signed_at": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "UTC time the tenant authority signed this record. For a tombstone this is the anchor of the deletion grace: the plan Section 7.10 workflow may collect a referenced blob no earlier than `deletionGraceDays` (30 — the envelope's named constant, pinned here and proven equal by the gate) after this instant, and only while no unreleased hold stands on any occurrence referencing the blob. For a hold or a release it is audit evidence of when the retention posture changed. The epoch is the logical order of the occurrence's retention history; this is each event's wall-clock context. No expiry is attached and none is needed: a tombstone never lapses, a hold stands until released, and the calendar enters only through the named grace constant — never through a timestamp member.",
+      "x-archivist": {
+        "bearing": "provenance",
+        "compat": "required-v1"
+      }
+    },
+    "authority_key_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id",
+      "description": "Identifier of the tenant authority key that signed this record — the root the clients pinned during linking (ID-009), or the successor an authority-rotation chain establishes. Names which key verifies `authority_signature`; see the envelope's authority-chain rule. A retention decision signed by any other key is not a retention decision — deletion authority is the tenant authority's alone, held by no ingestion replica and no raw-store credential (plan Section 5).",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    },
+    "authority_signature": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/ed25519-signature-hex",
+      "description": "The tenant authority's Ed25519 signature under the control-record-v1 construction (schemas/v1/control-envelope.json): the RFC 8785 canonicalization of this object with this member removed. The one field the authority itself cannot cover, and the reason the occurrence addressed, the action taken, the reason class, the audit identity, and the grace anchor are all tamper-evident — a forged tombstone would have to carry a signature the tenant authority never made, and the offline administrator credential that writes raw data cannot produce one.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1"
+      }
+    }
+  }
+}
