@@ -100,11 +100,29 @@ The script's lanes keep per-change gating cheap:
   writes the versioned `verification-manifest.json` keyed to the evaluated
   commit (see [docs/notes/verification.md](docs/notes/verification.md)).
 
-A missing prerequisite tool is reported as a failure, never skipped: the gate
-does not pass because a scanner was absent. Prerequisites beyond the pinned
-Rust toolchain and `python3` are `gitleaks` (>= 8.19, for `dir` mode and
-redacted findings; see `.gitleaks.toml`) and `cargo-audit`
-(`cargo install cargo-audit --locked`).
+A missing prerequisite is reported as a failure, never skipped — for an
+absent scanner binary and equally for an absent Python package: the gate does
+not pass because a component was missing. Prerequisites beyond the pinned
+Rust toolchain are:
+
+- `python3` plus three PyPI packages the schema gates import:
+  `jsonschema` (>= 4.18, the first release with the `referencing`-based
+  resolver; known-good 4.26.0), `referencing` (imported directly by the
+  schema gates; installed with `jsonschema`), and `cryptography`
+  (known-good 46.0.5; `tools/conformancegen.py` signs and verifies the
+  conformance corpus with it). These imports are function-local inside the
+  tools, so they do not show up in a top-of-file import scan. Debian
+  bookworm's `python3-jsonschema` (4.10) predates the `referencing`-based
+  resolver and its archive does not package `referencing` at all — install
+  from PyPI (a venv or `pip install --user`), not from that distro
+  vintage:
+
+  ```sh
+  python3 -m pip install 'jsonschema>=4.18' 'cryptography>=46'
+  ```
+- `gitleaks` (>= 8.19, for `dir` mode and redacted findings; see
+  `.gitleaks.toml`).
+- `cargo-audit` (`cargo install cargo-audit --locked`).
 
 `unsafe_code` is forbidden, `missing_docs` and the Clippy `pedantic` set warn,
 and the rustdoc build fails on a broken intra-doc link (all configured in the

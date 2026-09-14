@@ -40,7 +40,7 @@
 #
 # Behaviour: aggregates failures rather than aborting on the first one, so a
 # single run reports everything that is wrong. Exits non-zero if any check
-# failed or a prerequisite tool is missing.
+# failed or a prerequisite tool or Python module is missing.
 #
 # Output safety: every check reports names, paths, and identifiers only.
 # Secret-scanning findings are redacted at the source (`gitleaks --redact`),
@@ -106,6 +106,39 @@ require_tool() {
   return 1
 }
 
+# The same rule for the Python packages the schema gates import. These are
+# imported function-locally inside the tools (jsonschema/referencing in the
+# schema validators, cryptography in conformancegen's SigningKey), so a
+# top-of-file import scan misses them and a missing package surfaces as a raw
+# traceback or an "instance validation skipped" degradation instead of a named
+# prerequisite failure — exactly the hollow outcome require_tool prevents for
+# binaries. Known-good versions are recorded in CONTRIBUTING.md.
+require_module() {
+  local module="$1" hint
+  case "$module" in
+    jsonschema)   hint="pip install 'jsonschema>=4.18' (known-good 4.26.0; Debian bookworm's 4.10 predates the referencing resolver); see CONTRIBUTING.md" ;;
+    referencing)  hint="imported directly by the schema gates; ships with jsonschema >= 4.18; see CONTRIBUTING.md" ;;
+    cryptography) hint="pip install 'cryptography>=46' (known-good 46.0.5); see CONTRIBUTING.md" ;;
+    *)            hint="see CONTRIBUTING.md" ;;
+  esac
+  if python3 -c "import ${module}" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "  FAIL prerequisite: python3 module '${module}' is not importable (${hint})"
+  FAILURES+=("prerequisite: python3 ${module}")
+  return 1
+}
+
+# All of MODULE... must be importable; every missing one is reported, so a
+# single run names the whole absent set rather than the first.
+require_modules() {
+  local module ok=0
+  for module in "$@"; do
+    require_module "$module" || ok=1
+  done
+  [ "$ok" -eq 0 ]
+}
+
 # The stub scan is a grep whose SUCCESS is "no matches", so it cannot go
 # through run_check directly.
 stub_scan() {
@@ -166,7 +199,13 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # (tools/control-records.toml) agreeing with the envelope registry,
   # its object-key patterns, and the plan's Section 7.5 layouts and
   # timing sentences; `--self-test` proves the rejection paths.
-  run_check "control trust schemas"  python3 tools/check-control-schemas.py --self-test
+  # The three schema gates below (this one, the conformance corpus, and the
+  # compat corpus) import third-party Python packages, so they are preflighted
+  # with require_modules: without it a missing package degrades the gate into
+  # a traceback or a "validation skipped" note rather than naming the
+  # prerequisite.
+  require_modules jsonschema referencing \
+    && run_check "control trust schemas"  python3 tools/check-control-schemas.py --self-test
   # Threat-model acceptance (docs/security/threat-model.md): the Phase 1
   # exit-gate rule that every finding carries a mitigation or an explicitly
   # accepted risk with a closed-vocabulary owner, the consolidated register
@@ -184,7 +223,8 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # every signature is re-verified by the generator's independent
   # pure-Python Ed25519 verifier and every golden error body is checked
   # against the error-code registry.
-  run_check "conformance corpus"  python3 tools/conformancegen.py --verify
+  require_modules jsonschema referencing cryptography \
+    && run_check "conformance corpus"  python3 tools/conformancegen.py --verify
   # Standalone contract verifier (plan Section 8, Phase 1 exit gate): the
   # verifier re-derives every golden from the normative sources alone
   # (schemas, RFC 8785, RFC 8032), and `compare` requires the Rust
@@ -202,7 +242,8 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # value under both reader generations, and --require-complete fails
   # while any scenario verification is still deferred; `--self-test`
   # proves the rejection paths.
-  run_check "compat corpus"  python3 tools/compatgen.py --verify --require-complete
+  require_modules jsonschema referencing \
+    && run_check "compat corpus"  python3 tools/compatgen.py --verify --require-complete
   run_check "compat policy"  python3 tools/compatgen.py --self-test
   # Requirement-to-verification mapping (docs/notes/verification.md):
   # `check` validates this tree's register (consistency with the
