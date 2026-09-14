@@ -341,4 +341,84 @@ mod tests {
         assert!(!display.contains("/etc/archivist"), "{display}");
         assert!(debug.starts_with("ProtectedReference::file:"));
     }
+
+    /// Every rendered error is context-free (CFG-027, SEC-004): driven
+    /// through real host-state refusals — a missing target, a directory
+    /// target, a loose-mode target, an unknown scheme, a malformed
+    /// reference — the error's Display and Debug output carries neither the
+    /// target path nor any bytes of the target's content. The `env:` mapping
+    /// drops the value by the same rule (`NotUnicode` binds `_`); its static
+    /// messages are pinned by the integration suite's exhaustive variant
+    /// scan. The markers are distinctive so a leak cannot pass by
+    /// coincidence.
+    #[test]
+    fn error_strings_never_carry_the_target_or_the_value() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            const MARKER_SEGMENT: &str = "no-echo-target-3f91c4a7";
+            const MARKER_VALUE: &str = "resolved-value-bytes-8b2e55d0";
+
+            let dir =
+                std::env::temp_dir().join(format!("archivist-ref-noecho-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("temp dir creation");
+            let target = dir.join(MARKER_SEGMENT);
+            let reference = ProtectedReference::parse(&format!("file:{}", target.display()))
+                .expect("generated path matches the grammar");
+
+            // A missing target whose path is distinctive: the refusal must
+            // not name it.
+            let error = reference.resolve().expect_err("target is absent");
+            assert_eq!(error, IdentityError::ReferenceMissing);
+            for rendered in [format!("{error}"), format!("{error:?}")] {
+                assert!(!rendered.contains(MARKER_SEGMENT), "{rendered}");
+                assert!(
+                    !rendered.contains(dir.to_str().expect("utf-8 temp dir")),
+                    "{rendered}"
+                );
+            }
+
+            // A directory target whose path is distinctive: refused as
+            // unsafe, never named.
+            std::fs::create_dir(&target).expect("plant directory target");
+            let error = reference.resolve().expect_err("target is a directory");
+            assert_eq!(error, IdentityError::ReferenceUnsafe);
+            for rendered in [format!("{error}"), format!("{error:?}")] {
+                assert!(!rendered.contains(MARKER_SEGMENT), "{rendered}");
+            }
+
+            // A loose-mode regular file whose content is distinctive: the
+            // mode check refuses before a byte is read, and neither the
+            // path nor the unread value may appear.
+            std::fs::remove_dir(&target).expect("replace with a file");
+            std::fs::write(&target, MARKER_VALUE).expect("plant loose target");
+            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644))
+                .expect("loosen mode");
+            let error = reference.resolve().expect_err("mode is 0644");
+            assert_eq!(error, IdentityError::ReferenceUnsafe);
+            for rendered in [format!("{error}"), format!("{error:?}")] {
+                assert!(!rendered.contains(MARKER_SEGMENT), "{rendered}");
+                assert!(!rendered.contains(MARKER_VALUE), "{rendered}");
+            }
+
+            // A reference outside the grammar: the refusal echoes nothing of
+            // the rejected input, whatever it carried.
+            for malformed in [
+                format!("secret:{MARKER_VALUE}"),
+                format!("file:relative/{MARKER_SEGMENT}"),
+            ] {
+                let error = ProtectedReference::parse(&malformed).expect_err("outside the grammar");
+                assert_eq!(error, IdentityError::ReferenceGrammar);
+                for rendered in [format!("{error}"), format!("{error:?}")] {
+                    assert!(!rendered.contains(MARKER_SEGMENT), "{rendered}");
+                    assert!(!rendered.contains(MARKER_VALUE), "{rendered}");
+                }
+            }
+
+            let _ = std::fs::remove_file(&target);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
 }
