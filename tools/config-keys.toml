@@ -12,6 +12,10 @@
 # Every entry carries an example that validates as the key's type. Secret
 # keys are type reference, end in _ref, and expose no flag tier; their
 # examples are well-formed references, never literal values (CFG-032).
+#
+# A secret reference a deployment MAY omit declares `optional = true`
+# (CFG-019): neither a default nor required, absent from every tier it
+# resolves to nothing, and supplied it validates like any reference.
 
 schema = "archivist.config-registry/v1"
 
@@ -168,6 +172,24 @@ secret = true
 required = true
 description = "Reference to credentials limited to control-prefix reads; a separate identity from raw writes."
 example = "file:/etc/archivist/storage/control-read-credentials"
+
+[keys."storage.raw_read_credentials_ref"]
+owner = "archivist-storage-s3"
+type = "reference"
+tiers = ["env", "file"]
+secret = true
+optional = true
+description = "Optional reference to credentials limited to raw-prefix reads (STO-007 preflight); present only when a deployment grants the preflight reader."
+example = "file:/etc/archivist/storage/raw-read-credentials"
+
+[keys."storage.offline_restore_credentials_ref"]
+owner = "archivist-storage-s3"
+type = "reference"
+tiers = ["env", "file"]
+secret = true
+optional = true
+description = "Optional reference to the offline identity backup and restore use; present only when a deployment deliberately grants offline restore."
+example = "file:/etc/archivist/storage/offline-restore-credentials"
 
 # ---------------------------------------------------------------------------
 # Ingestion server (plan Phase 4) — owner archivist-server

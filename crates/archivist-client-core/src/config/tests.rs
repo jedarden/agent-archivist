@@ -119,11 +119,27 @@ fn defaults_apply_and_typed_accessors_resolve() {
     // An enum default resolves through the same text grammar.
     assert_eq!(config.text("storage.path_style"), Some("path"));
     assert_eq!(config.text("storage.encryption"), Some("s3_sse"));
-    // Every registered key resolved exactly once.
+    // Every registered key with a defined resolution resolved exactly
+    // once; the optional credential references are deliberately absent,
+    // which is the empty resolution their optionality pins (CFG-019).
+    let optional_count = registry::config_registry()
+        .keys()
+        .iter()
+        .filter(|key| key.optional())
+        .count();
     assert_eq!(
         config.iter().count(),
-        registry::config_registry().keys().len(),
-        "one resolved value per registered key"
+        registry::config_registry().keys().len() - optional_count,
+        "one resolved value per non-optional registered key"
+    );
+    assert!(
+        config.reference("storage.raw_read_credentials_ref").is_none(),
+        "an optional reference absent from every tier resolves to nothing"
+    );
+    assert!(
+        config
+            .reference("storage.offline_restore_credentials_ref")
+            .is_none()
     );
     assert_eq!(
         config
@@ -560,6 +576,26 @@ fn secrets_may_arrive_through_the_file_tier() {
         config.value("storage.raw_write_credentials_ref"),
         Some(ResolvedValue::Reference(_))
     ));
+}
+
+#[test]
+fn an_optional_reference_resolves_when_supplied_and_nothing_when_absent() {
+    // Supplied through the environment tier, an optional reference is an
+    // ordinary resolved reference.
+    let granted = base_sources().env(
+        "ARCHIVIST_STORAGE_RAW_READ_CREDENTIALS_REF",
+        "env:TEST_RAW_CREDENTIAL",
+    );
+    let config = granted.load().expect("supplied optional reference");
+    assert!(matches!(
+        config.value("storage.raw_read_credentials_ref"),
+        Some(ResolvedValue::Reference(_))
+    ));
+    // Absent from every tier it resolves to nothing — never a
+    // decision-missing failure, which is reserved for required keys.
+    let omitted = base_sources();
+    let config = omitted.load().expect("omitted optional reference");
+    assert!(config.reference("storage.raw_read_credentials_ref").is_none());
 }
 
 // --- required keys and the stable error surface ---------------------------

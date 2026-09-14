@@ -1,6 +1,6 @@
 # Agent Archivist configuration conventions
 
-Status: accepted baseline · Last updated: 2026-09-11
+Status: accepted baseline · Last updated: 2026-09-14
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are
 to be interpreted as described by RFC 2119 and RFC 8174 when they appear in bold.
@@ -141,11 +141,20 @@ and one of the two is wrong and must be fixed in the same commit.
 
 ## 5. Defaults and required keys
 
-- **CFG-019** — Every key declares exactly one of a `default` or
-  `required = true` — never both, never neither. Defaults live only in the
-  registry; documentation, examples, and code quote the registry and are not
-  a second source. The gate is the proof that the sentence "every key has a
-  defined resolution" is true.
+- **CFG-019** — Every key declares exactly one of a `default`,
+  `required = true`, or `optional = true` — never more than one, never
+  none. `optional = true` is the one way a key resolves to nothing when
+  absent from every tier, and only a secret reference may declare it
+  (CFG-028): any other type expresses optionality as a default, while a
+  secret is never defaulted, so an omitted credential role — the storage
+  raw-reader (STO-007 preflight) and offline-restore identities, for
+  example — would otherwise be inexpressible. Absent, the capability does
+  not exist and no failure is reported (CFG-020 is a required-key rule);
+  present, the reference validates by the ordinary rules (CFG-013,
+  CFG-029). Defaults live only in the registry; documentation, examples,
+  and code quote the registry and are not a second source. The gate is the
+  proof that the sentence "every key has a defined resolution" is true —
+  where resolution now includes the deliberate empty result.
 - **CFG-020** — A required key missing from every tier is a usage error: in
   non-interactive mode, exit 64 with `cli.decision_missing` naming the field;
   in interactive mode a non-secret required key **MAY** prompt. A secret
@@ -239,10 +248,11 @@ and one of the two is wrong and must be fixed in the same commit.
   [`tools/config-keys.toml`](../../tools/config-keys.toml) under schema
   `archivist.config-registry/v1`. Its shape is closed: unknown top-level or
   per-key keys are rejected by the gate. Every entry carries `owner`,
-  `type`, `tiers`, `secret`, exactly one of `default`/`required`, a bounded
-  one-line `description`, and an `example` value that **MUST** validate as
-  the key's type — examples are checked data, not decoration, which is what
-  makes CFG-032 enforceable in examples by machine.
+  `type`, `tiers`, `secret`, exactly one of `default`/`required`/`optional`
+  (CFG-019), a bounded one-line `description`, and an `example` value that
+  **MUST** validate as the key's type — examples are checked data, not
+  decoration, which is what makes CFG-032 enforceable in examples by
+  machine.
 - **CFG-034** — Within registry v1, keys are append-only. Renaming or
   deleting a key, changing its type, owner, tiers, secretness, bounds, enum
   values, default, or required-ness is a v2 event. Marking a key
@@ -269,7 +279,8 @@ and one of the two is wrong and must be fixed in the same commit.
   known defects — a secret without the `_ref` suffix, a reference exposed as
   a flag, literal-looking example values, reserved-namespace and non-absolute
   references, float and out-of-bounds defaults, unitless integers, derived
-  name collisions, enum drift — and writes sandbox files carrying literal
+  name collisions, enum drift, an `optional` flag on a non-secret,
+  defaulted, or required key — and writes sandbox files carrying literal
   `*_ref` assignments; it fails unless every one is rejected. The rejection
   paths are tested, not assumed.
 - **CFG-038** — Runtime tests that follow (the Phase 4/5/6 configuration,

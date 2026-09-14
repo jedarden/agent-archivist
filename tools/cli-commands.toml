@@ -136,6 +136,8 @@ keys = [
   "storage.control_bucket",
   "storage.raw_write_credentials_ref",
   "storage.control_read_credentials_ref",
+  "storage.raw_read_credentials_ref",
+  "storage.offline_restore_credentials_ref",
 ]
 
 # ---------------------------------------------------------------------------

@@ -17,8 +17,8 @@
 //! (the committed registries are gate-clean and the embedding cannot
 //! drift), so the accessors treat a parse failure as the programming
 //! error it is. The runtime parse still re-validates shape — schema
-//! token, closed attribute set, exactly one of default/required — as
-//! defense in depth behind the gate.
+//! token, closed attribute set, exactly one of default/required/optional
+//! — as defense in depth behind the gate.
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -172,6 +172,7 @@ pub struct KeyDefinition {
     file_tier: bool,
     secret: bool,
     required: bool,
+    optional: bool,
     default: Option<RegistryValue>,
     description: Box<str>,
     #[allow(dead_code)] // carried for completeness; no v1 behavior reads it
@@ -221,10 +222,19 @@ impl KeyDefinition {
         self.secret
     }
 
-    /// Whether the key is required rather than defaulted.
+    /// Whether the key is required rather than defaulted or optional.
     #[must_use]
     pub const fn required(&self) -> bool {
         self.required
+    }
+
+    /// Whether the key is an optional secret reference a deployment may
+    /// omit: neither required nor defaulted (CFG-019). Absent from every
+    /// tier it resolves to nothing; supplied, it validates like any
+    /// reference.
+    #[must_use]
+    pub const fn optional(&self) -> bool {
+        self.optional
     }
 
     /// The declared default, when the key has one.
@@ -453,8 +463,8 @@ fn parse_config_registry(text: &str) -> Result<KeyRegistry, &'static str> {
 }
 
 /// Parse and shape-check one registry entry (CFG-033's closed attribute
-/// set; the exactly-one-of default/required rule; the secret/tier
-/// conjunctions).
+/// set; the exactly-one-of default/required/optional rule; the
+/// secret/tier conjunctions).
 fn parse_key_entry(name: &str, table: &TomlTable) -> Result<KeyDefinition, &'static str> {
     for attribute in table.iter().map(|(member, _)| member) {
         if !matches!(
@@ -465,6 +475,7 @@ fn parse_key_entry(name: &str, table: &TomlTable) -> Result<KeyDefinition, &'sta
                 | "secret"
                 | "default"
                 | "required"
+                | "optional"
                 | "description"
                 | "example"
                 | "values"
@@ -490,7 +501,15 @@ fn parse_key_entry(name: &str, table: &TomlTable) -> Result<KeyDefinition, &'sta
         ),
         None => None,
     };
-    if default.is_some() == required {
+    let optional = table
+        .get("optional")
+        .and_then(TomlValue::as_scalar)
+        .and_then(Scalar::as_boolean)
+        .unwrap_or(false);
+    if optional && (default.is_some() || required) {
+        return Err("an optional key carries neither a default nor required");
+    }
+    if !optional && default.is_some() == required {
         return Err("config-key must declare exactly one of default and required");
     }
     let tiers = text_array_attribute(table, "tiers")?;
@@ -502,6 +521,9 @@ fn parse_key_entry(name: &str, table: &TomlTable) -> Result<KeyDefinition, &'sta
     let env_tier = tiers.iter().any(|tier| tier.as_ref() == "env");
     if secret && flag_tier {
         return Err("a secret key never exposes a flag tier");
+    }
+    if optional && !secret {
+        return Err("only a secret reference key may be optional");
     }
     let key_type = match type_token {
         "boolean" => KeyType::Boolean,
@@ -532,6 +554,7 @@ fn parse_key_entry(name: &str, table: &TomlTable) -> Result<KeyDefinition, &'sta
         file_tier,
         secret,
         required,
+        optional,
         default,
         description: text_attribute(table, "description")?.into(),
         deprecated,
@@ -642,12 +665,14 @@ mod tests {
     #[test]
     fn embedded_config_registry_parses() {
         let registry = config_registry();
-        assert!(registry.keys().len() >= 27, "the v1 surface has 27 keys");
+        assert!(registry.keys().len() >= 29, "the v1 surface has 29 keys");
         for key in registry.keys() {
             assert_eq!(
-                key.default().is_some(),
-                !key.required(),
-                "{}: exactly one of default and required",
+                u8::from(key.default().is_some())
+                    + u8::from(key.required())
+                    + u8::from(key.optional()),
+                1,
+                "{}: exactly one of default, required, and optional",
                 key.name()
             );
             assert!(key.file_tier(), "{}: file tier is universal", key.name());
@@ -691,6 +716,17 @@ mod tests {
                 .key("storage.raw_write_credentials_ref")
                 .is_some_and(|key| key.secret() && key.required())
         );
+        // The optional roles the storage crate maps but a deployment may
+        // omit: registered secret references that are neither required
+        // nor defaulted (CFG-019).
+        for name in [
+            "storage.raw_read_credentials_ref",
+            "storage.offline_restore_credentials_ref",
+        ] {
+            let key = registry.key(name).unwrap_or_else(|| panic!("{name} must be registered"));
+            assert!(key.secret() && key.optional() && !key.required());
+            assert!(!key.flag_tier());
+        }
     }
 
     #[test]

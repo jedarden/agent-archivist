@@ -142,8 +142,8 @@ satisfy the [metrics conventions](docs/notes/metrics.md); it rejects
 correlation, content, and location labels outright and fails the build if
 two signals would export under one Prometheus family name. The configuration-key registry gate
 requires every deployment-settable setting to be an appended entry in
-`tools/config-keys.toml` whose name, owner, type, tiers, default, and
-secret-reference spelling satisfy the
+`tools/config-keys.toml` whose name, owner, type, tiers,
+default/required/optional resolution, and secret-reference spelling satisfy the
 [configuration conventions](docs/notes/configuration.md); it also rejects
 committed configuration-bearing files that assign a literal value to a
 `*_ref` setting, so examples and fixtures carry references only. The

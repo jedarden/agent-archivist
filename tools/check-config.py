@@ -11,8 +11,8 @@ Validates ``tools/config-keys.toml`` against the conventions in
    the derivation is injective by construction;
 3. every key is owned by a workspace crate, carries a closed type, a
    non-empty tier list that includes the file tier, and a bounded
-   description and example; exactly one of a default or ``required`` is
-   declared;
+   description and example; exactly one of a default, ``required``, or
+   (secret references only) ``optional`` is declared;
 4. integer keys carry a unit suffix (``_bytes``, ``_seconds``,
    ``_percent``, ``_count``, ``_ratio``) and defaults/examples respect the
    suffix bounds — there are no float values anywhere;
@@ -100,7 +100,8 @@ PROSE_MAX = 200
 
 KEYS_REQUIRED = frozenset({"owner", "type", "tiers", "secret", "description",
                            "example"})
-KEYS_OPTIONAL = frozenset({"default", "required", "values", "deprecated"})
+KEYS_OPTIONAL = frozenset({"default", "required", "values", "deprecated",
+                           "optional"})
 
 # --- working-tree scan (CFG-032) ---------------------------------------------
 #
@@ -299,11 +300,26 @@ def validate_registry(registry: dict) -> list[str]:
 
         has_default = "default" in declared
         has_required = declared.get("required") is True
+        has_optional = declared.get("optional") is True
+        if "optional" in declared:
+            if not isinstance(declared["optional"], bool):
+                errors.append(f"{what} declares optional = "
+                              f"{declared['optional']!r}; optional is a "
+                              "boolean")
+            elif not has_optional:
+                errors.append(f"{what} declares optional = false; the "
+                              "attribute is either optional = true or "
+                              "omitted")
         if has_default and has_required:
             errors.append(f"{what} declares both a default and required")
-        if not has_default and not has_required:
-            errors.append(f"{what} declares neither a default nor "
-                          "required = true")
+        if has_optional and has_default:
+            errors.append(f"{what} declares both a default and optional; "
+                          "an optional key carries neither")
+        if has_optional and has_required:
+            errors.append(f"{what} declares both optional and required")
+        if not has_default and not has_required and not has_optional:
+            errors.append(f"{what} declares neither a default, nor "
+                          "required = true, nor optional = true")
         if "required" in declared and declared["required"] is not True:
             errors.append(f"{what} declares required = "
                           f"{declared['required']!r}; the key is either "
@@ -354,6 +370,10 @@ def validate_registry(registry: dict) -> list[str]:
             if secret and has_default:
                 errors.append(f"{what} is secret with a default; secrets "
                               "are required, never defaulted")
+            if has_optional and not secret:
+                errors.append(f"{what} declares optional but is not secret; "
+                              "optionality exists for credential "
+                              "references a deployment may omit")
 
         tiers = declared.get("tiers")
         if not isinstance(tiers, list) or not tiers:
@@ -471,6 +491,16 @@ SELF_TEST_CASES: list[tuple[str, bool, object]] = [
     ("secret key carrying a default",
      True, ("key", "storage.raw_write_credentials_ref", "default",
             "file:/etc/archivist/storage/raw-write-credentials")),
+    ("optional flag on a non-secret key",
+     True, ("key", "client.state_dir", "optional", True)),
+    ("optional flag alongside required",
+     True, ("key", "storage.raw_write_credentials_ref", "optional", True)),
+    ("optional flag alongside a default",
+     True, ("key", "spool.max_bytes", "optional", True)),
+    ("explicit optional = false",
+     True, ("key", "storage.raw_read_credentials_ref", "optional", False)),
+    ("non-boolean optional flag",
+     True, ("key", "storage.raw_read_credentials_ref", "optional", "yes")),
     ("literal-looking example for a secret key",
      True, ("key", "storage.raw_write_credentials_ref", "example",
             "not-a-reference-value")),
@@ -670,9 +700,11 @@ def main(argv: list[str]) -> int:
     secrets = sum(1 for k in keys.values() if k.get("secret") is True)
     required = sum(1 for k in keys.values()
                    if k.get("required") is True)
+    optional = sum(1 for k in keys.values()
+                   if k.get("optional") is True)
     print(f"agent-archivist configuration registry: {REGISTRY_SCHEMA}")
     print(f"keys: {len(keys)} ({secrets} secret references, "
-          f"{required} required)")
+          f"{required} required, {optional} optional)")
     print("OK: registry and working tree satisfy docs/notes/configuration.md")
     return 0
 
