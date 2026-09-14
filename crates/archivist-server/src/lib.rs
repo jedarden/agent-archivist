@@ -22,15 +22,24 @@
 //! settings as typed values and assembles them through a fail-closed
 //! builder that performs no I/O and creates no durable local state.
 //!
-//! The rest of the Phase 4 bootstrap surface — validated trust anchors,
-//! the shared replica state with its readiness ledger, the registered
-//! metrics families and their exposition, the four routes, and
-//! cancellation-aware startup and graceful shutdown — lands module by
-//! module, each with its `mod` declaration; the ingestion pipeline
-//! (bounded parsing, authorization, and validation middleware, streaming
-//! envelope validation, the blob → occurrence → attestation commit order,
-//! signed receipts) arrives on those contracts. Until then this crate
-//! contributes configuration only.
+//! The **trust anchors** and the **shared replica state with its readiness
+//! ledger** are implemented: [`trust`] pins, per served tenant, the one
+//! authority key whose signatures count as that tenant's control-plane
+//! voice, validated fail-closed before a replica can start; [`state`]
+//! composes the validated configuration, the anchor set, and the two
+//! storage identities into the value every handler shares, and carries
+//! [`state::ReadinessTracker`], the per-tenant trust-evidence ledger that
+//! starts not-ready, expires evidence after 60 seconds, and holds no
+//! durable local state.
+//!
+//! The rest of the Phase 4 bootstrap surface — the registered metrics
+//! families and their exposition, the four routes, and cancellation-aware
+//! startup and graceful shutdown — lands module by module, each with its
+//! `mod` declaration; the ingestion pipeline (bounded parsing,
+//! authorization, and validation middleware, streaming envelope
+//! validation, the blob → occurrence → attestation commit order, signed
+//! receipts) arrives on those contracts. Until then this crate contributes
+//! configuration, trust anchors, and replica state only.
 //!
 //! # Dependency boundary
 //!
@@ -40,3 +49,5 @@
 //! client engine or any source adapter.
 
 pub mod config;
+pub mod state;
+pub mod trust;
