@@ -23,7 +23,10 @@
 //! as well; see [`config`]. The crash-safe spool — mode-`0600` bundle
 //! materialization, atomic rename, commit-after-rename ordering, and the
 //! startup reconciliation pass — arrived with Phase 5 too; see [`spool`].
-//! The remaining surfaces are still the Phase 0
+//! The source backlog inventory — complete outstanding bytes and events per
+//! source, cursors retained in front of uncaptured ranges, and bounded
+//! adapter/account status — arrived with Phase 5 alongside them; see
+//! [`inventory`]. The remaining surfaces are still the Phase 0
 //! skeleton and deliberately contain no placeholder production code.
 //!
 //! # Dependency boundary
@@ -33,5 +36,6 @@
 //! harness adapter.
 
 pub mod config;
+pub mod inventory;
 pub mod spool;
 pub mod state;
