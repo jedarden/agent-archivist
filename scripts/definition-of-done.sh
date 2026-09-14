@@ -11,7 +11,8 @@
 #     command registry gate,
 #     release container baseline gate, control trust schema gate,
 #     threat-model acceptance gate,
-#     synthetic-fixture, conformance-corpus, and compat-corpus
+#     synthetic-fixture, conformance-corpus, compat-corpus, and
+#     inference-corpus
 #     regeneration and content scan,
 #     the standalone contract verifier and its cross-implementation
 #     comparison against the Rust implementation (the plan Section 8
@@ -245,6 +246,13 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   require_modules jsonschema referencing \
     && run_check "compat corpus"  python3 tools/compatgen.py --verify --require-complete
   run_check "compat policy"  python3 tools/compatgen.py --self-test
+  # Exact-inference example corpus (docs/notes/exact-inference-schemas.md):
+  # byte-exact regeneration of the twelve golden artifacts across the
+  # single/retried/streamed scenarios, schema validation of every record,
+  # the reserved-name and closed-metadata-allowlist negative matrices, and
+  # the ordering/reconstruction invariants recomputed from the pinned bytes.
+  require_modules jsonschema referencing \
+    && run_check "inference corpus"  python3 tools/inferencegen.py --verify
   # Requirement-to-verification mapping (docs/notes/verification.md):
   # `check` validates this tree's register (consistency with the
   # requirements document plus the located-check rule for anything marked

@@ -1,0 +1,379 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:inference-artifact",
+  "title": "Agent Archivist exact-inference artifact (inference_artifact_version 1)",
+  "description": "The durable record for one exact-inference capture (plan Phase 9; CAP-008): one artifact per observed provider-boundary event — a decoded provider request, a decoded provider response, one ordered decoded streaming event, a retry decision, a usage report, or a transport error. Bytes are captured at the proxy/SDK hook boundary AFTER HTTP transfer decoding: request and response payload bytes are the transferred content, never TLS/TCP framing, never transfer-encoding framing. Every field the HTTP boundary exposed travels only inside the closed `metadata` allowlist (content type, provider request ID, HTTP status, rate-limit metadata, usage counters); the record's own members are archivist-constructed provenance. The record always excludes authorization, cookies, and provider credentials by name (the reserved list), and it never carries TLS framing or a storage-location name: content is referenced by digest only. Correlation identifiers (`trace_id`, `inference_request_id`, `provider_attempt_id`) join attempts to the expected-inference ledger and to orchestrator attempts and are never inputs to any digest or storage key — the payload digest is the plain SHA-256 of the captured bytes and nothing else (plan Phase 9: joined 'without putting any of them in the blob identity'). Captured once at the boundary, the record is byte-stable: an upload retry of a spooled artifact rewrites identical bytes rather than adding a second record.",
+  "type": "object",
+  "x-archivist": {
+    "mediaType": "application/vnd.agent-archivist.inference-artifact+json;version=1",
+    "canonicalization": "rfc8785",
+    "floats": false,
+    "unknownFields": "retain-ignore",
+    "captureBoundary": "plan Phase 9: payload bytes are captured at the proxy/SDK hook boundary after HTTP transfer decoding — never TLS/TCP framing, never transfer-encoding framing; a failure below the decoded-content boundary is a transport-error record carrying an error class, never framing bytes",
+    "blobIdentity": "content-addressed: the payload digest is the plain SHA-256 of the captured bytes (the one label-less digest, per schemas/v1/ingest-identifiers.json). trace_id, inference_request_id, provider_attempt_id, and every other correlation or provenance field are record members only and are never inputs to any digest or storage key (plan Phase 9 correlation rule)",
+    "metadataAllowlist": "closed: `metadata` rejects every name outside the allowlist outright. A new metadata entry is a new schema major (v2), never an additive v1 field — the closure is the boundary that keeps header and body material from drifting into archive metadata (plan Section 11: provider credentials must never become archive metadata)",
+    "reservedFields": [
+      "access_token",
+      "alpn",
+      "api_key",
+      "api_token",
+      "authorization",
+      "authorization_epoch",
+      "authorization_key_id",
+      "authorization_timestamp",
+      "bearer_token",
+      "blob_key",
+      "blob_url",
+      "certificate",
+      "certificate_chain",
+      "cipher_suite",
+      "client_certificate",
+      "client_secret",
+      "cookie",
+      "credential",
+      "endpoint",
+      "ip_packet",
+      "object_key",
+      "password",
+      "private_key",
+      "proxy_authorization",
+      "refresh_token",
+      "request_id",
+      "secret",
+      "session_token",
+      "set_cookie",
+      "signature",
+      "signature_algorithm",
+      "storage_path",
+      "tcp_segment",
+      "tls_handshake",
+      "tls_record",
+      "tls_session_ticket",
+      "tls_version",
+      "transport_encoding",
+      "upload_url",
+      "uri",
+      "url",
+      "www_authenticate",
+      "x_api_key"
+    ]
+  },
+  "required": [
+    "artifact_kind",
+    "attempt_ordinal",
+    "inference_request_id",
+    "inference_artifact_version",
+    "origin_client_id",
+    "provider_attempt_id",
+    "tenant_id",
+    "trace_id"
+  ],
+  "properties": {
+    "inference_artifact_version": {
+      "const": 1,
+      "description": "Exact-inference artifact schema major version (plan Section 7.1 version axis; this family's own axis, independent of occurrence/attestation/episode versions). Integer, currently 1; readers retain old-version support. New optional record members land inside v1; new required members, redefined members, a new `metadata` allowlist entry, a new closed-enum value, or changed correlation rules require v2.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+    },
+    "artifact_kind": {
+      "type": "string",
+      "enum": [
+        "provider-request",
+        "provider-response",
+        "streaming-event",
+        "retry",
+        "usage",
+        "transport-error"
+      ],
+      "description": "Which provider-boundary event this record is (plan Phase 9 artifact kinds, in the plan's order). `provider-request` and `provider-response` carry one decoded HTTP body each; `streaming-event` carries one ordered decoded event of a streamed attempt; `retry` records that a further transport attempt was started and why; `usage` carries the bounded usage counters the boundary extracted from a response body or stream event; `transport-error` records a failure that produced no decodable provider response. Identity-bearing: the kind is the interpretive frame for every other member, so an unknown value fails closed.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1", "failClosed": true }
+    },
+    "tenant_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "Issuer-created tenant identifier (plan Section 7.4), same grammar and scoping role as in the raw provenance family: exact-inference capture lives inside the tenant's archive, and cross-tenant writes are denied before any storage key is derived (SEC-003).",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "origin_client_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "The linked installation whose proxy or SDK hook captured the boundary (plan Phase 9 hook route). Capture provenance, not upload provenance: who later presents the spooled artifact for ingest is wire material and never rewrites this field.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "trace_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v7",
+      "description": "UUIDv7 identifier of the orchestrator operation (plan Phase 9). Correlation only: never an input to any digest or storage key.",
+      "x-archivist": { "bearing": "correlation", "compat": "required-v1" }
+    },
+    "inference_request_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v7",
+      "description": "UUIDv7 identifier of the logical inference — one orchestrator request that may span several transport attempts (plan Phase 9). Groups this artifact with its siblings; the expected-inference ledger (plan Phase 9) freezes the matching expectation before route selection. Correlation only: never an input to any digest or storage key.",
+      "x-archivist": { "bearing": "correlation", "compat": "required-v1" }
+    },
+    "provider_attempt_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v7",
+      "description": "UUIDv7 identifier of the one transport attempt this artifact belongs to (plan Phase 9: one per transport attempt). Every artifact of an attempt shares it, so retry and stream ordering are reconstructable without merging two provider attempts. Correlation only: never an input to any digest or storage key.",
+      "x-archivist": { "bearing": "correlation", "compat": "required-v1" }
+    },
+    "attempt_ordinal": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+      "description": "Zero-based ordinal of the transport attempt within the logical inference, dense and increasing (attempt 0 is the first wire attempt). Reconstructs retry order even when UUIDv7 clocks are unreadable; `provider_attempt_id` remains the identity. Correlation only.",
+      "x-archivist": { "bearing": "correlation", "compat": "required-v1" }
+    },
+    "capture_time": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "Optional UTC time the boundary captured these bytes (plan Section 5 timing rule: RFC 3339 UTC, local time is a display choice). Omitted — never null — when the boundary cannot clock the event, e.g. a transport error with no readable monotonic-to-wall mapping. Frozen at capture, so an upload retry reproduces identical bytes.",
+      "x-archivist": { "bearing": "provenance", "compat": "optional-additive-v1" }
+    },
+    "payload": {
+      "type": "object",
+      "required": ["payload_digest", "payload_size"],
+      "properties": {
+        "payload_digest": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+          "description": "SHA-256 of the captured payload bytes — the decoded content exactly as the boundary saw it, one byte per byte. The one label-less digest (a plain content digest, per schemas/v1/ingest-identifiers.json): identical bytes deduplicate to one stored blob, and no correlation field is folded in.",
+          "x-archivist": { "bearing": "security", "compat": "required-v1" }
+        },
+        "payload_size": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "minimum": 1,
+          "description": "Size in bytes of the captured payload, at least 1: the member is present only when at least one byte was captured, so an empty body is the member's absence, never a zero entry.",
+          "x-archivist": { "bearing": "structural", "compat": "required-v1" }
+        }
+      },
+      "description": "The captured bytes, when any were: the decoded request body (`provider-request`), the decoded response body (`provider-response`), one decoded stream event (`streaming-event`), or the bytes of the event that reported usage (`usage`, optional). Absent for `retry` and for `transport-error` unless partial bytes were captured before the failure (e.g. a stream interrupted mid-body). Carries the bytes by digest and size only — never a storage location (the reserved list rejects those names; the storage layout is decided with the normative protocol contract, not here).",
+      "x-archivist": { "compat": "optional-additive-v1" }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "content_type": {
+          "type": "string",
+          "pattern": "^[ -~]{1,256}$",
+          "maxLength": 256,
+          "description": "Media type the boundary observed for these bytes (request Content-Type or response Content-Type), retained verbatim including parameters. Printable ASCII, at most 256 bytes, no control characters.",
+          "x-archivist": { "bearing": "provenance", "compat": "optional-additive-v1" }
+        },
+        "provider_request_id": {
+          "type": "string",
+          "pattern": "^[ -~]{1,256}$",
+          "maxLength": 256,
+          "description": "The provider's own request identifier as the boundary observed it (for example an `x-request-id`-style response header). Printed opaque: bounded printable ASCII, retained verbatim, never matched against a grammar the provider did not declare.",
+          "x-archivist": { "bearing": "correlation", "compat": "optional-additive-v1" }
+        },
+        "http_status": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "minimum": 100,
+          "maximum": 599,
+          "description": "HTTP status code of the response, when a response status line was decoded. Transport outcome metadata: required to interpret rate-limit metadata and retry decisions, and never provider content (the response body is the `provider-response` artifact's payload, not here).",
+          "x-archivist": { "bearing": "provenance", "compat": "optional-additive-v1" }
+        },
+        "rate_limit_limit": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Provider rate-limit window allowance, as a non-negative integer, normalized from the boundary's rate-limit metadata (the `limit` half of the IETF ratelimit headers and their provider-specific equivalents). Values the provider does not report as integers stay out of the archive; the raw bytes, when captured, remain in the payload.",
+          "x-archivist": { "bearing": "provenance", "compat": "optional-additive-v1" }
+        },
+        "rate_limit_remaining": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Provider rate-limit remaining allowance, normalized as `rate_limit_limit` is.",
+          "x-archivist": { "bearing": "provenance", "compat": "optional-additive-v1" }
+        },
+        "rate_limit_reset": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Provider rate-limit reset metadata, normalized as a non-negative integer. Providers disagree on the unit (seconds-until-reset versus epoch seconds); the value is retained exactly as reported and its unit is interpreted downstream from the declared route policy in the expected-inference ledger, never guessed here.",
+          "x-archivist": { "bearing": "provenance", "compat": "optional-additive-v1" }
+        },
+        "usage_input_tokens": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Input token count the boundary extracted from the usage report. The bounded intersection all supported providers expose; provider-specific usage detail stays in the payload bytes. Required for the `usage` kind and optional nowhere else.",
+          "x-archivist": { "bearing": "provenance", "compat": "optional-additive-v1" }
+        },
+        "usage_output_tokens": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Output token count, normalized as `usage_input_tokens` is.",
+          "x-archivist": { "bearing": "provenance", "compat": "optional-additive-v1" }
+        },
+        "usage_total_tokens": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Total token count as reported. Retained as reported rather than recomputed, so a provider's own arithmetic (cached or discounted tokens) is never silently rewritten; input plus output at most total is a producer invariant, validated downstream (VAL-002), not schema syntax.",
+          "x-archivist": { "bearing": "provenance", "compat": "optional-additive-v1" }
+        }
+      },
+      "description": "The closed metadata allowlist (plan Phase 9: an allowlist of content-type, provider request ID, rate-limit, and usage metadata). The only closed object in this family: `additionalProperties` is false, so every header-derived value the boundary did not normalize into a listed entry is excluded outright — authorization, cookies, and provider credentials cannot appear here even as future additive fields, because growth of the allowlist is a new schema major. Present when at least one allowlisted value was observed; omitted — never empty and never null — when none were.",
+      "x-archivist": {
+        "allowlist": "closed",
+        "bearing": "security",
+        "compat": "optional-additive-v1",
+        "failClosed": true,
+        "growth": "new-major-only"
+      }
+    },
+    "event_ordinal": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+      "description": "Zero-based dense ordinal of this event within its attempt's decoded stream (`streaming-event` only): events of one `provider_attempt_id`, ordered by `event_ordinal`, concatenate byte-for-byte to the attempt's decoded response body. Required for `streaming-event`, absent otherwise.",
+      "x-archivist": { "bearing": "correlation", "compat": "required-v1" }
+    },
+    "retry_of_attempt_ordinal": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+      "description": "The `attempt_ordinal` of the attempt this retry follows (`retry` only): strictly less than this record's own `attempt_ordinal`, and the attempt it names must exist within the same `inference_request_id`. Required for `retry`, absent otherwise.",
+      "x-archivist": { "bearing": "correlation", "compat": "required-v1" }
+    },
+    "retry_reason": {
+      "type": "string",
+      "enum": [
+        "http-status",
+        "rate-limit",
+        "transport-error",
+        "stream-incomplete",
+        "timeout"
+      ],
+      "description": "Why the retry was started (`retry` only), classified at the boundary: `http-status` (a decoded error status not classified as rate limiting), `rate-limit` (a decoded rate-limit rejection), `transport-error` (the prior attempt ended in a transport-error record), `stream-incomplete` (the stream ended before a terminal event), `timeout` (a deadline the boundary enforces). Provenance classification, not provider content: an unknown value fails closed. Required for `retry`, absent otherwise.",
+      "x-archivist": { "bearing": "provenance", "compat": "required-v1", "failClosed": true }
+    },
+    "backoff_ms": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+      "description": "Optional delay in milliseconds the boundary observed between the failed attempt and the retried one (`retry` only). Bounded wall-duration, not a monotonic-clock duration: the monotonic rule (plan Section 5) governs client retry budgets at the wire, while this value records the observed spacing for reconstruction.",
+      "x-archivist": { "bearing": "provenance", "compat": "optional-additive-v1" }
+    },
+    "usage_source": {
+      "type": "string",
+      "enum": ["response-body", "stream-event"],
+      "description": "Where the usage counters were extracted from (`usage` only): `response-body` (the decoded body of a non-streamed response) or `stream-event` (one decoded event of a streamed attempt). When the source was a stream event, the `payload` member, when present, carries the reporting event's own digest, so the event is identified by matching `payload_digest` within the attempt's streaming-event artifacts. Required for `usage`, absent otherwise.",
+      "x-archivist": { "bearing": "provenance", "compat": "required-v1", "failClosed": true }
+    },
+    "error_class": {
+      "type": "string",
+      "enum": [
+        "connect",
+        "dns",
+        "tls-handshake",
+        "read-timeout",
+        "write-timeout",
+        "connection-reset",
+        "stream-interrupted",
+        "transfer-decode",
+        "other"
+      ],
+      "description": "Closed transport-failure classification (`transport-error` only): `connect` (TCP connect failed), `dns` (resolution failed), `tls-handshake` (the handshake failed — the class names the layer of failure; the record still carries no TLS framing bytes), `read-timeout`, `write-timeout`, `connection-reset`, `stream-interrupted` (the decoded stream ended abnormally), `transfer-decode` (the declared transfer or content encoding did not decode), `other` (a counted residual for a failure the boundary could not classify — the archive counts it rather than inventing a detail). No free-text detail member exists: error strings are a known credential-leak route (plan Section 11), so a v2 with an explicit scrubbing rule is the only path to detail. Required for `transport-error`, absent otherwise.",
+      "x-archivist": { "bearing": "provenance", "compat": "required-v1", "failClosed": true }
+    },
+    "timeout_ms": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+      "description": "Optional deadline in milliseconds for a timeout-classified transport error (`transport-error` only).",
+      "x-archivist": { "bearing": "provenance", "compat": "optional-additive-v1" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "artifact_kind": { "const": "provider-request" } } },
+      "then": { "required": ["payload"] }
+    },
+    {
+      "if": { "properties": { "artifact_kind": { "const": "provider-response" } } },
+      "then": { "required": ["payload"] }
+    },
+    {
+      "if": { "properties": { "artifact_kind": { "const": "streaming-event" } } },
+      "then": { "required": ["event_ordinal", "payload"] }
+    },
+    {
+      "if": { "properties": { "artifact_kind": { "const": "retry" } } },
+      "then": { "required": ["retry_of_attempt_ordinal", "retry_reason"] }
+    },
+    {
+      "if": { "properties": { "artifact_kind": { "const": "usage" } } },
+      "then": {
+        "required": ["metadata", "usage_source"],
+        "properties": {
+          "metadata": {
+            "required": [
+              "usage_input_tokens",
+              "usage_output_tokens",
+              "usage_total_tokens"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "artifact_kind": { "const": "transport-error" } } },
+      "then": { "required": ["error_class"] }
+    },
+    {
+      "if": { "not": { "properties": { "artifact_kind": { "const": "streaming-event" } } } },
+      "then": { "not": { "required": ["event_ordinal"] } }
+    },
+    {
+      "if": { "not": { "properties": { "artifact_kind": { "const": "retry" } } } },
+      "then": {
+        "not": {
+          "anyOf": [
+            { "required": ["retry_of_attempt_ordinal"] },
+            { "required": ["retry_reason"] },
+            { "required": ["backoff_ms"] }
+          ]
+        }
+      }
+    },
+    {
+      "if": { "not": { "properties": { "artifact_kind": { "const": "usage" } } } },
+      "then": { "not": { "required": ["usage_source"] } }
+    },
+    {
+      "if": { "not": { "properties": { "artifact_kind": { "const": "transport-error" } } } },
+      "then": {
+        "not": {
+          "anyOf": [
+            { "required": ["error_class"] },
+            { "required": ["timeout_ms"] }
+          ]
+        }
+      }
+    }
+  ],
+  "not": {
+    "anyOf": [
+      { "required": ["access_token"] },
+      { "required": ["alpn"] },
+      { "required": ["api_key"] },
+      { "required": ["api_token"] },
+      { "required": ["authorization"] },
+      { "required": ["authorization_epoch"] },
+      { "required": ["authorization_key_id"] },
+      { "required": ["authorization_timestamp"] },
+      { "required": ["bearer_token"] },
+      { "required": ["blob_key"] },
+      { "required": ["blob_url"] },
+      { "required": ["certificate"] },
+      { "required": ["certificate_chain"] },
+      { "required": ["cipher_suite"] },
+      { "required": ["client_certificate"] },
+      { "required": ["client_secret"] },
+      { "required": ["cookie"] },
+      { "required": ["credential"] },
+      { "required": ["endpoint"] },
+      { "required": ["ip_packet"] },
+      { "required": ["object_key"] },
+      { "required": ["password"] },
+      { "required": ["private_key"] },
+      { "required": ["proxy_authorization"] },
+      { "required": ["refresh_token"] },
+      { "required": ["request_id"] },
+      { "required": ["secret"] },
+      { "required": ["session_token"] },
+      { "required": ["set_cookie"] },
+      { "required": ["signature"] },
+      { "required": ["signature_algorithm"] },
+      { "required": ["storage_path"] },
+      { "required": ["tcp_segment"] },
+      { "required": ["tls_handshake"] },
+      { "required": ["tls_record"] },
+      { "required": ["tls_session_ticket"] },
+      { "required": ["tls_version"] },
+      { "required": ["transport_encoding"] },
+      { "required": ["upload_url"] },
+      { "required": ["uri"] },
+      { "required": ["url"] },
+      { "required": ["www_authenticate"] },
+      { "required": ["x_api_key"] }
+    ]
+  }
+}

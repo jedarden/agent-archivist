@@ -37,7 +37,8 @@ crate purpose/cycle check, the dependency license gate, the error-code
 registry gate, the metrics registry gate (name, unit, label, span, and
 status conventions, the forbidden-label list, and export-name collision
 checking), byte-exact regeneration and a content scan of the synthetic
-fixture corpus, the requirement-verification register gate, the release
+fixture and exact-inference example corpora, the
+requirement-verification register gate, the release
 container baseline gate (version equality, digest-pinned bases, the
 mtime-pinned reproducible install layer, the same-commit version rule),
 a redacted
