@@ -223,10 +223,17 @@ impl InstallationIdentity {
     /// mode `0600` and refusing to overwrite (an installation identity is
     /// minted once; a silent re-mint would orphan the linked record).
     ///
+    /// The parent directory carries the same posture as the client state
+    /// and spool directories (CFG-023): it is created at mode `0700` when
+    /// absent — pinned explicitly so a permissive process umask cannot
+    /// widen it — and refused when it pre-exists at any other mode, so
+    /// neither the document nor its directory is ever left loose.
+    ///
     /// # Errors
     /// [`IdentityError::IdentityExists`] when the target exists,
     /// [`IdentityError::ReferenceUnsafe`] when the created file's mode is
-    /// looser than `0600` (a permissive umask), and
+    /// looser than `0600` (a permissive umask) or the parent directory
+    /// cannot be created or found at mode `0700`, and
     /// [`IdentityError::ReferenceUnreadable`] when the write or durability
     /// sync fails. The path is not echoed in any error.
     #[cfg(unix)]
@@ -236,6 +243,7 @@ impl InstallationIdentity {
         use std::os::unix::fs::OpenOptionsExt as _;
         use std::os::unix::fs::PermissionsExt as _;
 
+        prepare_parent_directory(path)?;
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -344,6 +352,42 @@ impl InstallationIdentity {
         let value = archivist_protocol::json::Value::Object(members);
         value.canonical_bytes()
     }
+}
+
+/// Create the identity document's parent directory when absent — mode
+/// `0700`, pinned explicitly so a permissive process umask cannot widen
+/// it — and refuse anything that pre-exists with any other mode (CFG-023).
+/// The document holding the installation's private seed keeps the same
+/// directory posture as the client state and spool directories: a location
+/// that is not exactly `0700` is an unsafe state, refused rather than
+/// adopted. Failures name no path.
+#[cfg(unix)]
+fn prepare_parent_directory(document: &std::path::Path) -> Result<(), IdentityError> {
+    use std::fs::DirBuilder;
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = document
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or(IdentityError::ReferenceUnsafe)?;
+    if !dir.is_dir() {
+        DirBuilder::new()
+            .recursive(true)
+            .create(dir)
+            .map_err(|_io_error| IdentityError::ReferenceUnsafe)?;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|_io_error| IdentityError::ReferenceUnsafe)?;
+    }
+    let mode = dir
+        .metadata()
+        .map_err(|_io_error| IdentityError::ReferenceUnsafe)?
+        .permissions()
+        .mode()
+        & 0o777;
+    if mode != 0o700 {
+        return Err(IdentityError::ReferenceUnsafe);
+    }
+    Ok(())
 }
 
 /// Insert a text member into the identity document.

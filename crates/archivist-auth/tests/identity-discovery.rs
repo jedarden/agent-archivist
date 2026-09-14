@@ -44,6 +44,16 @@ fn temp_dir(tag: &str) -> PathBuf {
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("temp dir");
+    // CFG-023 posture for a directory holding private material in these
+    // tests: exactly `0700`, matching what `write_new` requires of a parent
+    // it finds. Tests that pin the refusal of a looser parent deliberately
+    // re-loosen their directory afterwards.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .expect("temp dir mode");
+    }
     dir
 }
 
@@ -124,6 +134,62 @@ fn discover_refuses_loose_mode() {
         InstallationIdentity::discover(&reference),
         Err(IdentityError::ReferenceUnsafe)
     ));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The parent directory gets CFG-023's posture: `write_new` creates it at
+/// mode `0700` when absent — pinned explicitly so a permissive umask cannot
+/// widen it — and the document inside it stays free of group/other bits.
+#[test]
+#[cfg(unix)]
+fn write_new_creates_the_parent_directory_restrictively() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = temp_dir("create-parent");
+    let nested = dir.join("state").join("archivist");
+    let path = nested.join("identity.json");
+
+    let identity = InstallationIdentity::generate().expect("entropy available");
+    identity.write_new(&path).expect("write creates the parent");
+
+    let parent_mode = std::fs::metadata(&nested)
+        .expect("stat parent")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(parent_mode, 0o700, "created parent is exactly 0700");
+    let document_mode = std::fs::metadata(&path)
+        .expect("stat document")
+        .permissions()
+        .mode();
+    assert_eq!(
+        document_mode & 0o077,
+        0,
+        "no group or other permission bits: {document_mode:o}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A parent directory that pre-exists at any mode other than `0700` is
+/// refused, and no document is created under it (CFG-023 refuses the unsafe
+/// state rather than adopting it).
+#[test]
+#[cfg(unix)]
+fn write_new_refuses_a_loose_parent_directory() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = temp_dir("refuse-loose-parent");
+    let path = dir.join("identity.json");
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let identity = InstallationIdentity::generate().expect("entropy available");
+    assert_eq!(
+        identity.write_new(&path),
+        Err(IdentityError::ReferenceUnsafe)
+    );
+    assert!(
+        !path.exists(),
+        "no document may be created under an unsafe parent"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
