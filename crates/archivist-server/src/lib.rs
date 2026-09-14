@@ -17,9 +17,20 @@
 //!
 //! # Status
 //!
-//! Skeleton scaffold (Phase 0). Implementation arrives with Phase 4 on the
-//! Phase 1–3 contracts. It deliberately contains no placeholder production
-//! code.
+//! The **validated server configuration** (plan Section 8, Phase 4, first
+//! slice) is implemented: [`config`] carries the registered `server.*`
+//! settings as typed values and assembles them through a fail-closed
+//! builder that performs no I/O and creates no durable local state.
+//!
+//! The rest of the Phase 4 bootstrap surface — validated trust anchors,
+//! the shared replica state with its readiness ledger, the registered
+//! metrics families and their exposition, the four routes, and
+//! cancellation-aware startup and graceful shutdown — lands module by
+//! module, each with its `mod` declaration; the ingestion pipeline
+//! (bounded parsing, authorization, and validation middleware, streaming
+//! envelope validation, the blob → occurrence → attestation commit order,
+//! signed receipts) arrives on those contracts. Until then this crate
+//! contributes configuration only.
 //!
 //! # Dependency boundary
 //!
@@ -27,3 +38,5 @@
 //! `archivist-storage` traits only — never on a concrete backend crate, which
 //! the composition root (`archivist-cli`) selects. Must not depend on the
 //! client engine or any source adapter.
+
+pub mod config;
