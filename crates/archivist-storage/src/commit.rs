@@ -18,7 +18,7 @@
 //!   evidence equivalent to the committed bytes converges on the existing
 //!   logical object ([`StorageOutcome::AlreadyPresent`], STO-004), evidence
 //!   that contradicts them raises
-//!   [`StorageErrorKind::IntegrityConflict`](crate::error::StorageErrorKind::IntegrityConflict)
+//!   [`StorageErrorKind::IntegrityConflict`]
 //!   and writes nothing (EC-06, VAL-005), and existence without readable
 //!   evidence either way is reported as
 //!   [`StorageOutcome::LogicallyCommittedUnknownPhysicalResult`] — presence
@@ -43,7 +43,7 @@
 //! [`ConditionalCreateStore`] is the seam an adapter implements when its
 //! backend has a real create-if-absent operation. Its provided default
 //! fails closed with
-//! [`StorageErrorKind::CapabilityUnavailable`](crate::error::StorageErrorKind::CapabilityUnavailable):
+//! [`StorageErrorKind::CapabilityUnavailable`]:
 //! a store whose capability report claims conditional create while
 //! implementing no primitive is a misconfiguration, and the commit refuses
 //! loudly rather than silently degrading to overwrite (the same honest-mode
@@ -143,7 +143,7 @@ pub enum CreateIfAbsent {
 ///
 /// The provided default is the honest absence of the primitive: it fails
 /// with
-/// [`StorageErrorKind::CapabilityUnavailable`](crate::error::StorageErrorKind::CapabilityUnavailable).
+/// [`StorageErrorKind::CapabilityUnavailable`].
 /// A writer-only store adopts it with an empty impl; a store must not
 /// report [`ConditionalCreate::Supported`] while keeping the default.
 pub trait ConditionalCreateStore: RawWriteStore {
@@ -153,7 +153,7 @@ pub trait ConditionalCreateStore: RawWriteStore {
     /// # Errors
     /// [`StorageError::ScopeViolation`](crate::error::StorageError) when the
     /// key is outside this identity's provisioning,
-    /// [`StorageErrorKind::CapabilityUnavailable`](crate::error::StorageErrorKind::CapabilityUnavailable)
+    /// [`StorageErrorKind::CapabilityUnavailable`]
     /// from the provided default when this store implements no atomic
     /// primitive, [`StorageError::Unavailable`](crate::error::StorageError)
     /// when the backend or network is down.
@@ -175,7 +175,7 @@ pub trait ConditionalCreateStore: RawWriteStore {
 /// Commit one manifest object by the strongest primitive the store reports.
 ///
 /// The single entry point the ingest path binds: it reads the store's own
-/// [`StoreCapabilities`] once and dispatches — atomic conditional create
+/// [`StoreCapabilities`](crate::capability::StoreCapabilities) once and dispatches — atomic conditional create
 /// ([`commit_by_conditional_create`]) when the report establishes it,
 /// deterministic overwrite ([`commit_by_deterministic_overwrite`]) when the
 /// profile is writer-only. Either way the payload bounds are enforced

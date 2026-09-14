@@ -631,7 +631,7 @@ impl<S: RawWriteStore + ?Sized> Drop for MultipartWriter<'_, S> {
 /// envelope): the `PUT` path must never become a way to stream payload
 /// scale through a manifest key, so it refuses empty and oversized input
 /// before touching the store. The bound check itself is
-/// [`bounded_manifest_bytes`], shared verbatim with the deterministic
+/// `bounded_manifest_bytes`, shared verbatim with the deterministic
 /// commit layer so no manifest write path can skip it.
 ///
 /// # Errors
