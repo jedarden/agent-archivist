@@ -14,11 +14,17 @@
 //!
 //! # Status
 //!
-//! Skeleton scaffold (Phase 0). Interfaces arrive with Phase 6D on top of the
-//! Phase 1 contracts, alongside the synthetic adapter example and its
-//! conformance suite. It deliberately contains no placeholder production code.
+//! The bounded, content-free source-status contract — the per-source scan
+//! observation, the closed coverage and classification vocabularies, and
+//! the aggregate adapter/account status (requirement CAP-010) — arrived
+//! ahead of Phase 6D; see [`status`]. The lifecycle, discovery, and
+//! projection interfaces and the
+//! conformance suite are still the Phase 0 skeleton and deliberately
+//! contain no placeholder production code.
 //!
 //! # Dependency boundary
 //!
 //! Depends on `archivist-protocol` only. Must not know about any specific
 //! harness, transport, storage backend, or the server.
+
+pub mod status;
