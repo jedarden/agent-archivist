@@ -366,6 +366,58 @@ fn no_output_reveals_the_private_seed() {
     let _ = std::fs::remove_dir_all(&reference_target);
 }
 
+/// The link request is built from the identity document on disk: the
+/// public key it carries is exactly the `public_key` member persisted in
+/// that document, recovered through a protected reference — the request
+/// advertises the persisted key, never a freshly minted one.
+#[test]
+#[cfg(unix)]
+fn link_request_key_matches_the_persisted_document() {
+    let dir = temp_dir("link-request-key");
+    let path = dir.join("identity.json");
+
+    let identity = fixed_identity();
+    identity.write_new(&path).expect("persist identity");
+    let document = std::fs::read(&path).expect("read persisted document");
+
+    // The key as persisted, read straight out of the document bytes.
+    let persisted = archivist_protocol::json::parse(&document).expect("canonical document");
+    let archivist_protocol::json::Value::Object(members) = persisted else {
+        panic!("identity document is an object");
+    };
+    let persisted_key = match members.get("public_key") {
+        Some(archivist_protocol::json::Value::Text(hex)) => hex.clone(),
+        other => panic!("public_key member: {other:?}"),
+    };
+
+    let reference = ProtectedReference::parse(&format!("file:{}", path.display())).expect("path");
+    let discovered = InstallationIdentity::discover(&reference).expect("discover");
+
+    let tenant = TenantId::parse("0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b").expect("grammar");
+    let scopes = RequestedScopes::new(
+        vec![HarnessId::parse("claude-code").expect("grammar")],
+        vec![ScopeOperation::Ingest],
+    )
+    .expect("well-formed");
+    let request = LinkRequest::new(discovered.public_identity(), tenant, scopes);
+
+    // The request carries exactly the persisted key: same hex as the
+    // document member, present in the serialized request, and equal to the
+    // identity it was discovered from.
+    assert_eq!(request.identity.public_key.to_hex(), persisted_key);
+    let link_text = String::from_utf8(request.canonical_bytes()).expect("utf-8");
+    assert!(
+        link_text.contains(&persisted_key),
+        "the request must carry the persisted public key"
+    );
+    assert_eq!(
+        request.identity.public_key,
+        identity.public_identity().public_key
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Substring containment over byte windows.
 fn window_contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack
