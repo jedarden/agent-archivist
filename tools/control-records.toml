@@ -83,6 +83,14 @@ object_key = "tenants/<tenant_id>/v1/control/receipt-keys/<key_id>.json"
 key_members = ["tenant_id", "key_id"]
 status = "shipped"
 
+[records.authority-rotation]
+summary = "The chain link that retires one tenant-authority key and establishes its successor — both public halves, both pinned-derivation IDs, and the 24-hour signing overlap during which either half verifies; keyed at the predecessor's ID, so the walk from the pinned root is fetch-verify-adopt-repeat and successive rotations append."
+write_class = "immutable"
+schema = "schemas/v1/control-authority-rotation.json"
+object_key = "tenants/<tenant_id>/v1/control/authority-rotations/<previous_key_id>.json"
+key_members = ["tenant_id", "previous_key_id"]
+status = "shipped"
+
 # ---------------------------------------------------------------------------
 # Named timing constants — each is pinned by the plan sentence it quotes,
 # and the gate proves the quote is verbatim plan text that states this

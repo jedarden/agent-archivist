@@ -216,8 +216,13 @@ way.
   than duplicating it — its receipt-key record's payload members are the
   certificate's members, proven member-for-member by
   `tools/check-control-schemas.py` (see
-  [control trust schemas](control-trust-schemas.md)) — but the
-  authority-rotation record itself remains that family's open item.
+  [control trust schemas](control-trust-schemas.md)) — and that family
+  now ships the authority-rotation record the signer may name: an
+  immutable chain link, addressed and signed by the key it retires, so
+  a certificate whose `authority_key_id` names a successor half
+  verifies by the same walk from the pinned root every control record
+  uses. Nothing on the wire side changes: the certificate names its
+  signer and defers to the envelope's authority-chain rule.
 - `media_type` placeholders in error templates are bounded tokens; if a
   future code needs to name a header or boundary value, the placeholder
   allowlist in `docs/notes/error-codes.md` Section 4 must grow first —

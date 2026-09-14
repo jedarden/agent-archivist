@@ -22,9 +22,9 @@ runs on: objects below `tenants/<tenant>/v1/control/`, written only by
 the offline `ControlAdminStore` — which can put nothing but validated,
 tenant-authority-signed control objects — read by every ingestion
 replica when it authenticates an uploader, and cacheable for at most 60
-seconds. Six schema files carry the family
+seconds. Seven schema files carry the family
 ([`schemas/v1/control-envelope.json`](../../schemas/v1/control-envelope.json)
-plus five record schemas), and the trust they describe is one story:
+plus six record schemas), and the trust they describe is one story:
 
 1. **Link.** The linked-client record is one installation's identity in
    one tenant: its Ed25519 public key, base scopes, and the current
@@ -64,6 +64,15 @@ plus five record schemas), and the trust they describe is one story:
    [wire schemas note](wire-schemas.md) documents the two-signature
    chain from its side; the schemas note proves the record and the
    certificate are one statement.
+7. **Rotate the authority.** When the tenant authority itself rotates,
+   the authority-rotation record chains the successor key to the
+   predecessor — one immutable link per retired key, addressed by the
+   key it retires and signed by it, so verification walks forward from
+   the pinned root by fetch-verify-adopt-repeat. For 24 hours from the
+   link's `signed_at`, either half may sign control records and
+   receipt-key certifications and both verify; the window bounds
+   signing acceptance, never what was already signed, and the pin
+   never moves.
 
 No private-key material appears anywhere in the family (SEC-006):
 key members are public halves under the shared common shapes, key IDs
@@ -112,6 +121,7 @@ fast lane. The shipped set:
 | `revocation` | immutable | `tenants/<tenant_id>/v1/control/revocations/<client_id>/<authorization_epoch>.json` | `tenant_id`, `client_id`, `authorization_epoch` |
 | `rotation` | immutable | `tenants/<tenant_id>/v1/control/rotations/<client_id>/<authorization_epoch>.json` | `tenant_id`, `client_id`, `authorization_epoch` |
 | `receipt-key` | immutable | `tenants/<tenant_id>/v1/control/receipt-keys/<key_id>.json` | `tenant_id`, `key_id` |
+| `authority-rotation` | immutable | `tenants/<tenant_id>/v1/control/authority-rotations/<previous_key_id>.json` | `tenant_id`, `previous_key_id` |
 
 Object-key layouts are written with the record's own member names as
 placeholders, in the order the store concatenates them
@@ -125,9 +135,9 @@ placeholders `<tenant>`, `<client>`, `<epoch>`, `<key>`; the gate maps
 them onto the member names and requires the plan's control lines to
 appear in the registry exactly under that mapping. The plan's table
 currently pins the client, revocation, and receipt-key control keys;
-the delegation and rotation layouts extend it from the envelope
-registry (a documented plan follow-up the schemas note's open
-questions track).
+the delegation, rotation, and authority-rotation layouts extend it
+from the envelope registry (a documented plan follow-up the schemas
+note's open questions track).
 
 ## The timing constants
 
@@ -139,10 +149,10 @@ gate proving agreement and rejecting any second encoding:
 
 | Constant | Value | Plan sentence (quoted verbatim by the registry) | Pinned where it applies |
 |---|---|---|---|
-| `trustRecordCacheTtlSeconds` | 60 s | "Trust records cache for at most 60 seconds." | linked-client, delegation, rotation, receipt-key records; re-expressed as the revocation record's `revocationPropagationBoundSeconds` |
+| `trustRecordCacheTtlSeconds` | 60 s | "Trust records cache for at most 60 seconds." | linked-client, delegation, rotation, receipt-key, authority-rotation records; re-expressed as the revocation record's `revocationPropagationBoundSeconds` |
 | `authorizationWindowSeconds` | 300 s | "Request authorization is fresh per upload attempt and valid for five minutes" | `ingest-request.json` (wire family) |
 | `clockSkewAllowanceSeconds` | 300 s | "with at most five minutes of clock skew" | `ingest-request.json` (wire family) |
-| `rotationVerificationOverlapHours` | 24 h | "Key rotation accepts old and new keys for 24 hours" | linked-client, rotation records |
+| `rotationVerificationOverlapHours` | 24 h | "Key rotation accepts old and new keys for 24 hours" | linked-client, rotation, authority-rotation records |
 | `receiptKeyRotationDays` | 30 d | "Receipt keys rotate every 30 days" | receipt-key record, receipt certificate |
 | `receiptKeySigningOverlapDays` | 7 d | "with seven days of old/new signing overlap" | receipt-key record, receipt certificate |
 

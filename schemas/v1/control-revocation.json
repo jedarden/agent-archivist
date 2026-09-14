@@ -104,7 +104,7 @@
     },
     "authority_key_id": {
       "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id",
-      "description": "Identifier of the tenant authority key that signed this record — the root the revoked client pinned during linking (ID-009). Names which pinned key (or, once authority rotation exists, which authority record's key) verifies `authority_signature`; see the envelope's authority-chain rule. A revocation signed by any other key is not a revocation.",
+      "description": "Identifier of the tenant authority key that signed this record — the root the revoked client pinned during linking (ID-009). Names which pinned key (or, when that key was itself established by an authority-rotation record, the successor key that record's chain names) verifies `authority_signature`; see the envelope's authority-chain rule. A revocation signed by any other key is not a revocation.",
       "x-archivist": {
         "bearing": "security",
         "compat": "required-v1"

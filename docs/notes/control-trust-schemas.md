@@ -18,15 +18,15 @@ The family is:
 | [`schemas/v1/control-rotation.json`](../../schemas/v1/control-rotation.json) | The key-rotation record (`tenants/<tenant>/v1/control/rotations/<client>/<epoch>.json`): the durable evidence of one client key rotation — both public halves and the 24-hour overlap during which either verifies. |
 | [`schemas/v1/control-revocation.json`](../../schemas/v1/control-revocation.json) | The revocation record (plan Section 7.5 `tenants/<tenant>/v1/control/revocations/<client>/<epoch>.json`): the append-only, epoch-addressed revocation of one client's authorization at one epoch. |
 | [`schemas/v1/control-receipt-key.json`](../../schemas/v1/control-receipt-key.json) | The receipt-key record (`tenants/<tenant>/v1/control/receipt-keys/<key>.json`, plan Section 7.5): the tenant-authority certification of one server receipt-signing key — the authoritative control-prefix source of the certificate embedded in every receipt (plan Section 7.8). |
+| [`schemas/v1/control-authority-rotation.json`](../../schemas/v1/control-authority-rotation.json) | The authority-rotation record (`tenants/<tenant>/v1/control/authority-rotations/<previous_key_id>.json`): the durable chain link that retires one tenant-authority key and establishes its successor — both public halves and the 24-hour signing overlap, signed by the key it retires. |
 
 Control records are what the control-plane boundary runs on: objects
 below `tenants/<tenant>/v1/control/`, written only by the offline
 `ControlAdminStore` (which can put nothing but validated,
 tenant-authority-signed control objects), read by every ingestion replica
 when it authenticates an uploader, and cacheable for at most 60 seconds
-(plan Section 5). The authority-rotation record type arrives as a later
-schema change composed from the same envelope — the decision
-list below is what binds it.
+(plan Section 5). The six record types below are all composed from the
+same envelope — the decision list is what binds them.
 
 ## The envelope: decisions every record type follows
 
@@ -91,7 +91,10 @@ them is wrong, not a variation:
    their object keys name their epochs, the revoked and the established
    (the registry's `keyMembers` names the members the store derives each
    type's key from, and the gate proves every one is a required property
-   of the shipped record). Monotonicity is per subject, and a subject is
+   of the shipped record). The receipt-key and authority-rotation
+   records are the key-addressed immutables that do not — their
+   identities are the certified key ID and the retired authority key ID
+   their keys name. Monotonicity is per subject, and a subject is
    a client or a relation: the linked-client pointer's epoch only
    increases, a delegation record's epoch is its (relay, origin)
    relation's own sequence, and the immutable types permanently fix the
@@ -105,10 +108,13 @@ them is wrong, not a variation:
    control record's signed bytes contain the `schema` namespace member and
    no bare certificate's do. The chain always starts at the tenant authority
    root the client pinned during linking (ID-009); when the authority itself
-   rotates, an authority-rotation record type chains successor keys to
-   predecessor ones, and `authority_key_id` then names the signing authority
-   record's key. Verification walks forward from the pinned root and never
-   trusts a key because a record asserts it.
+   rotates, the authority-rotation record chains each successor key to
+   its predecessor — one immutable link per retired key, signed by the
+   key it retires — and `authority_key_id` on records signed after the
+   cutover then names the successor key the link established.
+   Verification walks forward from the pinned root and never
+   trusts a key because a record asserts it; the authority-rotation
+   section below is that walk, made concrete.
 7. **Public material only.** No member of any control record carries
    private-key material (SEC-006, ID-001): key members are public halves
    under the common shapes, key IDs are the pinned SHA-256-of-encoded-public-
@@ -120,12 +126,15 @@ them is wrong, not a variation:
    linked-client record, `delegations/<relay>/<origin>.json` for the
    delegation record, `rotations/<client>/<epoch>.json` for the
    key-rotation record, `revocations/<client>/<epoch>.json` for the
-   revocation record, and `receipt-keys/<key>.json` for the receipt-key
-   record — all shipped. Key segments must equal the
+   revocation record, `receipt-keys/<key>.json` for the receipt-key
+   record, and `authority-rotations/<previous-key>.json` for the
+   authority-rotation record — all shipped. Key segments must equal the
    record's own identifiers (`tenant_id`; `client_id`; for a delegation
    the relay and origin in order; for a revocation or rotation, the
-   epoch its key names; and, for a receipt-key record, the certified
-   key ID under the pinned derivation); the store refuses a mismatch and
+   epoch its key names; for a receipt-key record, the certified
+   key ID under the pinned derivation; and for an authority-rotation
+   record, the retired authority key ID under the same derivation);
+   the store refuses a mismatch and
    any reader can re-make the check. The receipt-key pattern is
    cross-checked against the certificate's documented `objectKey` so the
    two cannot fork.
@@ -157,7 +166,12 @@ them is wrong, not a variation:
     accepts old and new keys for 24 hours"), pinned as
     `rotationVerificationOverlapHours` and mirrored in the linked-client
     record — which documents the epoch rule it feeds — and in the
-    rotation record that anchors the window to its `signed_at`. It is
+    rotation record that anchors the window to its `signed_at`. The same
+    constant pins the authority-rotation record's signing overlap,
+    anchored the same way, because the plan's sentence covers both tiers
+    the family rotates — the client authorization key and the tenant
+    authority key — and one number, one citation, is what keeps the two
+    overlaps from drifting apart. It is
     hours-valued because the plan pins it in hours; the registry's
     `unit` field, not the name alone, carries that distinction from the
     second-valued constants beside it. The fifth and sixth constants are
@@ -390,6 +404,90 @@ Structural rules, all cross-checked by the gate:
   argument; the old private half retires with the rotation (SEC-006,
   ID-001).
 
+## The authority-rotation record
+
+The record chains one successor tenant-authority key to its predecessor —
+the envelope's authority-chain rule, made concrete. It is an immutable
+record at `tenants/<tenant>/v1/control/authority-rotations/<previous_key_id>.json`,
+where the key segment is the retiring key's ID under the pinned SHA-256
+derivation. Predecessor addressing is what makes the walk and the
+append-only history one design: a verifier holding a trusted half finds
+the record that retires it at that half's own address, and successive
+authority rotations append — one immutable object per retired key, never
+an overwrite, no operation removing or rewriting a link.
+
+**The predecessor signs.** `authority_key_id` equals `previous_key_id`
+by construction (VAL-002): the record is the predecessor's signed
+witness to its own retirement, and its `authority_signature` verifies
+against `previous_public_key` in the same bytes. A link signed by the
+successor key it establishes would be circular and verifies against
+nothing. For the first link the predecessor is the root the clients
+pinned during linking (ID-009), which is what anchors the whole walk.
+
+**The walk is fetch-verify-adopt-repeat.** Holding pinned root R, the
+verifier fetches `authority-rotations/<R>.json`, checks the link's
+signature against R's half, adopts the successor its `key_id` names, and
+repeats until it reaches the signer named by the record it is actually
+verifying — control records and receipt-key certifications signed after
+a cutover name the successor in `authority_key_id`, exactly as the
+envelope's signing rule says. The walk terminates at the pinned root
+because each link names its predecessor, and immutability keeps every
+link ever published in the store, so the chain is recomputable from
+public material alone at any later time. The pin never moves: linking
+pins the root for the client's lifetime and the chain extends it
+forward — a record signed by any half the root's chain reaches
+verifies from the same pin, so an authority rotation never requires a
+re-link. Like the receipt-key record,
+the link is key-addressed and carries no `authorization_epoch`: the
+links themselves are the order, each retiring exactly the key the
+previous link established.
+
+**The signing overlap is the same named constant as the client tier.**
+For `rotationVerificationOverlapHours` (24, plan Section 5 — the
+envelope's named constant, mirrored in the linked-client and rotation
+records, gate-proven equal) from the record's `signed_at`, either
+authority half may sign control records and receipt-key certifications,
+and both verify: the predecessor's through this record's
+`previous_public_key`, the successor's through the chain this record
+extends. The window bounds signing acceptance, never the validity of
+what was already signed — the non-invalidating property the receipt-key
+record's immutability gives receipts (ID-009) holds here too: a control
+record or certification the predecessor signed inside the window
+verifies for as long as records are retained, and one the predecessor
+signed after the window fails closed (plan Section 7.1's rule for
+security-bearing values, checked at the record's own `signed_at`, never
+at read time).
+
+**Readers treat the overlap as tolerance, not extension.** An ingestion
+replica authenticating an uploader against a record signed by an
+authority half its pinned root does not directly name resolves the
+signer through the chain, statelessly — the store's records are the
+only state (plan Section 3), the 60-second trust cache bounds how long
+an earlier view is served (plan Section 5; EC-09), and the link a
+replica loads to resolve a signer is cached like any other trust
+record. The offline `ControlAdminStore` writes this record signed by
+the predecessor and treats it as its own signing-key cutover: from the
+rotation instant it signs with the successor; inside the window a
+record or certification it signed with either half verifies; after the
+window a predecessor-signed write is rejected by every reader. The
+overlap exists for the boundary — an in-flight administrative batch, a
+receipt certification racing the cutover, a replica's cache converging
+— never to extend the predecessor's authority.
+
+Structural rules, all cross-checked by the gate:
+
+- **Predecessor-addressed and immutable.** One object per retired key,
+  written once; the key segment must equal the record's
+  `previous_key_id` in lowercase canonical hex and the tenant segment
+  its `tenant_id` (ID-008, VAL-002).
+- **Public material only, both halves.** `previous_public_key` and
+  `public_key` are public halves; `previous_key_id` and `key_id` are
+  their pinned derivations, computable from the record itself, and the
+  successor's ID is the value later records carry in `authority_key_id`.
+  The successor private half is generated by the tenant operator out of
+  band and never appears in any record, file, or argument; the
+  predecessor private half retires with the rotation (SEC-006, ID-001).
+
 ## The receipt-key record
 
 The record certifies one server receipt-signing key (plan Section 7.8;
@@ -470,19 +568,24 @@ referencing the registry's declared source, the revocation's and
 rotation's identity epochs included — closed shapes at every object
 level, the banned private-member-name grammar, the named timing-constant
 registry with every plan-pinned value and every cross-file agreement
-proven (envelope ↔ linked-client, delegation, rotation, and receipt-key
-TTLs ↔ revocation propagation bound; envelope ↔ ingest-request window
-and skew allowance; envelope ↔ linked-client and rotation overlap;
-envelope ↔ receipt-key record and certificate rotation and overlap),
+proven (envelope ↔ linked-client, delegation, rotation, receipt-key,
+and authority-rotation TTLs ↔ revocation propagation bound; envelope ↔
+ingest-request window and skew allowance; envelope ↔ linked-client,
+rotation, and authority-rotation overlap; envelope ↔ receipt-key record
+and certificate rotation and overlap),
 draft 2020-12 validity, zero-entropy golden linked-client, delegation,
-rotation, revocation, and receipt-key records — one coherent story: the
+rotation, revocation, receipt-key, and authority-rotation records — one
+coherent story: the
 client at epoch 3, its key established by the golden rotation from a
 synthetic previous half, the relay grant presenting that client as
-origin, the revocation of that epoch naming that client's key, and the
+origin, the revocation of that epoch naming that client's key, the
 receipt-key certification the same pinned authority root signs, window
-spanning exactly the rotation and overlap constants summed — whose key
+spanning exactly the rotation and overlap constants summed, and the
+authority-rotation link that retires that same root and establishes the
+tenant's successor half, signed by the root it retires — whose key
 IDs are computed by the pinned SHA-256 derivation (the rotation's
-previous and current halves and the receipt key's own half) and whose
+previous and current halves, the receipt key's own half, and the
+authority link's retiring and successor halves) and whose
 object keys are re-derived from their own identifiers, with the
 revocation and rotation keys also checked at the epoch ceiling so the
 18-digit epoch bound and both key grammars are proven in lockstep, the
@@ -491,8 +594,8 @@ a current-pointer shape permits), the receipt-key record and the
 certificate in `ingest-receipt.json` proven one certification statement
 (object-key agreement, member-for-member shape agreement, and the
 golden record's certificate projection validating against the
-certificate definition itself), seventy-eight behavioural rejections
-across the five records, and the receipt-key pattern cross-check
+certificate definition itself), ninety-four behavioural rejections
+across the six records, and the receipt-key pattern cross-check
 against `ingest-receipt.json`.
 Its `--self-test` proves the rejection paths. The registry layer of the
 same gate — `tools/control-records.toml` two-way agreement with the
@@ -519,18 +622,13 @@ proven.
 
 ## Open questions
 
-- The **authority-rotation record** — how a successor authority key is
-  chained to its predecessor and how clients re-pin — is the first open
-  item the envelope's authority-chain rule anticipates; `authority_key_id`
-  already names the signer generally enough for it, and the receipt-key
-  record and certificate inherit that generality unchanged: both name
-  their signer through `authority_key_id` and defer to the envelope's
-  authority-chain rule wherever they explain it.
 - Plan Section 7.5's object-key list still names only the client,
   revocation, and receipt-key control keys. The delegation
-  (`delegations/<relay>/<origin>.json`) and rotation
-  (`rotations/<client>/<epoch>.json`) patterns extend that list from the
-  envelope registry; the plan's list should gain the two lines as a
+  (`delegations/<relay>/<origin>.json`), rotation
+  (`rotations/<client>/<epoch>.json`), and authority-rotation
+  (`authority-rotations/<previous_key_id>.json`) patterns extend that
+  list from the envelope registry; the plan's list should gain the
+  three lines as a
   documentation follow-up — the plan file was under concurrent edit when
   these records shipped, so the amendment is deliberately not bundled
   with them.
