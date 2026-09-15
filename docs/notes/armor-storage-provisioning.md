@@ -156,7 +156,7 @@ agent-visible text, same as every change to this document:
 - **Per-role paths created at v1.** `archivist-catalog-writer` and
   `archivist-derived-writer`, each verified to match its merged entry by
   comparison, never by printing.
-- **Pair shape.** Access key 20 uppercase alphanumeric characters (the
+- **Pair shape.** Access key 20 mixed-case alphanumeric characters (the
   archivist convention); secret key 40 characters — not the canonical
   64-hex shape the rotation procedure below pins, which was recorded after
   these pairs were minted. ARMOR imposes no key format (the auth-file
@@ -182,6 +182,28 @@ ACLs `agent-archivist/catalog/:{put,list}` and
 `agent-archivist/derived/:{put,list}`. The six-identity set is live at the
 edge as of that rollout; no object has been written under either prefix
 (the prefixes stay empty until the Phase 10 code lands).
+
+Re-verified 2026-09-15 by the bead's follow-up run, after attempt 1's hard
+timeout left everything above unconfirmed (the writes landed at
+07:43:27–29Z inside that attempt's window; pickup happened after it died).
+OpenBao metadata matches this section — merged document v9, both per-role
+paths v1, raw-writer v4 and control-reader v2 anchors unchanged. A
+structural diff of merged-document v8→v9 shows exactly the two appended
+blocks, every shared entry byte-identical (names, ACLs, and both key lines
+compared per entry by fingerprint). Each per-role pair's AKID and secret
+fingerprints equal its merged entry's and the serving pod's startup-dump
+entry (`armor-664d76cbbd-mrx9n`). A live SigV4 matrix over port-forward
+against that pod returned 200 on each writer's in-scope list, 403
+AccessDenied out of scope (raw/ prefix), 403 SignatureDoesNotMatch on the
+wrong-secret calibration, and KeyCount 0 on both prefixes — still empty.
+Positive put was deliberately not probed: the put grant is pinned by the
+startup dump's `actions {list, put}`, and probing it would break the
+empty-prefix invariant this section records. Correction made in the same
+pass: the access keys are 20 mixed-case alphanumeric characters, not
+uppercase as first recorded here and in the rotation procedure's step 2 —
+every identity in the set checks out mixed-case, the never-rotated
+control-admin and backup/restore originals included, so the word was
+never accurate.
 
 ## Enforcement notes
 
@@ -437,7 +459,7 @@ the per-role path change. End-to-end cost is bounded by one ESO refresh
    the current pair must succeed. This is the "old pair works" half of the
    flip evidence and must predate the write.
 2. **Generate the replacement in place.** Pair shape: access key = 20
-   uppercase alphanumeric characters, secret = 64 hex characters, piped
+   mixed-case alphanumeric characters, secret = 64 hex characters, piped
    straight from `openssl rand`/`tr` into the stash or KV — never argv,
    never a file the transcript can read.
 3. **Write the merged document (CAS+1).** Read
