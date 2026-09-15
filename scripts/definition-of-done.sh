@@ -12,7 +12,7 @@
 #     release container baseline gate, storage-profile registry gate,
 #     control trust schema gate, threat-model acceptance gate,
 #     synthetic-fixture, conformance-corpus, compat-corpus,
-#     inference-corpus, and usage-summary-corpus
+#     inference-corpus, usage-summary-corpus, and control-corpus
 #     regeneration and content scan,
 #     the standalone contract verifier and its cross-implementation
 #     comparison against the Rust implementation (the plan Section 8
@@ -298,6 +298,30 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # wrapper governs both.
   require_modules jsonschema referencing \
     && run_check "usage corpus policy"  python3 tools/usagegen.py --self-test
+  # Control-record corpus (docs/notes/conformance-corpus.md, "The
+  # current-pointer bundles"): byte-exact regeneration of the
+  # archivist.control/v1 golden-vector table under
+  # schemas/v1/examples/control/ — five scenario files and an
+  # authority-rotation chain sharing one keys.json — every record
+  # validated against the envelope registry per the
+  # check-control-schemas.py conventions, every signature re-verified
+  # with the generator's independent pure-Python Ed25519 verifier, and
+  # every pinned accept/reject outcome, acceptance-table verdict, and
+  # manifest record/outcome/digest invariant replayed from the pinned
+  # bytes. The committed authority-rotation chain is additionally
+  # replayed by the Rust suite
+  # (crates/archivist-auth/tests/authority_corpus.rs, slow lane).
+  require_modules jsonschema referencing cryptography \
+    && run_check "control corpus"  python3 tools/controlgen.py --verify
+  # The control generator's rejection paths proven without the
+  # committed bundle: build determinism, tampered/foreign-key/forged
+  # signatures, the decision procedure's flipped-pin detection, the
+  # write guard's refusal of unrecognized files, and the schema's
+  # no-private-material fault matrix over one record of every family.
+  # Shares "usage corpus"'s exit-code contract (3 on any failed proof,
+  # 4 without jsonschema).
+  require_modules jsonschema referencing cryptography \
+    && run_check "control corpus policy"  python3 tools/controlgen.py --self-test
   # Requirement-to-verification mapping (docs/notes/verification.md):
   # `check` validates this tree's register (consistency with the
   # requirements document plus the located-check rule for anything marked
