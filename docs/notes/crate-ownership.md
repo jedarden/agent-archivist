@@ -14,13 +14,19 @@ collapse boundaries ad hoc.
 
 - Toolchain pinned to 1.97.1 in [`rust-toolchain.toml`](../../rust-toolchain.toml)
   (components: rustfmt, clippy); edition 2024; `Cargo.lock` is committed.
-- The scaffold intentionally contains **no external dependencies and no
-  production behavior**. Phase 0 requires skeletons without placeholder
-  production behavior: a crate whose phase has not started stays
-  documentation-only instead of growing `todo!()` stubs that pretend to work.
-  External dependencies are introduced per phase, pinned through
-  `[workspace.dependencies]` in the root manifest, and land in the committed
-  lockfile.
+- Phase 0 delivered skeletons with **no external dependencies and no
+  production behavior**, and the rule still governs what a not-yet-started
+  crate may contain: it stays documentation-only instead of growing `todo!()`
+  stubs that pretend to work. Landed behavior has since replaced the skeleton
+  in the crates whose phase work has started (see the Landed state column
+  below); each piece lands with the verification that gates it. External
+  dependencies are introduced per phase the same way — pinned through
+  `[workspace.dependencies]` in the root manifest, admitted by the license
+  allowlist
+  ([tools/license-allowlist.toml](../../tools/license-allowlist.toml)), and
+  pinned in the committed lockfile. The client state database (`rusqlite`,
+  bundled SQLite) is the first direct dependency, with its transitive tree
+  enumerated in the allowlist.
 - Shared lint baseline in the root manifest: `missing_docs = "warn"`,
   `unsafe_code = "forbid"`, clippy `all` and `pedantic` at `warn`, and
   `rustdoc::broken_intra_doc_links` denied (rustdoc runs outside clippy, so its
@@ -49,20 +55,26 @@ layer of its internal dependencies. `archivist-server` therefore sits at
 layer 2 — its dependencies (`protocol`, `auth`, `storage`) all resolve at
 layer 1 — not on a tier of its own above the client engine.
 
-| Crate | Layer | Purpose | Owning phase | Internal dependencies |
-|---|---|---|---|---|
-| `archivist-protocol` | 0 | Versioned wire types, validation, deterministic identifiers and object-key derivation, RFC 8785 canonical serialization, and the derived-record derivation cores (the usage-summary projection is the first; plan Phase 10) | 1 | none |
-| `archivist-auth` | 1 | Ed25519 signing and verification, linked-client records, tenant authority chain, delegation, revocation and rotation epochs, receipt keys — the `archivist.control/v1` types of the [control trust](control-trust.md) family | 3 | protocol |
-| `archivist-storage` | 1 | Capability model, capability probe, and the `RawWriteStore`, `ControlReadStore`, `ControlAdminStore`, `AuditRestoreStore` traits; streaming multipart writer over raw-write sessions; `inventory-v1` contract | 2 | protocol |
-| `archivist-adapter-sdk` | 1 | Adapter lifecycle, capability, status, discovery, and immutable-artifact projection interfaces; fingerprint allowlists; conformance suite | 6D | protocol |
-| `archivist-storage-s3` | 2 | Portable S3 implementation of the storage traits; `zstd-v1` commits; validate-before-complete multipart | 2 | protocol, storage |
-| `archivist-client-core` | 2 | Cursors, crash-safe spool, immutable envelopes with per-attempt re-authorization, freshness/backfill scheduler, receipts and acknowledgements, SQLite state | 5 | protocol, adapter-sdk |
-| `archivist-adapter-claude` | 2 | Claude Code: JSONL complete-record capture, sidecars, generation detection | 6A | adapter-sdk |
-| `archivist-adapter-codex` | 2 | Codex: JSONL complete-record capture, sidecars, generation detection | 6A | adapter-sdk |
-| `archivist-adapter-opencode` | 2 | OpenCode: read-only allowlisted database projection | 6B | adapter-sdk |
-| `archivist-adapter-pi` | 2 | Pi: configured-root discovery, durable session formats, coverage gaps | 6C | adapter-sdk |
-| `archivist-server` | 2 | Stateless HTTP data plane: `/v1/ingest`, health, metrics, bounded middleware, commit ordering, signed receipts | 4 | protocol, auth, storage |
-| `archivist-cli` | 3 | `archivist` binary: the command surface pinned in [`tools/cli-commands.toml`](../../tools/cli-commands.toml) (run, daemon, inventory, status, verify-state, doctor, serve, link request, admin, catalog rebuild); selects backend and adapters | 3, 5, 6, 7 | all of the above |
+The Landed state column records what each crate carries at the commit that
+last moved it: committed behavior gated by the verification baseline, not
+declared intent. Move a crate's cell forward in the same commit as the work
+it describes, and leave a not-started crate documentation-only per the
+baseline rule above.
+
+| Crate | Layer | Purpose | Owning phase | Internal dependencies | Landed state |
+|---|---|---|---|---|---|
+| `archivist-protocol` | 0 | Versioned wire types, validation, deterministic identifiers and object-key derivation, RFC 8785 canonical serialization, and the derived-record derivation cores (the usage-summary projection is the first; plan Phase 10) | 1 | none | Landed — Phase 1 core plus the Phase 10 usage-summary derivation: the versioned wire types with validation, RFC 8785 canonical JSON, SHA-256, deterministic identifiers and object keys, the usage-summary derivation core, and the `conformance-replay` corpus harness |
+| `archivist-auth` | 1 | Ed25519 signing and verification, linked-client records, tenant authority chain, delegation, revocation and rotation epochs, receipt keys — the `archivist.control/v1` types of the [control trust](control-trust.md) family | 3 | protocol | Landed — Phase 3 record and primitive core: owned Ed25519 signatures over owned SHA-512, client identity, linked-client and authority-chain records with rotation epochs, delegation, revocation, and receipt keys, with the authority-rotation corpus replayed offline |
+| `archivist-storage` | 1 | Capability model, capability probe, and the `RawWriteStore`, `ControlReadStore`, `ControlAdminStore`, `AuditRestoreStore` traits; streaming multipart writer over raw-write sessions; `inventory-v1` contract | 2 | protocol | Landed — Phase 2 contract: the capability model and probe, the four store traits, the streaming multipart writer over raw-write sessions, and the `inventory-v1` contract |
+| `archivist-adapter-sdk` | 1 | Adapter lifecycle, capability, status, discovery, and immutable-artifact projection interfaces; fingerprint allowlists; conformance suite | 6D | protocol | Landed — Phase 6D opened: the bounded, content-free status contract; the lifecycle, capability, discovery, and projection interfaces are the phase's open work |
+| `archivist-storage-s3` | 2 | Portable S3 implementation of the storage traits; `zstd-v1` commits; validate-before-complete multipart | 2 | protocol, storage | Landed — Phase 2 in progress: the portable S3 raw-write and control-admin stores, with `zstd-v1` content-addressed commits, validate-before-complete multipart, and scope-gated control-admin under corpus test; the remaining store backends follow |
+| `archivist-client-core` | 2 | Cursors, crash-safe spool, immutable envelopes with per-attempt re-authorization, freshness/backfill scheduler, receipts and acknowledgements, SQLite state | 5 | protocol, adapter-sdk | Landed — Phase 5 opened: the crash-safe mode-restricted spool, SQLite (WAL) state with explicit migrations, configuration, and the per-source backlog inventory; discovery cursors, the scheduler, envelopes, and receipts/acks are the phase's open work |
+| `archivist-adapter-claude` | 2 | Claude Code: JSONL complete-record capture, sidecars, generation detection | 6A | adapter-sdk | Phase 6A not started — documentation-only |
+| `archivist-adapter-codex` | 2 | Codex: JSONL complete-record capture, sidecars, generation detection | 6A | adapter-sdk | Phase 6A not started — documentation-only |
+| `archivist-adapter-opencode` | 2 | OpenCode: read-only allowlisted database projection | 6B | adapter-sdk | Phase 6B not started — documentation-only |
+| `archivist-adapter-pi` | 2 | Pi: configured-root discovery, durable session formats, coverage gaps | 6C | adapter-sdk | Phase 6C not started — documentation-only |
+| `archivist-server` | 2 | Stateless HTTP data plane: `/v1/ingest`, health, metrics, bounded middleware, commit ordering, signed receipts | 4 | protocol, auth, storage | Landed — Phase 4 opened: configuration, shared state, and control-trust wiring; the listener, routes, and metrics modules are the phase's open work |
+| `archivist-cli` | 3 | `archivist` binary: the command surface pinned in [`tools/cli-commands.toml`](../../tools/cli-commands.toml) (run, daemon, inventory, status, verify-state, doctor, serve, link request, admin, catalog rebuild); selects backend and adapters | 3, 5, 6, 7 | all of the above | Phases 3, 5, 6, and 7 not started — documentation-only |
 
 ## Boundary rules
 
@@ -119,5 +131,9 @@ cargo test --workspace
 cargo doc --workspace --no-deps
 ```
 
-With no external dependencies, a clean checkout builds without network access.
-The verification harness wires these into CI as a separate work item.
+External dependencies now exist (see the workspace baseline), and the
+committed lockfile pins their versions and checksums, so a clean checkout
+builds reproducibly: the crates are fetched from the registry on first build,
+and compiling the client state database's bundled SQLite adds a C toolchain
+to the build prerequisites. The verification harness wires these into CI as a
+separate work item.

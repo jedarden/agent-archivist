@@ -23,10 +23,16 @@ This repository records the architecture before the private,
 deployment-specific prototype is generalized. It contains no transcripts,
 credentials, infrastructure inventory, or history copied from that prototype.
 
-The Rust workspace is scaffolded: twelve crates with fixed boundaries, a pinned
-toolchain, a committed lockfile, and no production behavior yet. The
+The twelve-crate boundary map fixed at Phase 0 is unchanged, still on the
+pinned toolchain and the committed lockfile, and implementation now fills it
+in phase by phase: the protocol core (canonical serialization, deterministic
+identifiers, conformance-corpus replay), the owned Ed25519/SHA-512 trust
+primitives, the storage contract with a portable S3 backend behind it, and
+the first client-engine slices carry landed, verification-gated behavior,
+while the ingestion data plane, harness adapters, and the `archivist` CLI are
+still ahead of their phases. The
 [crate ownership map](docs/notes/crate-ownership.md) states each crate's
-purpose, its phase, and its dependency boundary.
+purpose, its phase, its dependency boundary, and what it carries today.
 
 ## Workspace
 
@@ -149,10 +155,13 @@ committed.
 
 ## Status
 
-Architecture and requirements are established. The implementation workspace is
-scaffolded and its crate boundaries are fixed; behavior arrives through the
-phases in the [implementation plan](docs/plan/plan.md). No production-ready
-client or server is included yet.
+Architecture and requirements are established. The crate boundaries fixed at
+Phase 0 hold; implementation advances through the phases in the
+[implementation plan](docs/plan/plan.md), and the
+[requirement-verification register](tools/verification-register.json) is the
+machine-checked statement of which requirements are implemented and which are
+still planned — most remain planned, and this remains a design-stage
+repository. No production-ready client or server is included yet.
 
 ## License
 
