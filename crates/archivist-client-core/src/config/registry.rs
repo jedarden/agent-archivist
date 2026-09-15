@@ -723,7 +723,9 @@ mod tests {
             "storage.raw_read_credentials_ref",
             "storage.offline_restore_credentials_ref",
         ] {
-            let key = registry.key(name).unwrap_or_else(|| panic!("{name} must be registered"));
+            let key = registry
+                .key(name)
+                .unwrap_or_else(|| panic!("{name} must be registered"));
             assert!(key.secret() && key.optional() && !key.required());
             assert!(!key.flag_tier());
         }

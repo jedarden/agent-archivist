@@ -133,7 +133,9 @@ fn defaults_apply_and_typed_accessors_resolve() {
         "one resolved value per non-optional registered key"
     );
     assert!(
-        config.reference("storage.raw_read_credentials_ref").is_none(),
+        config
+            .reference("storage.raw_read_credentials_ref")
+            .is_none(),
         "an optional reference absent from every tier resolves to nothing"
     );
     assert!(
@@ -595,7 +597,11 @@ fn an_optional_reference_resolves_when_supplied_and_nothing_when_absent() {
     // decision-missing failure, which is reserved for required keys.
     let omitted = base_sources();
     let config = omitted.load().expect("omitted optional reference");
-    assert!(config.reference("storage.raw_read_credentials_ref").is_none());
+    assert!(
+        config
+            .reference("storage.raw_read_credentials_ref")
+            .is_none()
+    );
 }
 
 // --- required keys and the stable error surface ---------------------------
