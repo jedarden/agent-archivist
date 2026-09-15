@@ -180,6 +180,47 @@ cache (EC-09). The vectors are synthetic corpus keys whose seeds are one
 byte repeated 32 times (documented in the file); the Rust replay is
 [`crates/archivist-auth/tests/authority_corpus.rs`](../../crates/archivist-auth/tests/authority_corpus.rs).
 
+## The current-pointer bundles
+
+[`tools/controlgen.py`](../../tools/controlgen.py) generates the
+sibling bundles for the family's current-pointer write class, pinned
+byte-exact under
+[`schemas/v1/examples/control/`](../../schemas/v1/examples/control/)
+and replayable offline against that directory's
+[`keys.json`](../../schemas/v1/examples/control/keys.json) in any
+language:
+
+- `epoch-progression.json` — the linked-client epoch rule
+  (control-trust story item 1; control-trust-schemas note 5): the link
+  at epoch 1, strictly increasing revisions accepted, and stale
+  equal-epoch and lower-epoch writes rejected while their authority
+  signatures verify — the epoch rule, not signature mathematics, is
+  what rejects them. Two subjects pin that monotonicity is per subject.
+- `delegation-lifecycle.json` — the (relay, origin) relation's own
+  epoch sequence (control-trust story item 5): grant, revision,
+  withdrawal (the one move the current-pointer shape permits — the
+  store has no delete), a stale re-grant rejected, a deliberate
+  re-grant accepted, and a forged grant signed by the relay's own key
+  rejected as `untrusted-signer` — the epoch would strictly increase
+  and the signature is a valid Ed25519 signature, so only the check
+  against the named authority key rejects it; verification precedes
+  the epoch rule.
+
+Every record carries `canonical_bytes_sha256`, an `expected` outcome,
+and (for rejects) a `reason` — `stale-epoch` is the storage family's
+own closed error-class token
+(`crates/archivist-storage/src/error.rs`); each file's generation
+block states the decision procedure, and each history's fold must land
+on the file's `final_state`. Every key pair is derived from
+`SHA-256("archivist.control/v1 <name>")` and only public halves are
+committed. `tools/controlgen.py --verify` regenerates the bundles,
+byte-compares them, validates every record against the
+`archivist.control/v1` envelope registry per the
+`check-control-schemas.py` conventions, re-verifies every signature
+with the pure-Python Ed25519 verifier, and replays both decision
+procedures; `--self-test` proves the machinery without the committed
+bundle.
+
 ## Open questions
 
 - A zstd transport corpus would need a compressor-build-independent
