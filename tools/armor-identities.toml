@@ -1,0 +1,104 @@
+# ARMOR storage-identity registry for the agent-archivist tenant.
+#
+# The machine-readable record behind the six scoped identities in
+# docs/notes/armor-storage-provisioning.md ("Identities"). The gate that
+# keeps the registry and the note agreeing — ACL grammar, the no-delete
+# invariant, the holder classes from the plan's control-plane boundary,
+# and the note's identity and prefix tables row for row — is
+# tools/check-armor-identities.py.
+#
+# This file records references only: role names, auth-file entry names,
+# ACL strings, OpenBao paths, holder classes, and rotation cadence. It
+# never carries a credential value; values live only in OpenBao under
+# secret/rs-manager/iad-ci/armor/ and reach ARMOR through the
+# armor-credentials ExternalSecret (secret-by-reference everywhere).
+#
+# Fields:
+#   role                  display name, matches the note's identities table
+#   auth_file_name        entry name in the ARMOR_AUTH_FILE document
+#   acl                   one or more ARMOR ADR-012 strings,
+#                         "<bucket>:<prefix>:<verbs>", verbs from
+#                         {get, put, delete, list, abort}; every entry pins
+#                         its verbs explicitly (no verb segment = all verbs)
+#   openbao_path          per-role copy under the rs-manager authority
+#   holder                display string, matches the note's identities table
+#   class                 closed set:
+#                           ingest-replica  — resident in every ingest
+#                                             replica once deployed
+#                           offline         — never resident on any server
+#                           phase10-pipeline — held by the archivist server's
+#                                             Phase 10 catalog/derived
+#                                             pipelines once they land
+#   provisioned           date the identity was issued (ISO 8601)
+#   rotation_interval_days  90 for resident classes, 180 for offline — the
+#                         note's "Intended rotation interval per role"
+
+schema = "archivist.armor-identities/v1"
+note = "docs/notes/armor-storage-provisioning.md"
+bucket = "iad-ci"
+prefix_tree = "agent-archivist"
+
+[[identity]]
+role = "control reader"
+auth_file_name = "ARCHIVIST_CONTROL_READER"
+acl = ["iad-ci:agent-archivist/control/*:get+list"]
+openbao_path = "secret/rs-manager/iad-ci/armor/archivist-control-reader"
+holder = "ingest replicas"
+class = "ingest-replica"
+provisioned = "2026-09-14"
+rotation_interval_days = 90
+
+[[identity]]
+role = "raw writer"
+auth_file_name = "ARCHIVIST_RAW_WRITER"
+acl = ["iad-ci:agent-archivist/raw/*:put+list+abort"]
+openbao_path = "secret/rs-manager/iad-ci/armor/archivist-raw-writer"
+holder = "ingest replicas"
+class = "ingest-replica"
+provisioned = "2026-09-14"
+rotation_interval_days = 90
+
+[[identity]]
+role = "control admin"
+auth_file_name = "ARCHIVIST_CONTROL_ADMIN"
+acl = ["iad-ci:agent-archivist/control/*:put+list"]
+openbao_path = "secret/rs-manager/iad-ci/armor/archivist-control-admin"
+holder = "offline admin CLI only"
+class = "offline"
+provisioned = "2026-09-14"
+rotation_interval_days = 180
+
+[[identity]]
+role = "backup/restore"
+auth_file_name = "ARCHIVIST_BACKUP_RESTORE"
+acl = [
+  "iad-ci:agent-archivist/raw/*:get+list",
+  "iad-ci:agent-archivist/control/*:get+list",
+  "iad-ci:agent-archivist/catalog/*:get+list",
+  "iad-ci:agent-archivist/derived/*:get+list",
+]
+openbao_path = "secret/rs-manager/iad-ci/armor/archivist-backup-restore"
+holder = "offline backup tooling"
+class = "offline"
+provisioned = "2026-09-14"
+rotation_interval_days = 180
+
+[[identity]]
+role = "catalog writer"
+auth_file_name = "ARCHIVIST_CATALOG_WRITER"
+acl = ["iad-ci:agent-archivist/catalog/*:put+list"]
+openbao_path = "secret/rs-manager/iad-ci/armor/archivist-catalog-writer"
+holder = "Phase 10 catalog rebuild (not yet resident)"
+class = "phase10-pipeline"
+provisioned = "2026-09-15"
+rotation_interval_days = 90
+
+[[identity]]
+role = "derived writer"
+auth_file_name = "ARCHIVIST_DERIVED_WRITER"
+acl = ["iad-ci:agent-archivist/derived/*:put+list"]
+openbao_path = "secret/rs-manager/iad-ci/armor/archivist-derived-writer"
+holder = "Phase 10 derived projections (not yet resident)"
+class = "phase10-pipeline"
+provisioned = "2026-09-15"
+rotation_interval_days = 90

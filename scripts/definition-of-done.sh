@@ -209,6 +209,16 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # in-process fake client. The live run is a drill instrument, never a
   # gate.
   run_check "rotation probe"  python3 tools/rotation-drill-probe.py --self-test
+  # Armor identity set (docs/notes/armor-storage-provisioning.md,
+  # "Identities" and tools/armor-identities.toml): the machine-readable
+  # record of the six scoped storage identities — ADR-012 ACL grammar,
+  # the no-delete invariant with abort pinned to the raw writer, the
+  # closed holder classes, and the note's identity and prefix tables row
+  # for row, plus the current-state counts — so the documented set cannot
+  # drift from the provisioned one; a change to the identity set updates
+  # registry, note, and this gate in the same commit. `--self-test`
+  # proves the rejection paths.
+  run_check "armor identities"  python3 tools/check-armor-identities.py --self-test
   # Control trust family (docs/notes/control-trust.md and
   # docs/notes/control-trust-schemas.md): the archivist.control/v1
   # envelope registry, flat wrapper composition, closed shapes, the

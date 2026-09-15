@@ -86,6 +86,19 @@ one prefix over: `put+list`, no `get`, so a writer can append checkpoints or
 projections and list what is there, but never reads object bodies back
 through the write identity and holds no destroy capability.
 
+The identity set is machine-checked: `tools/armor-identities.toml` records
+the six identities — auth-file names, ACL strings, OpenBao paths, holder
+classes, rotation cadence; references only, never values — and
+`tools/check-armor-identities.py` gates the registry and this note against
+each other in the DoD fast lane (its `--self-test` form): ADR-012 grammar,
+the no-delete invariant with `abort` pinned to the raw writer alone, the
+closed holder classes, the identity and prefix tables row for row, and the
+current-state counts. A provisioning change that alters the identity set
+must update the registry and this note in the same commit or the gate
+fails. What the gate cannot see is OpenBao itself: verifying the
+provisioned state against the documented one stays the rotation procedure's
+job (property checks against the live instance).
+
 ## Raw writer and abort
 
 ARMOR granted `AbortMultipartUpload` its own `abort` verb on 2026-09-13
@@ -464,7 +477,7 @@ the per-role path change. End-to-end cost is bounded by one ESO refresh
    never a file the transcript can read.
 3. **Write the merged document (CAS+1).** Read
    `secret/rs-manager/iad-ci/armor/credentials` (single KV field
-   `credentials.yaml`, ten 4-line entries: `name`/`access_key`/
+   `credentials.yaml`, twelve 4-line entries: `name`/`access_key`/
    `secret_key`/`acl`) via the read identity into a mode-600 tmpfs file;
    rewrite ONLY the role's block — replace the `access_key` and
    `secret_key` lines, leaving the `acl` line untouched for a pure
