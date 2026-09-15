@@ -12,12 +12,15 @@ The intended system has two deliberately small halves:
 
 S3 is the durable source of truth. ARMOR can provide the S3-compatible encrypted
 storage path for a deployment, but it is an integration rather than a requirement.
-MinIO is the reference implementation the storage compatibility suite qualifies on
-every full verification run, and Backblaze B2 plus ARMOR's S3 path are the target
-deployment profiles. AWS S3, Garage, and other compatible implementations are
-expected to be usable through the same storage contract but are optional,
-community-supported profiles, not qualification targets: until a suite run
-qualifies one, it carries no deployment profile and no capability claim.
+MinIO is the reference implementation the storage compatibility suite qualifies
+on every full verification run, and Backblaze B2 plus ARMOR's S3 path are the
+target deployment profiles. AWS S3 and Garage, like any other compatible
+implementation, are community profiles: each carries a qualification record in
+[the storage-profile registry note](docs/notes/storage-profiles.md), and both
+stand unqualified as of 2026-09-15 — no run of the storage compatibility suite
+has been executed against either. Until a recorded run says otherwise, neither
+carries a deployment profile or a capability claim; the note defines what a
+community qualification run requires and what qualifying one would create.
 
 This repository records the architecture before the private,
 deployment-specific prototype is generalized. It contains no transcripts,

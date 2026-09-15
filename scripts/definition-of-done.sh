@@ -9,8 +9,8 @@
 #     graph, license gate, error-code registry gate, metrics registry
 #     gate, config-key registry gate, wire-schema coherence gate, CLI
 #     command registry gate,
-#     release container baseline gate, control trust schema gate,
-#     threat-model acceptance gate,
+#     release container baseline gate, storage-profile registry gate,
+#     control trust schema gate, threat-model acceptance gate,
 #     synthetic-fixture, conformance-corpus, compat-corpus,
 #     inference-corpus, and usage-summary-corpus
 #     regeneration and content scan,
@@ -192,6 +192,15 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # the same-commit rule for the two version records walked over git
   # history; `--self-test` proves the rejection paths.
   run_check "release container baseline"  python3 tools/check-release-container.py --self-test
+  # Storage-profile registry (docs/notes/storage-profiles.md and
+  # tools/storage-profiles.toml): the community qualification path —
+  # profile classes with MinIO pinned as the one reference profile,
+  # append-only per-profile records whose shape follows the outcome, the
+  # five-axis capability matrix with closed tokens and multipart
+  # commit/abort verified, and registry/note/README coherence including
+  # the retirement of the unevidenced usability claim; `--self-test`
+  # proves the rejection paths.
+  run_check "storage profiles"  python3 tools/check-storage-profiles.py --self-test
   # Rotation-drill probe (docs/notes/armor-storage-provisioning.md,
   # "Rotation procedure" steps 1/5/6): the live instrument takes credential
   # pairs via environment only and prints only HTTP status and S3 error

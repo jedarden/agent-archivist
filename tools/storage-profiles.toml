@@ -1,0 +1,69 @@
+# Machine-readable storage-profile registry for Agent Archivist.
+#
+# The normative conventions live in docs/notes/storage-profiles.md; this file
+# is the qualification record they define, and tools/check-storage-profiles.py
+# (fast lane of scripts/definition-of-done.sh) rejects any entry that violates
+# them.
+#
+# Nothing here claims a capability. A record states what one compatibility
+# suite run observed, or why no run could qualify the profile; an unknown
+# result is never strengthened into a guarantee (plan Section 10). Reference
+# and target profiles carry no records in this file: their qualification
+# happens in the suite's own lanes (every full verification run for the
+# reference profile, before compatible releases and before deployment for the
+# target profiles), so recording it here would be a second, weaker bookkeeping
+# of the same fact. Community profiles are qualified only by the records
+# below.
+#
+# Records are append-only. A record is never edited or deleted, only
+# superseded by a newer record on the same profile; a profile's standing is
+# its latest record. Entries MUST NOT contain endpoints, hostnames, bucket
+# names, account or tenant identifiers, or credentials (requirements PUB-002,
+# SEC-010) — the gate scans for the obvious shapes of all of them.
+
+schema = "archivist.storage-profiles/v1"
+
+# ---------------------------------------------------------------------------
+# Profiles: the named S3 implementations the documents recognize, each with
+# the class docs/notes/storage-profiles.md Section 1 defines.
+# ---------------------------------------------------------------------------
+
+[profiles.minio]
+class = "reference"
+description = "MinIO, the local reference S3 implementation the storage compatibility suite qualifies on every full verification run (plan Section 7.7)."
+
+[profiles.backblaze-b2]
+class = "target"
+description = "Backblaze B2's S3-compatible API, a target deployment profile qualified on an isolated synthetic prefix before each compatible release."
+
+[profiles.armor]
+class = "target"
+description = "ARMOR's S3-compatible encrypted storage path, a target deployment profile qualified before deployment there."
+
+[profiles.aws-s3]
+class = "community"
+description = "Amazon Web Services S3, a community profile qualified only by a recorded community run of the compatibility suite."
+
+[profiles.garage]
+class = "community"
+description = "Garage, the Deuxfleurs self-hosted S3-compatible object store, a community profile qualified only by a recorded community run of the compatibility suite."
+
+# ---------------------------------------------------------------------------
+# Qualification records. The two below close the gap the README used to paper
+# over with "expected to be usable": neither community profile has evidence,
+# so both stand explicitly unqualified until a run exists.
+# ---------------------------------------------------------------------------
+
+[[records]]
+profile = "aws-s3"
+date = "2026-09-15"
+outcome = "unqualified"
+submitted_by = "maintainer"
+reason = "No qualification run executed. The storage compatibility suite is itself a planned Phase 2 deliverable (register verification T-OPS-006, status planned), so no suite harness exists to run; and the project's verification baseline uses no external credentials or services, so project automation holds no AWS S3 instance or credential to run it against. Qualification awaits a community operator run under docs/notes/storage-profiles.md Section 2."
+
+[[records]]
+profile = "garage"
+date = "2026-09-15"
+outcome = "unqualified"
+submitted_by = "maintainer"
+reason = "No qualification run executed. The storage compatibility suite is itself a planned Phase 2 deliverable (register verification T-OPS-006, status planned), so no suite harness exists to run against any Garage instance, and no community run has been submitted. Qualification awaits a community operator run under docs/notes/storage-profiles.md Section 2."
