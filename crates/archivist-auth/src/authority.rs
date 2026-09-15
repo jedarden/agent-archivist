@@ -8,7 +8,7 @@
 //! carries both public halves and both pinned-derivation key IDs, is
 //! addressed at the retiring half's own ID
 //! (`tenants/<tenant>/v1/control/authority-rotations/<previous_key_id>.json`,
-//! written by the offline [`ControlAdminStore`]), and is signed by the key
+//! written by the offline `ControlAdminStore`), and is signed by the key
 //! it retires — the predecessor's signed witness to its own retirement,
 //! because the successor cannot witness its own establishment. Verification
 //! always starts at the pinned root and walks forward:
@@ -17,7 +17,7 @@
 //!
 //! This module is the verifier core, storage-agnostic on purpose: the
 //! walk reads links through a caller-supplied fetch (the bytes a
-//! [`ControlReadStore`] serves at the predecessor's address), so the same
+//! `ControlReadStore` serves at the predecessor's address), so the same
 //! code resolves signers on a client, on an ingestion replica, and in
 //! tests, with the 60-second trust cache and every storage decision left
 //! to the caller (plan Section 5, EC-09).
@@ -56,9 +56,6 @@
 //! own `signed_at`, no record the stale view accepted is invalidated
 //! when the fresher view (the retirement link) arrives. Propagation lag
 //! can only widen acceptance temporarily, never retroactively revoke.
-//!
-//! [`ControlAdminStore`]: archivist_storage::control::ControlAdminStore
-//! [`ControlReadStore`]: archivist_storage::control::ControlReadStore
 
 use archivist_protocol::json::{self, Object, Value};
 use archivist_protocol::vocabulary::{
@@ -791,7 +788,7 @@ pub fn verify_control_record(
 /// rotation link.
 ///
 /// The gate runs before any store write: the offline
-/// [`ControlAdminStore`] reuses its immutable write class downstream
+/// `ControlAdminStore` reuses its immutable write class downstream
 /// (byte-identical re-put idempotent, incompatible object at the occupied
 /// key an integrity conflict), and everything the chain knows that the
 /// byte-level rule cannot see is decided here.
