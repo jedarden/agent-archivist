@@ -12,8 +12,12 @@ The intended system has two deliberately small halves:
 
 S3 is the durable source of truth. ARMOR can provide the S3-compatible encrypted
 storage path for a deployment, but it is an integration rather than a requirement.
-AWS S3, Backblaze B2, MinIO, Garage, and other compatible implementations should
-be usable through the same storage contract.
+MinIO is the reference implementation the storage compatibility suite qualifies on
+every full verification run, and Backblaze B2 plus ARMOR's S3 path are the target
+deployment profiles. AWS S3, Garage, and other compatible implementations are
+expected to be usable through the same storage contract but are optional,
+community-supported profiles, not qualification targets: until a suite run
+qualifies one, it carries no deployment profile and no capability claim.
 
 This repository records the architecture before the private,
 deployment-specific prototype is generalized. It contains no transcripts,
