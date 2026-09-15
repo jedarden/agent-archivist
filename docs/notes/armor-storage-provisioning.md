@@ -563,6 +563,13 @@ channel. Both drills to date (control-reader, `aa-51a272be`; raw writer,
 
 ### Raw-writer rotation drill (2026-09-15, bead aa-d0c81e9e)
 
+Step 1 baseline, pinned 07:31:50Z against the then-serving pod
+`armor-7bdfd64cf5-h5n62` (0.1.1969): the pre-rotation pair's full
+positive cycle (list 200, create-mpu 200, upload-part 200, abort 204)
+plus the wrong-secret `SignatureDoesNotMatch` and out-of-scope
+`AccessDenied` calibrations, and that pod's startup dump carried the
+pre-rotation fingerprint `c2427785a68889dd`.
+
 The rotation wrote merged document v8 at 07:37:06Z and per-role
 path v4 at 07:38:11Z (a v3 field-name slip — stash keys `AKID`/`SECRET`
 instead of the path's `ACCESS_KEY`/`SECRET_KEY` convention — was
@@ -583,7 +590,42 @@ value reads):
 A second data point consistent with the control-reader decomposition
 above: pure ESO refresh phase (30m15s of the 0–60 min uniform window),
 the same +3s Reloader rollout, and a startup budget (~8m19s) inside the
-~10 min startupProbe cap. The step-6 flip matrix (positive cycle,
-retired-pair inverse, wrong-secret and out-of-scope calibration,
-startup-dump fingerprint) is the drill's remaining evidence and stays
-open on bead `aa-d0c81e9e`.
+~10 min startupProbe cap. That budget is structural, not
+drill-specific: this replacement pod's manifest load hit the same 480 s
+timeout on the prior pod's stale writer shard
+(`armor-7bdfd64cf5-h5n62`) and continued with an empty manifest index —
+the Ready delay is the startup sequence, not the rotation.
+
+### Enforcement flip (live, 10:59:42Z)
+
+Step-6 matrix, run via `tools/rotation-drill-probe.py` over a transient
+port-forward to the drill's own replacement pod `armor-664d76cbbd-mrx9n`
+(no restarts since it went Ready at 08:16:48Z, so exactly one rollout
+separates the pre-write pin from the flip), credentials by environment
+only, only status and error codes printed:
+
+| # | Caller | Operation | Observed |
+|---|---|---|---|
+| 1 | raw writer, rotated pair | ListObjectsV2 prefix `agent-archivist/raw/` | 200 |
+| 2 | raw writer, rotated pair | CreateMultipartUpload → UploadPart 64 KiB → AbortMultipartUpload | 200 / 200 / 204, nothing left behind |
+| 3 | raw writer, rotated pair | ListObjectsV2 prefix `agent-archivist/control/` (no grant) | 403 AccessDenied |
+| 4 | rotated access key, wrong secret | ListObjectsV2 prefix `agent-archivist/raw/` | 403 SignatureDoesNotMatch |
+| 5 | raw writer, retired pair | ListObjectsV2 prefix `agent-archivist/raw/` | 403 InvalidAccessKeyId |
+
+Rows 3–4 calibrate row 5 the same way as the control-reader flip: the
+retired pair's refusal is identity-level (key unknown to ARMOR), not a
+signature error and not an ACL refusal; rows 1–2 are in-scope
+authorizations, and row 2 leaves no residue (the session is aborted
+in-run; no archivist identity holds `delete`). With the
+pre-propagation inverse pinned at 07:38:30Z against the pre-rollout pod
+(new pair `403 InvalidAccessKeyId`, retired pair 200), the flip is
+exclusively attributable to the propagation event.
+
+Offline confirmation, without printing keys: the replacement pod's
+`ARMOR starting` dump keys each credential by identifier fingerprint,
+and the rotated raw-writer fingerprint `4e5d334895dfff80` is live there
+with normalized ACL `agent-archivist/raw/:{abort,list,put}`; the retired
+fingerprint `c2427785a68889dd` appears nowhere in the pod's log. The
+drill is complete. KV state matches the interval table: merged document
+v9 (the Phase 10 writers appended on top of this drill's v8),
+raw-writer per-role v4.
