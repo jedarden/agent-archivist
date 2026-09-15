@@ -339,3 +339,103 @@ v7, `.../archivist-control-reader` v2 — current serving state matches
 both. Residue noted: the `armor-credentials-externalsecret.yaml` header
 comment in declarative-config still lists five named credentials (ten
 since 2026-09-14); comment-only, no functional effect.
+
+## Rotation and revocation lifecycle (bead aa-d0c81e9e)
+
+Added 2026-09-15. The four identities are long-lived machine credentials;
+**rotation is the revocation mechanism** — a re-issued pair makes the
+retired one stop being accepted at the edge at the next propagation, and
+nothing is ever deleted. Every step below runs under the write-only
+provisioning identity (`bao-as rs-manager-provision`), by pipe, values
+never agent-visible; the merged document is read once per rotation via the
+read identity into a mode-600 tmpfs file that is shredded after the write.
+
+### Rotation procedure
+
+The same six steps rotate any of the four roles; only the entry block and
+the per-role path change. End-to-end cost is bounded by one ESO refresh
+(0–60 min, phase-uniform by schedule) plus the Reloader rollout — see
+"Rotation propagation" for the measured decomposition.
+
+1. **Pin the serving state.** Before writing anything: the serving pod's
+   `ARMOR starting` dump must show the role's current fingerprint (first
+   16 hex of SHA-256 of the access key ID), or a live positive call with
+   the current pair must succeed. This is the "old pair works" half of the
+   flip evidence and must predate the write.
+2. **Generate the replacement in place.** Pair shape: access key = 20
+   uppercase alphanumeric characters, secret = 64 hex characters, piped
+   straight from `openssl rand`/`tr` into the stash or KV — never argv,
+   never a file the transcript can read.
+3. **Write the merged document (CAS+1).** Read
+   `secret/rs-manager/iad-ci/armor/credentials` (single KV field
+   `credentials.yaml`, ten 4-line entries: `name`/`access_key`/
+   `secret_key`/`acl`) via the read identity into a mode-600 tmpfs file;
+   rewrite ONLY the role's block — replace the `access_key` and
+   `secret_key` lines, leaving the `acl` line untouched for a pure
+   rotation — asserting exactly two line-level replacements, the entry
+   count unchanged, and every other line byte-identical. Write back
+   through the provision identity with `-cas=<current>`.
+4. **Write the per-role path (CAS+1).** Same new pair into
+   `secret/rs-manager/iad-ci/armor/archivist-<role>` via the provision
+   identity with `-cas` (JSON `@file`; get the current version from
+   `bao kv metadata get` — 0 if the path does not exist). The two copies
+   must match, verified by comparison, never by printing.
+5. **Pin the inverse.** Against the then-serving pod, before propagation:
+   new pair → `403 InvalidAccessKeyId`, retired pair → still
+   200/2xx. This is what later makes the flip exclusively attributable
+   to the propagation event rather than to a coincidental restart.
+6. **Verify the flip.** After one ESO refresh materializes the Secret
+   (observable as `status.refreshTime` bump and a Secret resourceVersion
+   change — no value reads) and Reloader replaces the pod: new pair
+   positive cycle (list / create-mpu / upload-part / abort for the raw
+   writer; list for the reader), retired pair → `403 InvalidAccessKeyId`,
+   wrong secret → `403 SignatureDoesNotMatch`, out-of-scope prefix →
+   `403 AccessDenied` (the last two calibrate the refusal as
+   signature- vs ACL-level). Offline: the replacement pod's startup dump
+   must show the new fingerprint and the retired fingerprint must appear
+   nowhere.
+
+Every rotation runs the full step-6 matrix, so **every rotation is itself
+a drill** of the propagation path — no separate drill cadence is needed;
+the calendar rotations below keep it exercised.
+
+### Intended rotation interval per role
+
+| Role | Interval | Anchor (current version) | Next due | Rationale |
+|---|---|---|---|---|
+| control reader | 90 days | v2, 2026-09-15 | 2026-12-14 | resident in every ingest replica once deployed (`aa-22f5652d`) |
+| raw writer | 90 days | v3, 2026-09-15 | 2026-12-14 | resident in every ingest replica; write-scoped |
+| control admin | 180 days | v1, 2026-09-14 | 2027-03-13 | offline admin CLI only; never resident on any server |
+| backup/restore | 180 days | v1, 2026-09-14 | 2027-03-13 | offline backup tooling; never resident |
+
+The 90/180-day split keeps the always-resident pairs (merged auth file
+today; per-replica ExternalSecrets once ingest replicas deploy) on a
+quarterly cadence and the offline pairs on a semiannual one. Event-driven
+rotation overrides the calendar for all four: immediately on suspected
+disclosure, on turnover of the person or tooling holding an offline pair,
+or whenever a value is observed outside the OpenBao → ESO → auth-file
+channel. Both drills to date (control-reader, `aa-51a272be`; raw writer,
+`aa-d0c81e9e`) ran as event-driven exercises of the documented path.
+
+### Revocation
+
+- **Suspected compromise, any role:** run the rotation procedure out of
+  cycle. The only irreducible delay is the ESO refresh phase — worst case
+  one refresh interval plus the ~10 min rollout budget. If the per-role
+  OpenBao path itself is the leak, agents cannot delete it (`delete` was
+  removed from every agent-reachable policy fleet-wide, 2026-08-31):
+  rotate anyway, treat every historical version as burned, and ask an
+  operator to prune history if the exposure was of the store itself.
+- **Deregistering an identity entirely** (e.g. retiring a role after a
+  migration): remove its entry from the merged document via an
+  entry-level transform asserting the removal, and overwrite the per-role
+  path with a fresh pair reserved for future re-registration (never
+  resurrect an old version). ARMOR drops the identity at the next
+  propagation. Per-role paths are append-only under agent policy;
+  history is retained (`max_versions=20`) by design.
+- **The control-admin identity is break-glass:** its revocation or
+  deregistration is an operator decision, never an agent action.
+
+### Raw-writer rotation drill (2026-09-15, bead aa-d0c81e9e)
+
+Recorded live below after completion.
