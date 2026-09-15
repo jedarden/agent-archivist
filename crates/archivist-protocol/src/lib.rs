@@ -25,6 +25,10 @@
 //! - [`object_key`] — server-derived object keys assembled only from validated
 //!   identifiers, sharded digests, and the pinned storage profile (plan
 //!   Section 7.5).
+//! - [`usage_summary`] — the derived usage-summary record of plan Phase 10
+//!   (token accounting): the deterministic derivation from an adapter
+//!   projection's reading of captured inference records to the canonical
+//!   record, its digest, and its object key.
 //! - [`envelope`] — the version 1 ingest envelope: field-level bounded
 //!   validation, unknown-field retention, reserved-name rejection, and
 //!   identity re-derivation.
@@ -56,4 +60,5 @@ pub mod envelope;
 pub mod json;
 pub mod object_key;
 pub mod sha256;
+pub mod usage_summary;
 pub mod vocabulary;
