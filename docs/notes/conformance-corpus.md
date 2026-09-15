@@ -8,10 +8,13 @@ cases, altered multipart cases, and retry-after-window tests"); bead
 `aa-cfc9f227`. Requirements VAL-002, ID-005–ID-009, RCPT-003/RCPT-004/
 RCPT-006, EC-03/EC-05A, STO-002/STO-004/STO-013, IA-02, PI-01, PI-05.
 
-The corpus is a committed, byte-pinned bundle of complete ingest
+The ingest corpus is a committed, byte-pinned bundle of complete ingest
 attempts — envelope, payload, exact multipart body, per-attempt
 signature parameters, and the expected receipt or error body — plus the
-pure derivation and canonicalization tables behind them. Any
+pure derivation and canonicalization tables behind them. It is the
+ingest family's half of the repo's committed corpora, not the only one:
+the control trust family keeps its own byte-pinned bundle next door,
+documented in [`control-corpus.md`](control-corpus.md). Any
 implementation, in any language, replays the corpus offline with only
 the public keys in `keys.json`: recompute the identities, re-frame the
 Ed25519 messages, verify the signatures, and walk the receipt chains.
@@ -163,6 +166,12 @@ the receipt chain and the manifest's `asserts`.
 
 ## The control-family bundle
 
+The control family's corpus has its own note —
+[`control-corpus.md`](control-corpus.md), the scenario map for every
+pinned record, acceptance-table verdict, regeneration command, and
+replay test. What follows is the chain bundle in the ingest note's own
+terms.
+
 [`schemas/v1/examples/control/authority-rotation-chain.json`](../../schemas/v1/examples/control/authority-rotation-chain.json)
 is the sibling bundle for the control trust family's authority-rotation
 record (control-trust story item 7; `ID-010`): byte-pinned chain links,
@@ -188,7 +197,11 @@ byte-exact under
 [`schemas/v1/examples/control/`](../../schemas/v1/examples/control/)
 and replayable offline against that directory's
 [`keys.json`](../../schemas/v1/examples/control/keys.json) in any
-language:
+language. The corpus now spans six scenario bundles — the two below,
+plus `revocation.json`, `key-rotation.json`, and
+`receipt-key-cohort.json` on the immutable write class — and the full
+record-by-record scenario map lives in
+[`control-corpus.md`](control-corpus.md):
 
 - `epoch-progression.json` — the linked-client epoch rule
   (control-trust story item 1; control-trust-schemas note 5): the link

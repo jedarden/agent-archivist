@@ -734,7 +734,12 @@ tools/check-control-schemas.py --self-test # rejection paths
 Cryptographic verification — real Ed25519 authority signatures over real
 records — is Phase 3 conformance work; schema validation here is
 syntactic and structural only. No private key is generated, pinned, or
-stored for schema work at any point.
+stored for schema work at any point. What the shapes do have committed
+against them today is the [control verification
+corpus](control-corpus.md): the same zero-entropy discipline, scaled
+from these single golden records into 40 byte-pinned history records
+with pinned expected outcomes and their acceptance tables, every one of
+them validated against this family's envelope registry.
 
 The family shares `schemas/v1/common.json` with the ingest wire and raw
 provenance families (one vocabulary per version directory) and reuses the

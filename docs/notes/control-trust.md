@@ -14,7 +14,10 @@ machine-readable index of the family lives in
 [`tools/control-records.toml`](../../tools/control-records.toml); the
 gate that keeps every home agreeing is
 [`tools/check-control-schemas.py`](../../tools/check-control-schemas.py)
-in the fast lane of `scripts/definition-of-done.sh`.
+in the fast lane of `scripts/definition-of-done.sh`; and the family's
+committed golden-vector bundle — every record byte-pinned with its
+pinned expected outcome — is the control verification corpus, mapped
+record by record in [control-corpus.md](control-corpus.md).
 
 ## The trust story in one pass
 
@@ -206,7 +209,13 @@ tools/check-control-schemas.py --self-test # rejection paths
 
 Cryptographic verification — real Ed25519 authority signatures over real
 records — is Phase 3 conformance work; schema validation here is
-syntactic and structural only.
+syntactic and structural only. The family's offline cryptographic
+proof, however, already exists as golden vectors: the [control
+verification corpus](control-corpus.md) commits 40 tenant-authority-signed
+records with pinned outcomes under
+`schemas/v1/examples/control/`, checked byte-exactly in the fast lane
+by `tools/controlgen.py --verify` and replayed offline by the
+archivist-auth suites (`control_corpus.rs`, `authority_corpus.rs`).
 
 ## Ownership and neighbors
 
