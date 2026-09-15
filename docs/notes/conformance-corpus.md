@@ -161,6 +161,25 @@ the receipt chain and the manifest's `asserts`.
   signing preimage from the bundle's own inputs, byte for byte, using
   the crate's owned JSON parser (no new dependencies).
 
+## The control-family bundle
+
+[`schemas/v1/examples/control/authority-rotation-chain.json`](../../schemas/v1/examples/control/authority-rotation-chain.json)
+is the sibling bundle for the control trust family's authority-rotation
+record (control-trust story item 7; `ID-010`): byte-pinned chain links,
+sample control records signed around a mid-window rotation, and the
+pinned acceptance verdict for every (signer, `signed_at`) pair. Any
+implementation replays it offline with no server: recompute both key IDs
+as the lowercase-hex SHA-256 of the raw public halves, canonicalize per
+RFC 8785, verify each link's Ed25519 signature against the
+`previous_public_key` it carries over the canonicalization with
+`authority_signature` removed, walk fetch-verify-adopt from the pinned
+root, and evaluate acceptance at each record's own `signed_at` against
+the 24-hour `rotationVerificationOverlapHours` window — the dual-key
+window whose lag tolerance on a live deployment is the 60-second trust
+cache (EC-09). The vectors are synthetic corpus keys whose seeds are one
+byte repeated 32 times (documented in the file); the Rust replay is
+[`crates/archivist-auth/tests/authority_corpus.rs`](../../crates/archivist-auth/tests/authority_corpus.rs).
+
 ## Open questions
 
 - A zstd transport corpus would need a compressor-build-independent

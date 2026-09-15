@@ -62,6 +62,15 @@ explicitly governed consumers.
 - **ID-009** — A client **MUST** pin a tenant authority root during linking and
   verify receipts through a tenant-authority-signed server receipt-key record.
   Receipt-key rotation **MUST NOT** invalidate retained receipts.
+- **ID-010** — An authority-key rotation **MUST** publish one immutable link
+  per retired authority key, addressed by the key it retires and signed by it,
+  and verification of a tenant-authority-signed record **MUST** resolve the
+  signer by walking the chain forward from the client-pinned root: a successor
+  half verifies from its establishing link's instant, a retired half only
+  inside the 24-hour signing overlap, a retired half's later signature fails
+  closed, and no rotation invalidates a record that was verifiable at its own
+  signing instant. The language-neutral replay vectors live at
+  `schemas/v1/examples/control/authority-rotation-chain.json`.
 
 ## 4. Session and artifact identity
 
