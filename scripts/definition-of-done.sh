@@ -11,8 +11,8 @@
 #     command registry gate,
 #     release container baseline gate, control trust schema gate,
 #     threat-model acceptance gate,
-#     synthetic-fixture, conformance-corpus, compat-corpus, and
-#     inference-corpus
+#     synthetic-fixture, conformance-corpus, compat-corpus,
+#     inference-corpus, and usage-summary-corpus
 #     regeneration and content scan,
 #     the standalone contract verifier and its cross-implementation
 #     comparison against the Rust implementation (the plan Section 8
@@ -253,6 +253,16 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # the ordering/reconstruction invariants recomputed from the pinned bytes.
   require_modules jsonschema referencing \
     && run_check "inference corpus"  python3 tools/inferencegen.py --verify
+  # Usage-summary example corpus (docs/notes/usage-summary-schema.md):
+  # byte-exact regeneration of the five golden records, schema validation
+  # of every record plus the reserved-name negative matrix, and the
+  # digest/object-key/unknown-never-zero invariants recomputed from the
+  # pinned bytes. The committed corpus is additionally replayed against
+  # the schema by the Rust suite
+  # (crates/archivist-protocol/tests/usage_summary_corpus.rs, slow lane),
+  # so the record shape is enforced where its producer will be built.
+  require_modules jsonschema referencing \
+    && run_check "usage corpus"  python3 tools/usagegen.py --verify
   # Requirement-to-verification mapping (docs/notes/verification.md):
   # `check` validates this tree's register (consistency with the
   # requirements document plus the located-check rule for anything marked

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:agent-archivist:schema:v1:common",
   "title": "Agent Archivist shared wire vocabulary (v1)",
-  "description": "Primitive shapes, identifier grammars, and the closed v1 enum sets shared by the ingest wire, raw provenance, and derived episode schema families (docs/notes/wire-schemas.md, docs/notes/raw-provenance-schemas.md, docs/notes/derived-episode-schema.md). Every enum here is fail-closed on unknown values per plan Section 7.1; the `x-archivist.bearing` metadata records which enums are security- or identity-bearing. Every numeric shape is an integer: protocol structures contain no floating-point values.",
+  "description": "Primitive shapes, identifier grammars, and the closed v1 enum sets shared by the ingest wire, raw provenance, derived episode, and usage summary schema families (docs/notes/wire-schemas.md, docs/notes/raw-provenance-schemas.md, docs/notes/derived-episode-schema.md, docs/notes/usage-summary-schema.md). Every enum here is fail-closed on unknown values per plan Section 7.1; the `x-archivist.bearing` metadata records which enums are security- or identity-bearing. Every numeric shape is an integer: protocol structures contain no floating-point values.",
   "$defs": {
     "uuid-v4": {
       "type": "string",
@@ -206,6 +206,12 @@
       "x-archivist": {
         "bearing": "security"
       }
+    },
+    "usage-summary-object-key": {
+      "type": "string",
+      "pattern": "^tenants/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/v1/derived/usage/1/usage-summaries/[0-9a-f]{2}/[0-9a-f]{64}\\.json$",
+      "maxLength": 512,
+      "description": "Server-derived usage-summary key (plan Section 7.5 derived layout `tenants/<tenant>/v1/derived/<pipeline>/<version>/<partition>/<object>`): tenant, the `usage` pipeline and its version segment, the `usage-summaries` partition, then the two-hex shard and the usage summary digest. The `<pipeline>/<version>` segments are the plan Section 7.1 derived-pipeline axis — a new projection version writes a new prefix and never rewrites an older row, and no derived prefix ever touches a raw namespace. The digest segment is the record's own `usage_summary_digest` and the two-hex segment is its shard, so the key is re-derivable from the stored record alone. The record itself cites its occurrence by ID, never by raw object path."
     },
     "derived-episode-object-key": {
       "type": "string",

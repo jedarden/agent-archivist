@@ -68,6 +68,8 @@ python3 tools/check-control-schemas.py --self-test  # control trust schema gate
 python3 tools/check-threat-model.py --self-test     # threat-model acceptance gate
 python3 tools/fixturegen.py --verify               # synthetic fixtures: byte-exact
                                                    # regeneration + content scan
+python3 tools/usagegen.py --verify                 # usage-summary corpus: byte-exact
+                                                   # regeneration + content scan
 python3 tools/contract-verifier.py self-test        # standalone contract verifier
 python3 tools/contract-verifier.py compare --quiet  # Rust vs standalone answer sheets
 python3 tools/verification-manifest.py check       # this tree's verification register
@@ -85,6 +87,7 @@ The script's lanes keep per-change gating cheap:
   gate, wire-schema
   coherence gate, release container baseline gate, control trust schema
   gate, threat-model acceptance gate, synthetic-fixture
+  regeneration and content scan, usage-summary-corpus
   regeneration and content scan, the standalone contract verifier and its
   cross-implementation comparison against the Rust implementation (the plan
   Section 8 Phase 1 exit gate), verification-register gate,

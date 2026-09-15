@@ -41,7 +41,7 @@ crate purpose/cycle check, the dependency license gate, the error-code
 registry gate, the metrics registry gate (name, unit, label, span, and
 status conventions, the forbidden-label list, and export-name collision
 checking), byte-exact regeneration and a content scan of the synthetic
-fixture and exact-inference example corpora, the
+fixture, exact-inference, and usage-summary example corpora, the
 requirement-verification register gate, the release
 container baseline gate (version equality, digest-pinned bases, the
 mtime-pinned reproducible install layer, the same-commit version rule),
@@ -108,6 +108,14 @@ committed.
   malformed, rewritten, and large synthetic sessions — its byte-exact
   regeneration gate, and the closed-vocabulary content scan that keeps
   private material out.
+- [Usage-summary schema](docs/notes/usage-summary-schema.md) defines the
+  content-free, per-occurrence token-accounting record the deterministic
+  catalog rebuild derives (plan Phase 10) — the two-state
+  harness-reported denominator whose absent usage is `unknown`, never
+  zero, the self-verifying `usage-summary-v1` digest, the reserved-name
+  boundary that keeps transcript content and monetary amounts out, and
+  the byte-exact regeneration gate and Rust replay behind the
+  `schemas/v1/examples/usage-summaries/` corpus.
 - [Requirement verification](docs/notes/verification.md) defines the stable
   requirement-to-test and operational-verification IDs, the
   machine-readable register mapping every normative requirement to its

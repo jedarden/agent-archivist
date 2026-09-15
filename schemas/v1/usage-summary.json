@@ -1,0 +1,391 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:usage-summary",
+  "title": "Agent Archivist usage summary (usage_summary_version 1, pipeline usage-v1)",
+  "description": "The versioned, content-free derived record the deterministic catalog rebuild emits per raw occurrence (plan Phase 10, token accounting): the model identity and service tier the source reported, the harness-reported token counts read straight from the raw bytes — input, output, cache-read, cache-creation by ephemeral class, and reasoning — the number of assistant messages they were summed from, the adapter projection version that read them, and the raw occurrence provenance — nothing else. It is called usage, never consumption: `consumption-policy-v1` governs who may read derived content, which is a different question. Absent, malformed, or unsupported source usage is the bounded state `unknown`, never zero, so an incomplete source can never read as free. The record is content-free: no transcript text, no prompt, no tool argument, and no monetary amount appears anywhere in it — cost is computed at query time, outside the archive, from model, service tier, token counts, and a versioned price table, because provider prices change retroactively and per contract, and a stored amount would be unreproducible from the raw bytes and wrong from the moment pricing moved. Because the record carries no transcript content it is not subject to `use-approval-v1`; it stays tenant-scoped and inherits raw retention — a swept occurrence loses its usage row in the same pass, because a catalog row that cannot be rebuilt from the raw prefix is a divergence. The record is derivation-stable: every member is a deterministic function of the cited occurrence's raw bytes, the immutable pipeline version, and the pinned adapter projection version — wall-clock, producer, and run identity never enter — so a rebuild from the same raw prefix and pipeline version reproduces byte-identical records and digests (plan Phase 10 exit gate).",
+  "type": "object",
+  "x-archivist": {
+    "mediaType": "application/vnd.agent-archivist.usage-summary+json;version=1",
+    "canonicalization": "rfc8785",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "objectKey": "schemas/v1/common.json#/$defs/usage-summary-object-key",
+    "writeOrder": "after the cited occurrence and its upload attestation are durable in the raw prefix; before any query-time cost computation, which happens outside the archive and never writes back",
+    "writeClass": "immutable, content-addressed by usage_summary_digest: one object per digest, a rebuild writes identical bytes, and nothing can displace it. The derived prefix never touches a raw namespace (plan Section 7.1 derived-pipeline axis: rebuildable; never overwrites raw data). Retention is inherited from the cited occurrence: the disabled-by-default mark-and-sweep (plan Section 7.10) removes the usage row in the same pass that removes the occurrence — the row exists only while the raw prefix it was rebuilt from does",
+    "derivationStability": "every member is a deterministic function of the cited occurrence's raw bytes, pipeline_id + pipeline_version, and the adapter projection version that read the usage region. No wall-clock, producer, run, assessment, approval, policy, or price input exists to make two derivations of the same inputs diverge — which is what makes the Phase 10 byte-identical-rebuild exit gate possible, and why every wall-clock, producer, and run-identity name is in the reserved list below",
+    "contentBoundary": "the record is numeric and referential only. The member grammars make the content-freeness claim mechanical rather than aspirational: model_id, service_tier, adapter_id, and the enum members are bounded tokens that cannot carry a sentence; the token counts are integers; and the reserved list rejects by name every carrier of transcript text, prompt, tool argument, or monetary amount. The negative matrix in tools/usagegen.py --verify injects each reserved name into a valid record and proves the schema rejects it",
+    "derivations": [
+      {
+        "id": "usage_summary_digest",
+        "label": "usage-summary-v1",
+        "algorithm": "sha256",
+        "fields": [
+          "canonical_usage_summary_bytes_without_usage_summary_digest"
+        ],
+        "fieldKinds": [
+          "bytes"
+        ],
+        "selfMember": "usage_summary_digest",
+        "source": "the usage summary record itself",
+        "description": "SHA-256 under the domain label `usage-summary-v1` (UTF-8 label bytes, one 0x00 terminator, then an 8-byte unsigned big-endian length and exactly that many bytes, the ingest-identifiers encodings reused) over the RFC 8785 canonicalization of the complete record with the `usage_summary_digest` member removed — exactly the exclusion shape `episode-v1`, the control-record-v1 signature, and the receipt-key certificate use, so one verifier core pattern walks every family. Self-verifying: an auditor recomputes it from the record's own bytes and refuses a mismatch (VAL-005). Acyclic by construction: the digest member is excluded from its own preimage, and no member of a usage summary references any record derived from it."
+      }
+    ],
+    "denominatorBoundary": "this schema defines the harness-reported denominator only. The Phase 9 provider-observed counts are a separate, reserved member with its own coverage state, added by the sibling record revision — never merged into `harness_usage`, never summed with it. The first denominator is semantic and complete for every supported adapter; the second is exact and covers only routed or hooked traffic; a row may carry both, either, or neither (plan Phase 10, token accounting). Until that member lands, the closed shape rejects everything outside `harness_usage`, so no interim encoding can blur the boundary",
+    "reservedFields": [
+      "aggregate_tokens",
+      "amount",
+      "approval",
+      "approved_by",
+      "assessment",
+      "assessment_digest",
+      "assessment_id",
+      "billing",
+      "blob_key",
+      "body",
+      "built_at",
+      "cents",
+      "charge",
+      "classification",
+      "combined_tokens",
+      "completion",
+      "context",
+      "cost",
+      "cost_usd",
+      "costs",
+      "created_at",
+      "currency",
+      "dollar",
+      "dollars",
+      "expenditure",
+      "fee",
+      "generated_at",
+      "ingested_at",
+      "labels",
+      "location",
+      "mapping",
+      "message",
+      "messages",
+      "object_key",
+      "path",
+      "plaintext",
+      "policy",
+      "policy_version",
+      "price",
+      "price_table",
+      "prices",
+      "pricing",
+      "produced_at",
+      "producer",
+      "prompt",
+      "prompts",
+      "pseudonym_map",
+      "pseudonym_salt",
+      "rate",
+      "rate_table",
+      "rates",
+      "raw_object_key",
+      "rebuilt_id",
+      "recorded_at",
+      "records",
+      "redacted_content",
+      "redaction_map",
+      "removed_content",
+      "response",
+      "reverse_map",
+      "risk_assessment",
+      "run_id",
+      "salt",
+      "severity",
+      "source_content",
+      "source_path",
+      "spend",
+      "spent",
+      "summed_tokens",
+      "text",
+      "tool_argument",
+      "tool_call",
+      "tool_input",
+      "tool_output",
+      "tool_result",
+      "total_cost",
+      "total_token_count",
+      "total_tokens",
+      "transcript",
+      "trust_decision",
+      "unit_price",
+      "url",
+      "usd",
+      "use_approval",
+      "usage_cost",
+      "verdict"
+    ]
+  },
+  "additionalProperties": false,
+  "required": [
+    "adapter_id",
+    "adapter_projection_version",
+    "occurrence_id",
+    "pipeline_id",
+    "pipeline_version",
+    "tenant_id",
+    "usage_summary_digest",
+    "usage_summary_version",
+    "harness_usage"
+  ],
+  "properties": {
+    "usage_summary_version": {
+      "const": 1,
+      "description": "Usage-summary schema major version (plan Section 7.1): the record-shape axis, independent of the pipeline axis below. Integer, currently 1. The derived family takes the control-family deviation from the plan's retain-ignore envelope rule, recorded for the episode family in docs/notes/derived-episode-schema.md and extended to this one: the closed shape is the compatibility rule, and anything beyond it — new members (including the reserved provider-observed denominator, which lands as a sibling record revision while the family is pre-release), redefined fields, changed digest rules — is usage_summary_version 2.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+    },
+    "usage_summary_digest": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "The record's own identity, construction `usage-summary-v1` (x-archivist.derivations above): SHA-256 over the RFC 8785 canonical bytes of this object with this member removed. Carried so the record is self-naming and re-derivable in place (VAL-005), so the object key is re-derivable from the stored bytes alone, and so the Parquet inventory export can carry a stable row identity that an auditor can recompute from the record itself.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "tenant_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "The tenant whose raw occurrence this row derives from (plan Section 7.5 derived key layout). The projection is content-free but not tenant-agnostic: it stays tenant-scoped like every derived record, which is what makes the sweep coupling and per-tenant inventory queries expressible without joining raw data.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "pipeline_id": {
+      "type": "string",
+      "enum": ["usage"],
+      "description": "The derived pipeline that produced this record (plan Section 7.1 derived-pipeline axis: pipeline name + version). v1 ships exactly one producer, the deterministic `usage` projection of the catalog rebuild; a future producer extends this enum additively together with the readers that understand it, and writes under its own derived prefix segment — never by repurposing `usage`'s. Security-bearing: the pipeline names the trust the digest rests on, so an unknown value fails closed.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+    },
+    "pipeline_version": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/version-token",
+      "description": "The immutable pipeline version (v1 pins `1`, the `usage-v1` projection). The mapping rules that turn a source's raw usage bytes into these counts — which usage dialects are supported, how the ephemeral classes map, the partial-coverage discipline — are frozen inside a version; a changed mapping is a new version writing a new derived prefix segment, never a silent rewrite of an old row (plan Section 7.1: rebuildable; never overwrites raw data). An occurrence whose usage the pinned mapping cannot honestly produce counts for yields the bounded `unknown` state inside this version, never a version bump mid-prefix.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "adapter_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/short-token",
+      "description": "The adapter whose projection read the usage region — the same adapter identifier grammar the raw provenance carries (`AdapterId`, a bounded lowercase token, deliberately not a closed enum so community adapters never require a schema change). The occurrence manifest pins which adapter captured the source; this member names which adapter projection the rebuild pinned for the usage read, so a row is auditable as `adapter_id` + `adapter_projection_version` without consulting anything outside the record and its cited occurrence.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "adapter_projection_version": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/version-token",
+      "description": "The immutable version of that adapter projection's usage reader (plan Section 7.1: adapter/projection version preserved in provenance; STO-010). This is the member that makes the numbers reproducible: the same raw bytes read by a different projection version are a different derivation and a different digest, never a silent reinterpretation of an old row.",
+      "x-archivist": { "bearing": "provenance", "compat": "required-v1" }
+    },
+    "occurrence_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "The single raw occurrence this row derives from — its `occurrence-v1` identity digest (STO-012: derived artifacts retain references to raw occurrence IDs). One row per occurrence: the catalog emits exactly one usage row per occurrence, and the row exists only while that occurrence does (the sweep takes them in the same pass). An occurrence ID, never a raw object path: the ID is an opaque digest that names evidence, while a path would hand a derived consumer a direct route to unredacted bytes — traceability runs occurrence ID, catalog, and the governed raw read.",
+      "x-archivist": { "bearing": "identity", "compat": "required-v1" }
+    },
+    "model_id": {
+      "$ref": "#/$defs/model-id",
+      "description": "The model identity the source reported for the assistant messages this row sums — the harness's own model string, read through the adapter projection, never inferred from a path, a hostname, or a pricing table. Omitted, never null, when the source names no model. A projection pinning this schema sums only within one model identity: an occurrence whose summed messages disagree is the bounded `unknown` state (reason `unsupported`) with this member omitted rather than guessed, because a sum without a single model is exactly the number the query-time cost path cannot use.",
+      "x-archivist": { "bearing": "identity", "compat": "optional-omitted-when-absent" }
+    },
+    "service_tier": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/short-token",
+      "description": "The service tier the source reported for the summed messages (the provider-side tier that the query-time price table keys on), read through the adapter projection. Omitted, never null, when the source names no tier. Same single-value discipline as `model_id`: heterogeneous tiers in one occurrence are `unsupported`, not a guess.",
+      "x-archivist": { "bearing": "provenance", "compat": "optional-omitted-when-absent" }
+    },
+    "harness_usage": {
+      "$ref": "#/$defs/harness-usage",
+      "description": "The harness-reported denominator: the token counts the harness itself wrote into the raw bytes, as read by the pinned adapter projection version. Exactly one of the two states below — a `measured` object whose every count is required and real, or an `unknown` object naming why no count exists. There is no third encoding: a source that omitted usage cannot be expressed as zeros, because the measured branch demands every member with at least one summed message, and omitting this member entirely is itself invalid — the bounded state is mandatory, not optional.",
+      "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+    }
+  },
+  "$defs": {
+    "model-id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}$",
+      "maxLength": 128,
+      "description": "Bounded model-identity token: provider-qualified model strings (`claude-opus-4-6`, `openai/gpt-5.3-mini`) with their namespace separators, but nothing that can carry prose — no whitespace, no control characters, no braces, and at most 128 bytes. The grammar is part of the content-freeness argument: a transcript sentence cannot fit, so no member of this record can be played a text channel by a buggy or hostile producer.",
+      "x-archivist": {
+        "byteMaxLength": 128,
+        "normalization": "none-opaque",
+        "bearing": "identity"
+      }
+    },
+    "harness-usage": {
+      "oneOf": [
+        { "$ref": "#/$defs/harness-usage-measured" },
+        { "$ref": "#/$defs/harness-usage-unknown" }
+      ],
+      "description": "The two-state contract of the harness-reported denominator. `measured` is a complete object: every count required, at least one assistant message summed, explicit zeros where the source genuinely reported none. `unknown` is the bounded refusal: a closed reason and nothing else, so an absent, malformed, or unsupported usage region can never masquerade as zero and a zero can never be mistaken for absence — the distinction the plan pins as 'an incomplete source can never read as free'."
+    },
+    "harness-usage-measured": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assistant_message_count",
+        "cache_creation",
+        "cache_read_tokens",
+        "input_tokens",
+        "output_tokens",
+        "reasoning_tokens",
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "const": "measured",
+          "description": "At least one assistant message in the occurrence reported a complete, well-formed usage object the pinned projection supports, under one model identity and one service tier; the counts below are the sum over exactly those messages.",
+          "x-archivist": { "bearing": "security", "failClosed": true }
+        },
+        "input_tokens": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Summed harness-reported input tokens, in the source's own accounting (cache-read and cache-creation tokens are stated separately below, never folded into this number)."
+        },
+        "output_tokens": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Summed harness-reported output tokens."
+        },
+        "cache_read_tokens": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Summed harness-reported cache-read tokens. Zero is a real observation — the source reported no cache reads — and is stated explicitly rather than omitted, so a member is never ambiguous between zero and unreported."
+        },
+        "cache_creation": {
+          "$ref": "#/$defs/cache-creation",
+          "description": "Summed harness-reported cache-creation tokens by ephemeral class."
+        },
+        "reasoning_tokens": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Summed harness-reported reasoning tokens. A source that reports no reasoning axis yields an explicit zero here — reasoning tokens absent from the source's vocabulary are a measured zero of that axis, not an unknown usage region, because the counts that do exist are still complete and well-formed."
+        },
+        "assistant_message_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807,
+          "description": "The number of assistant messages the counts were summed from — the denominator of the aggregate, and the coverage statement. There is no measured-with-zero-messages encoding: an occurrence where no message reported usage is `unknown`/`absent`, never zeros. A count below the occurrence's total assistant messages is the projection's disclosure of partial coverage — the sum names exactly what went into it, and is never padded with invented zeros to look complete.",
+          "x-archivist": { "bearing": "structural" }
+        }
+      }
+    },
+    "harness-usage-unknown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason",
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "const": "unknown",
+          "description": "No honest count exists for this occurrence under the pinned projection: the bounded refusal, carried instead of numbers. A member that is `unknown` carries no count member at all — zeros next to the refusal would reintroduce the ambiguity the state exists to remove.",
+          "x-archivist": { "bearing": "security", "failClosed": true }
+        },
+        "reason": {
+          "type": "string",
+          "enum": ["absent", "malformed", "unsupported"],
+          "description": "Why no count exists, from the closed v1 set. `absent`: the source carries no usage region for the occurrence's assistant messages at all. `malformed`: a usage region is present but cannot be parsed under the source's own declared shape — wrong types, negative or non-integer counts, incoherent nesting; data that cannot be summed without invention. `unsupported`: the region parses but the pinned adapter projection version does not support its shape — an unknown usage dialect, cache creation with no ephemeral-class split, or counts spanning more than one model identity or service tier in a single occurrence. Security-bearing and fail-closed: the reason is what keeps an incomplete source from reading as free, so a value outside the set is rejected, never coerced to the nearest guess.",
+          "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+        }
+      }
+    },
+    "cache-creation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ephemeral_1h",
+        "ephemeral_5m"
+      ],
+      "properties": {
+        "ephemeral_5m": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Summed harness-reported cache-creation tokens written to the 5-minute ephemeral cache class. Zero included: a class the source reported as unused is an explicit zero."
+        },
+        "ephemeral_1h": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Summed harness-reported cache-creation tokens written to the 1-hour ephemeral cache class. Zero included, as above. The two classes are the whole of the v1 cache-creation axis: a source reporting cache creation with no class split, or under an unrecognized class, is `unsupported` for the whole denominator — the projection never distributes an unclassifiable total across classes, because an invented split is indistinguishable from a real one downstream."
+        }
+      },
+      "description": "Cache-creation tokens by ephemeral class — the classes the harness-reported axis distinguishes, both always stated. Total cache-creation is the sum of the classes, computed at query time; no separate total member exists, so the record carries one authoritative breakdown rather than two numbers that can disagree."
+    }
+  },
+  "not": {
+    "anyOf": [
+      { "required": ["aggregate_tokens"] },
+      { "required": ["amount"] },
+      { "required": ["approval"] },
+      { "required": ["approved_by"] },
+      { "required": ["assessment"] },
+      { "required": ["assessment_digest"] },
+      { "required": ["assessment_id"] },
+      { "required": ["billing"] },
+      { "required": ["blob_key"] },
+      { "required": ["body"] },
+      { "required": ["built_at"] },
+      { "required": ["cents"] },
+      { "required": ["charge"] },
+      { "required": ["classification"] },
+      { "required": ["combined_tokens"] },
+      { "required": ["completion"] },
+      { "required": ["context"] },
+      { "required": ["cost"] },
+      { "required": ["cost_usd"] },
+      { "required": ["costs"] },
+      { "required": ["created_at"] },
+      { "required": ["currency"] },
+      { "required": ["dollar"] },
+      { "required": ["dollars"] },
+      { "required": ["expenditure"] },
+      { "required": ["fee"] },
+      { "required": ["generated_at"] },
+      { "required": ["ingested_at"] },
+      { "required": ["labels"] },
+      { "required": ["location"] },
+      { "required": ["mapping"] },
+      { "required": ["message"] },
+      { "required": ["messages"] },
+      { "required": ["object_key"] },
+      { "required": ["path"] },
+      { "required": ["plaintext"] },
+      { "required": ["policy"] },
+      { "required": ["policy_version"] },
+      { "required": ["price"] },
+      { "required": ["price_table"] },
+      { "required": ["prices"] },
+      { "required": ["pricing"] },
+      { "required": ["produced_at"] },
+      { "required": ["producer"] },
+      { "required": ["prompt"] },
+      { "required": ["prompts"] },
+      { "required": ["pseudonym_map"] },
+      { "required": ["pseudonym_salt"] },
+      { "required": ["rate"] },
+      { "required": ["rate_table"] },
+      { "required": ["rates"] },
+      { "required": ["raw_object_key"] },
+      { "required": ["rebuilt_id"] },
+      { "required": ["recorded_at"] },
+      { "required": ["records"] },
+      { "required": ["redacted_content"] },
+      { "required": ["redaction_map"] },
+      { "required": ["removed_content"] },
+      { "required": ["response"] },
+      { "required": ["reverse_map"] },
+      { "required": ["risk_assessment"] },
+      { "required": ["run_id"] },
+      { "required": ["salt"] },
+      { "required": ["severity"] },
+      { "required": ["source_content"] },
+      { "required": ["source_path"] },
+      { "required": ["spend"] },
+      { "required": ["spent"] },
+      { "required": ["summed_tokens"] },
+      { "required": ["text"] },
+      { "required": ["tool_argument"] },
+      { "required": ["tool_call"] },
+      { "required": ["tool_input"] },
+      { "required": ["tool_output"] },
+      { "required": ["tool_result"] },
+      { "required": ["total_cost"] },
+      { "required": ["total_token_count"] },
+      { "required": ["total_tokens"] },
+      { "required": ["transcript"] },
+      { "required": ["trust_decision"] },
+      { "required": ["unit_price"] },
+      { "required": ["url"] },
+      { "required": ["usd"] },
+      { "required": ["use_approval"] },
+      { "required": ["usage_cost"] },
+      { "required": ["verdict"] }
+    ]
+  }
+}
