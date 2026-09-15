@@ -2,8 +2,9 @@
 
 Provisioned 2026-09-14 (bead `aa-adeab1be`); raw-writer abort enablement
 2026-09-14 (bead `aa-e4dcf1c2`); abort deployment promotion and live
-enforcement matrix 2026-09-14 (bead `aa-e827d0f0`). Records the ARMOR-side storage
-decision for this tenant: the prefix tree, the four scoped identities that
+enforcement matrix 2026-09-14 (bead `aa-e827d0f0`); catalog/derived writer
+provisioning 2026-09-15 (bead `aa-649c5895`). Records the ARMOR-side storage
+decision for this tenant: the prefix tree, the six scoped identities that
 gate it, the OpenBao paths that hold them, and the raw writer's abort
 grant. The identity model is plan §"Control-plane boundary"; the ACL
 grammar is ARMOR ADR-012 (`<bucket>:<prefix>:<verbs>`, verbs from
@@ -37,20 +38,25 @@ One tenant-scoped tree under the ARMOR bucket:
 |---|---|---|
 | `agent-archivist/raw/` | blobs, occurrence manifests, upload attestations | active |
 | `agent-archivist/control/` | tenant-authority-signed trust records | active |
-| `agent-archivist/catalog/` | catalog checkpoints | reserved, Phase 10 |
-| `agent-archivist/derived/` | derived projections | reserved, Phase 10 |
+| `agent-archivist/catalog/` | catalog checkpoints | reserved, Phase 10 — writer provisioned 2026-09-15 |
+| `agent-archivist/derived/` | derived projections | reserved, Phase 10 — writer provisioned 2026-09-15 |
 
 Plan §7.5's logical scheme (`tenants/<tenant>/v1/{raw,control,catalog,derived}/…`)
 maps onto this tree per storage profile; the physical ARMOR keys are what the
 ACLs below guard. `catalog/` and `derived/` are provisioned in the
 backup/restore credential's ACL now so that enabling them in Phase 10 is a
-code event, not a credential event.
+code event, not a credential event — and since 2026-09-15 (bead
+`aa-649c5895`) each also has its own scoped write identity, so the Phase 10
+writers need no credential event either.
 
 ## Identities
 
-Four credentials, disjoint action-by-prefix policy. Values were generated in
+Six credentials, disjoint action-by-prefix policy. Values were generated in
 place and piped into OpenBao under the write-only provisioning identity; they
-have never been agent-visible text.
+have never been agent-visible text. The first four were provisioned
+2026-09-14 (bead `aa-adeab1be`); the two Phase 10 writers followed
+2026-09-15 (bead `aa-649c5895`, see "Catalog and derived writer
+provisioning").
 
 | Role | Auth-file name | ACL | Held by | OpenBao path (per-role copy) |
 |---|---|---|---|---|
@@ -58,20 +64,27 @@ have never been agent-visible text.
 | raw writer | `ARCHIVIST_RAW_WRITER` | `iad-ci:agent-archivist/raw/*:put+list+abort` | ingest replicas | `secret/rs-manager/iad-ci/armor/archivist-raw-writer` |
 | control admin | `ARCHIVIST_CONTROL_ADMIN` | `iad-ci:agent-archivist/control/*:put+list` | offline admin CLI only | `secret/rs-manager/iad-ci/armor/archivist-control-admin` |
 | backup/restore | `ARCHIVIST_BACKUP_RESTORE` | `iad-ci:agent-archivist/{raw,control,catalog,derived}/*:get+list` (four comma-separated entries) | offline backup tooling | `secret/rs-manager/iad-ci/armor/archivist-backup-restore` |
+| catalog writer | `ARCHIVIST_CATALOG_WRITER` | `iad-ci:agent-archivist/catalog/*:put+list` | Phase 10 catalog rebuild (not yet resident) | `secret/rs-manager/iad-ci/armor/archivist-catalog-writer` |
+| derived writer | `ARCHIVIST_DERIVED_WRITER` | `iad-ci:agent-archivist/derived/*:put+list` | Phase 10 derived projections (not yet resident) | `secret/rs-manager/iad-ci/armor/archivist-derived-writer` |
 
 Per-role paths hold `ACCESS_KEY` / `SECRET_KEY` (the same field convention as
 the `transcripts` path), so a future ingest-replica ExternalSecret references
-them directly. The same four pairs are entries in the ARMOR_AUTH_FILE
-document — that is how ARMOR itself learns them. Ingest replicas receive the
-first two ONLY; the plan is explicit that they never receive the control-admin
-credential.
+them directly. The same six pairs are entries in the ARMOR_AUTH_FILE
+document — that is how ARMOR itself learns them. Ingest replicas receive ONLY
+the control-reader and raw-writer credentials; the plan is explicit that they
+never receive the control-admin credential — nor the backup/restore pair, nor
+either Phase 10 writer, which belong to the archivist server's catalog and
+derived pipelines.
 
 The raw writer's `abort` covers only uncommitted multipart sessions —
 `abort` never implies `delete` (see Enforcement notes), so no credential in
 this set holds any destroy capability over committed objects.
 Notably the control admin is `put+list` without `get`: the admin CLI writes
 validated, tenant-authority-signed records and never reads raw or control
-data back through this identity.
+data back through this identity. The two Phase 10 writers repeat that shape
+one prefix over: `put+list`, no `get`, so a writer can append checkpoints or
+projections and list what is there, but never reads object bodies back
+through the write identity and holds no destroy capability.
 
 ## Raw writer and abort
 
@@ -119,6 +132,57 @@ uncommitted multipart sessions and still cannot destroy a committed object.
 This unblocks incomplete-upload teardown on the validation-failure and
 graceful-shutdown paths (bead `aa-1fa9b1dc`).
 
+## Catalog and derived writer provisioning (2026-09-15, bead aa-649c5895)
+
+Until 2026-09-15 the two reserved prefixes had a read grant only: the note
+above claimed enabling them in Phase 10 was "a code event, not a credential
+event", but no credential in the set could put to either prefix, so every
+Phase 10 writer (deterministic catalog rebuild, versioned Parquet inventory,
+derived projections such as redacted episodes and usage summaries) would
+have required a credential event after all. The two write identities in the
+table above close that gap, preserving the documented invariant that no
+credential holds destroy capability: `put+list` only, never `delete`, never
+`abort`.
+
+Provisioned under the write-only provisioning identity, by pipe and never
+agent-visible text, same as every change to this document:
+
+- **Merged document (CAS 8→9).** Exactly two entries appended —
+  `ARCHIVIST_CATALOG_WRITER` and `ARCHIVIST_DERIVED_WRITER` with the ACL
+  strings in the table — entry count 10→12, every pre-existing entry
+  byte-identical (asserted by structural diff of versions 8 and 9, names/
+  ACLs/key shapes only). The transform asserted exactly the two appended
+  blocks and nothing else.
+- **Per-role paths created at v1.** `archivist-catalog-writer` and
+  `archivist-derived-writer`, each verified to match its merged entry by
+  comparison, never by printing.
+- **Pair shape.** Access key 20 uppercase alphanumeric characters (the
+  archivist convention); secret key 40 characters — not the canonical
+  64-hex shape the rotation procedure below pins, which was recorded after
+  these pairs were minted. ARMOR imposes no key format (the auth-file
+  parser accepts any non-empty key), so the pairs stand; the first
+  calendar rotation of either role brings it to the canonical shape.
+- **Concurrency.** The raw-writer rotation drill (`aa-d0c81e9e`) landed as
+  merged-document v8 mid-provisioning; the CAS-guarded write re-read and
+  rebuilt on v8, so the two changes composed without either asserting
+  against a stale base.
+
+Verification: pre-pickup calibration over port-forward — backup/restore
+ListObjectsV2 on `agent-archivist/catalog/` returned 200 (endpoint, SigV4,
+and the read grant proven); the new catalog-writer pair returned 403 on
+both list and put (identity not yet known to ARMOR). Pickup followed the
+documented delivery chain (ESO refresh → Reloader rollout): the
+`armor-credentials` ExternalSecret materialized v9 at the 08:08:26Z refresh,
+Reloader started the replacement pod at 08:08:29Z, and that pod's startup
+dump — entry names and identifier fingerprints only — shows all twelve
+auth-file entries, with the catalog-writer and derived-writer fingerprints
+(`sha256:65f8885b053ed7ac`, `sha256:5ab94eafc82e2369`, first 16 hex of
+SHA-256 of the identifier) matching the provisioned pairs and normalized
+ACLs `agent-archivist/catalog/:{put,list}` and
+`agent-archivist/derived/:{put,list}`. The six-identity set is live at the
+edge as of that rollout; no object has been written under either prefix
+(the prefixes stay empty until the Phase 10 code lands).
+
 ## Enforcement notes
 
 - Prefix matching is literal `strings.HasPrefix` after ACL normalization:
@@ -139,7 +203,9 @@ Property-based (values never printed): each per-role path verified via
 verified at version 5 with the six pre-existing consumer entries
 (`FORGEJO_BACKUP`, `FORGEJO`, `CNPG_BACKUPS`, `CI_CACHE`,
 `RESTORE_VERIFIER`, `TRANSCRIPTS`) untouched, plus the four new entries with
-exactly the ACL strings above.
+exactly the ACL strings above. (A historical count: the set was four
+identities then; the two Phase 10 writers were appended 2026-09-15 — see
+"Catalog and derived writer provisioning".)
 
 Live authorization: positive and negative S3 calls per role against the
 serving iad-ci ARMOR pod. The full per-role matrix staged by the
@@ -320,19 +386,27 @@ three layers:
 - **Live cluster:** zero ExternalSecrets across iad-ci reference a
   per-role archivist path — every consumer secret targets its own
   per-consumer path (`forgejo`, `cnpg-backups`, `ci-cache`, `transcripts`,
-  …). The only cluster-side copy of the four archivist credentials is
-  ARMOR's own merged auth-file document, which must hold all four because
+  …). The only cluster-side copy of the six archivist credentials is
+  ARMOR's own merged auth-file document, which must hold all six because
   ARMOR is the enforcement point; it is not an ingest replica.
 - **OpenBao:** `archivist-control-admin` is at v1 — never re-issued and
   never copied since creation (2026-09-14T06:51:07Z);
   `archivist-backup-restore` likewise v1; `archivist-raw-writer` v2 (the
   recorded abort re-issue); `archivist-control-reader` v2 (this
-  rotation).
+  rotation). [Extended 2026-09-15, bead `aa-649c5895`: the per-role set
+  adds `archivist-catalog-writer` and `archivist-derived-writer`, each
+  created at v1 that day; no ExternalSecret anywhere references any
+  archivist per-role path, so the extension changes nothing about what
+  the cluster holds.]
 
 When ingest replicas are provisioned, their ExternalSecrets must
 reference only `secret/rs-manager/iad-ci/armor/archivist-control-reader`
 and `.../archivist-raw-writer` — never `.../archivist-control-admin`,
-which stays with the offline admin CLI.
+which stays with the offline admin CLI; never
+`.../archivist-backup-restore`, which stays with offline backup tooling;
+and never `.../archivist-catalog-writer` or
+`.../archivist-derived-writer`, which belong to the archivist server's
+Phase 10 catalog and derived pipelines.
 
 KV state after this exercise: `secret/rs-manager/iad-ci/armor/credentials`
 v7, `.../archivist-control-reader` v2 — current serving state matches
@@ -342,7 +416,7 @@ since 2026-09-14); comment-only, no functional effect.
 
 ## Rotation and revocation lifecycle (bead aa-d0c81e9e)
 
-Added 2026-09-15. The four identities are long-lived machine credentials;
+Added 2026-09-15. The six identities are long-lived machine credentials;
 **rotation is the revocation mechanism** — a re-issued pair makes the
 retired one stop being accepted at the edge at the next propagation, and
 nothing is ever deleted. Every step below runs under the write-only
@@ -352,7 +426,7 @@ read identity into a mode-600 tmpfs file that is shredded after the write.
 
 ### Rotation procedure
 
-The same six steps rotate any of the four roles; only the entry block and
+The same six steps rotate any of the six roles; only the entry block and
 the per-role path change. End-to-end cost is bounded by one ESO refresh
 (0–60 min, phase-uniform by schedule) plus the Reloader rollout — see
 "Rotation propagation" for the measured decomposition.
@@ -399,19 +473,48 @@ Every rotation runs the full step-6 matrix, so **every rotation is itself
 a drill** of the propagation path — no separate drill cadence is needed;
 the calendar rotations below keep it exercised.
 
+### Probe tool
+
+`tools/rotation-drill-probe.py` is the instrument for the live steps
+(1, 5, and 6 above). One invocation exercises one credential against
+the serving edge and prints only HTTP status codes and S3 error codes —
+never key material, never object contents — so its output is safe to
+record verbatim in a drill log. Modes: `list` (in-scope ListObjectsV2),
+`list-control` (out-of-scope ListObjectsV2), `cycle` (create-mpu →
+upload-part 64 KiB canary → abort-mpu, leaving nothing behind —
+`abort`, never `delete`). The full matrix is composed across
+invocations, one credential state per run: current pair positive
+cycle, retired pair `403 InvalidAccessKeyId`, wrong secret
+`403 SignatureDoesNotMatch`, out-of-scope `403 AccessDenied`.
+
+Inputs are environment variables only, values by reference:
+`ARMOR_PROBE_ENDPOINT` (the serving edge — both drills ran it over a
+transient port-forward to the serving pod), `ARMOR_PROBE_AKID` /
+`ARMOR_PROBE_SECRET` (the pair under test, exported from an OpenBao
+read into the environment without ever being printed), and optional
+shape overrides (`ARMOR_PROBE_BUCKET`, `ARMOR_PROBE_REGION`,
+`ARMOR_PROBE_PREFIX`, `ARMOR_PROBE_OOS_PREFIX`) whose defaults pin
+today's tree. Like the gate tools it carries a deterministic
+`--self-test` (in-process fake client; no network, no credentials, no
+boto3 import — the real import is lazy) wired into the DoD fast lane;
+the live run itself is deliberately not a gate, because it needs a
+reachable serving edge and real pairs.
+
 ### Intended rotation interval per role
 
 | Role | Interval | Anchor (current version) | Next due | Rationale |
 |---|---|---|---|---|
 | control reader | 90 days | v2, 2026-09-15 | 2026-12-14 | resident in every ingest replica once deployed (`aa-22f5652d`) |
-| raw writer | 90 days | v3, 2026-09-15 | 2026-12-14 | resident in every ingest replica; write-scoped |
+| raw writer | 90 days | v4, 2026-09-15 | 2026-12-14 | resident in every ingest replica; write-scoped |
 | control admin | 180 days | v1, 2026-09-14 | 2027-03-13 | offline admin CLI only; never resident on any server |
 | backup/restore | 180 days | v1, 2026-09-14 | 2027-03-13 | offline backup tooling; never resident |
+| catalog writer | 90 days | v1, 2026-09-15 | 2026-12-14 | Phase 10 catalog rebuild; write-scoped, resident only once Phase 10 lands |
+| derived writer | 90 days | v1, 2026-09-15 | 2026-12-14 | Phase 10 derived projections; write-scoped, resident only once Phase 10 lands |
 
 The 90/180-day split keeps the always-resident pairs (merged auth file
 today; per-replica ExternalSecrets once ingest replicas deploy) on a
 quarterly cadence and the offline pairs on a semiannual one. Event-driven
-rotation overrides the calendar for all four: immediately on suspected
+rotation overrides the calendar for all six: immediately on suspected
 disclosure, on turnover of the person or tooling holding an offline pair,
 or whenever a value is observed outside the OpenBao → ESO → auth-file
 channel. Both drills to date (control-reader, `aa-51a272be`; raw writer,
@@ -438,4 +541,27 @@ channel. Both drills to date (control-reader, `aa-51a272be`; raw writer,
 
 ### Raw-writer rotation drill (2026-09-15, bead aa-d0c81e9e)
 
-Recorded live below after completion.
+The rotation wrote merged document v8 at 07:37:06Z and per-role
+path v4 at 07:38:11Z (a v3 field-name slip — stash keys `AKID`/`SECRET`
+instead of the path's `ACCESS_KEY`/`SECRET_KEY` convention — was
+corrected a minute later; v3 is retained as history, per-role paths
+being append-only). t0 is the last write, matching the control-reader
+drill's convention. Observed by the drill's background watcher
+(ExternalSecret `status.refreshTime`, pod list, container status — no
+value reads):
+
+| Hop | Time (UTC) | Δ from write |
+|---|---|---|
+| OpenBao rs-manager writes (merged doc v8 07:37:06, per-role v4 07:38:11) | 07:38:11 | t0 |
+| `armor-credentials` ExternalSecret refresh materializes the Secret | 08:08:26 | +30m15s |
+| Reloader rollout: replacement pod `armor-664d76cbbd-mrx9n` process start | 08:08:29 | +3s |
+| Replacement pod Ready | 08:16:48 | +8m19s |
+| **End-to-end** | | **38m37s** |
+
+A second data point consistent with the control-reader decomposition
+above: pure ESO refresh phase (30m15s of the 0–60 min uniform window),
+the same +3s Reloader rollout, and a startup budget (~8m19s) inside the
+~10 min startupProbe cap. The step-6 flip matrix (positive cycle,
+retired-pair inverse, wrong-secret and out-of-scope calibration,
+startup-dump fingerprint) is the drill's remaining evidence and stays
+open on bead `aa-d0c81e9e`.

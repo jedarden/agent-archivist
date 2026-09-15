@@ -192,6 +192,14 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # the same-commit rule for the two version records walked over git
   # history; `--self-test` proves the rejection paths.
   run_check "release container baseline"  python3 tools/check-release-container.py --self-test
+  # Rotation-drill probe (docs/notes/armor-storage-provisioning.md,
+  # "Rotation procedure" steps 1/5/6): the live instrument takes credential
+  # pairs via environment only and prints only HTTP status and S3 error
+  # codes; --self-test proves that contract — statuses and error codes
+  # only, a planted pair unreachable, boto3 never imported — against an
+  # in-process fake client. The live run is a drill instrument, never a
+  # gate.
+  run_check "rotation probe"  python3 tools/rotation-drill-probe.py --self-test
   # Control trust family (docs/notes/control-trust.md and
   # docs/notes/control-trust-schemas.md): the archivist.control/v1
   # envelope registry, flat wrapper composition, closed shapes, the
