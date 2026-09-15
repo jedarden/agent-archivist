@@ -16,13 +16,18 @@ verbs, so every credential here pins its verbs explicitly).
 - Credential delivery: ARMOR reads named credentials from the YAML document
   mounted at `ARMOR_AUTH_FILE=/etc/armor/credentials.yaml`, materialized by
   the `armor-credentials` ExternalSecret from OpenBao
-  `secret/rs-manager/iad-ci/armor/credentials` (property `credentials.yaml`),
-  hot-reloaded on change — adding credentials requires no ARMOR Deployment
-  change.
-- rs-manager's OpenBao is the authority for `secret/rs-manager/*`; the
-  iad-ci-local instance that ESO reads is a replica fed by the ~30-minute
-  cross-cluster replicator, so a write here is visible to ARMOR within
-  roughly one ESO refresh interval plus one replication cycle.
+  `secret/rs-manager/iad-ci/armor/credentials` (property `credentials.yaml`).
+  On change the credential set is replaced with no ARMOR Deployment change —
+  measured 2026-09-15 the delivery is a Reloader-triggered pod replacement
+  (the deployment mounts the file via `subPath`, so the in-process 10 s
+  watcher stays armed but does not fire); see "Rotation propagation".
+- rs-manager's OpenBao is the authority for `secret/rs-manager/*`, and the
+  iad-ci ExternalSecret store resolves to that authority directly (ExternalName
+  Service → Tailscale proxy → `traefik-rs-manager.tail1b1987.ts.net:8200`;
+  the ~30-minute cross-cluster replicator is NOT in this path). A write here
+  is visible to ARMOR within one ESO refresh interval (1 h, phase-uniform)
+  plus the rollout window — measured end-to-end 35 m 07 s on 2026-09-15
+  (see "Rotation propagation").
 
 ## Prefix layout
 
@@ -102,9 +107,11 @@ writer's OWN uncommitted multipart uploads on the validation-failure path
    old pair (ingest replicas are not deployed yet), so the re-issue broke
    nothing.
 3. **Propagation, no restart.** rs-manager is the owning authority; the
-   change reaches ARMOR through the ~30-minute cross-cluster replicator,
-   the `armor-credentials` ExternalSecret refresh (1h interval), and the
-   auth-file hot-reload watcher (10s poll).
+   change reaches ARMOR through the `armor-credentials` ExternalSecret
+   refresh (1h interval) and a Reloader-triggered pod replacement.
+   [Corrected 2026-09-15, bead `aa-51a272be`: the original text credited
+   the ~30-minute cross-cluster replicator and the 10s in-file watcher —
+   neither is in the delivery path; see "Rotation propagation".]
 
 `delete` remains ungranted, permanently: `abort` never implies `delete`
 (see Enforcement notes), so the raw writer can tear down its own
@@ -191,7 +198,10 @@ entire auth file at load, which is why the deployment promotion (step 1)
 had to precede the credential re-issue (step 2).
 
 Pickup, without any credential-driven restart: the serving pod's startup
-config log (entry names and key IDs only, secret keys `<set>`) shows the
+config log (entry names and access-key **fingerprints** only — corrected
+2026-09-15, bead `aa-51a272be`: the "key IDs" below are
+`crypto.IdentifierFingerprint` values, first 16 hex of SHA-256 of the
+identifier, not the raw IDs; secret keys `<set>`) shows the
 raw-writer auth-file entry loaded with `actions {abort, list, put}` — the
 re-issued pair (written 20:43Z) was already in the document before this
 pod's first load; the 10 s hot-reload watcher (up 21:16:26Z, after the
@@ -206,3 +216,126 @@ writer cannot remove it by design; it stands as a read-probe target for
 the ARMOR profile qualification bead (`aa-0a2562d8`) and can be removed
 only by an operator — no archivist identity holds `delete`. The row-4
 multipart session left nothing; it was aborted in-row.
+
+## Rotation propagation (2026-09-15, bead aa-51a272be)
+
+Both documented behaviors exercised live by rotating the control-reader
+credential. The rotation was staged 2026-09-15 03:41Z through the
+write-only provisioning identity, by pipe and never agent-visible text:
+new pair generated in place (`openssl rand` piped into `bao kv put`),
+merged document CAS 6→7 at **03:41:20Z**, per-role path CAS 1→2 at
+**03:41:22Z**, the transform asserting exactly two line replacements
+inside the `ARCHIVIST_CONTROL_READER` block and nothing else changed.
+Attempt 1 of the bead staged the write and pinned the pre-propagation
+baseline, then hit its hard timeout before the refresh window opened;
+attempt 2 completed observation and made no further write — the serving
+pod had already picked the pair up, and re-rotating would have forced a
+second serving-pod replacement for no additional evidence.
+
+### Measured propagation
+
+| Hop | Time (UTC) | Δ from write |
+|---|---|---|
+| OpenBao rs-manager write (authority; KV v7 / per-role v2) | 03:41:22 | t0 |
+| `armor-credentials` ExternalSecret refresh materializes the Secret | 04:08:26 | +27m04s |
+| Reloader rollout: replacement pod process start | 04:08:29 | +3s |
+| Replacement pod Ready, serving the rotated set (flip effective at edge) | 04:16:29 | +8m07s |
+| **End-to-end** | | **35m07s** |
+
+The ESO materialization time is read from its hourly refresh cadence
+(status `refreshTime` 06:08:26Z, interval 1h → prior refreshes 05:08:26,
+04:08:26); the write at 03:41 landed in the 04:08:26 window, i.e. the
+27m04s wait is pure refresh-phase, uniformly distributed 0–60 min by
+schedule. Inside the documented bound (one ESO refresh interval plus one
+replication cycle ≈ ≤90 min), but the decomposition shows the bound's
+replication term never applies — see corrections.
+
+### Chain corrections
+
+1. **No replication hop exists in ARMOR's credential path.** The iad-ci
+   ClusterSecretStore `openbao` (`http://openbao.external-secrets.svc.cluster.local:8200`)
+   is an ExternalName Service → Tailscale proxy pod `ts-openbao-zcwbs` →
+   `traefik-rs-manager.tail1b1987.ts.net:8200` — the rs-manager authority
+   itself (verified via unauthenticated `/v1/sys/health`: same cluster id
+   as the authority; the proxy pod's operator annotation names the target
+   FQDN). The ~30-minute cross-cluster replicator targets
+   ardenone-cluster-v2 and ardenone-manager; it feeds other instances,
+   not this store. True bound: **one ESO refresh interval (≤1h,
+   phase-uniform) + seconds of Reloader rollout + the manifest-load
+   window** — observed 8m07s (the startup manifest load ran its full
+   480s timeout on a stale writer shard before the S3 listener bound;
+   the startupProbe budget caps Ready delay at ~10 min).
+2. **Delivery is a Reloader rollout, not the in-process watcher.** The
+   Deployment mounts the auth file via `subPath` and carries
+   `reloader.stakater.com/auto: "true"`, so a Secret change rolls the pod
+   automatically — "adding credentials requires no ARMOR Deployment
+   change" holds, but the mechanism is pod replacement (default
+   RollingUpdate; the prior pod serves until the replacement is Ready),
+   not hot reload. The 10s auth-file watcher polls the file's mtime, and
+   the kubelet never rewrites a running container's subPath mount —
+   accordingly no `reloaded ARMOR_AUTH_FILE successfully` line exists in
+   the serving pod's log. The watcher stays armed as defense in depth for
+   direct in-place file edits.
+
+### Enforcement flip (live, 07:06Z)
+
+SigV4 over port-forward to the serving pod `armor-7bdfd64cf5-h5n62`
+(0.1.1969), credentials by environment only, only status and error codes
+printed:
+
+| # | Caller | Operation | Observed |
+|---|---|---|---|
+| 1 | control reader, rotated pair | ListObjectsV2 prefix `agent-archivist/control/` | 200 (prefix empty) |
+| 2 | control reader, retired pair | ListObjectsV2 prefix `agent-archivist/control/` | 403 InvalidAccessKeyId |
+| 3 | control reader, rotated key, wrong secret | ListObjectsV2 prefix `agent-archivist/control/` | 403 SignatureDoesNotMatch |
+| 4 | control reader, rotated pair | ListObjectsV2 prefix `agent-archivist/raw/` (no grant) | 403 AccessDenied |
+
+Rows 3–4 calibrate row 2: the retired pair's refusal is identity-level
+(key unknown to ARMOR), not a signature error; row 1's 200 is an in-scope
+authorization, not a bypass. The pre-propagation inverse (retired pair
+**200** on the same prefix, new pair **403 InvalidAccessKeyId** against
+the then-serving pod) was pinned at 04:11Z — minutes before the ESO
+refresh landed — so the flip is complete and exclusively attributable to
+the propagation event.
+
+Pickup is also provable offline, without printing keys: ARMOR's `ARMOR
+starting` dump runs `Redacted()`, which replaces every access-key ID and
+the bucket name with a `crypto.IdentifierFingerprint` (first 16 hex of
+SHA-256 of the identifier). The dump's control-reader entry
+`7d535850c0aaba71` equals the fingerprint of the rotated access key; the
+retired key's fingerprint (`aedcc191835ba481`) appears nowhere; the raw
+writer, control admin, backup/restore and transcripts fingerprints also
+match their expected pairs, and the bucket renders as
+`202f132fe6eecc0f` = fingerprint of `iad-ci`.
+
+### Distribution invariant (pinned)
+
+Ingest replicas receive ONLY the control-reader and raw-writer
+credentials and never the control-admin credential. Pinned 2026-09-15 at
+three layers:
+
+- **Manifests:** zero references to any
+  `secret/rs-manager/iad-ci/armor/archivist-*` per-role path anywhere in
+  declarative-config (all clusters, all resource kinds).
+- **Live cluster:** zero ExternalSecrets across iad-ci reference a
+  per-role archivist path — every consumer secret targets its own
+  per-consumer path (`forgejo`, `cnpg-backups`, `ci-cache`, `transcripts`,
+  …). The only cluster-side copy of the four archivist credentials is
+  ARMOR's own merged auth-file document, which must hold all four because
+  ARMOR is the enforcement point; it is not an ingest replica.
+- **OpenBao:** `archivist-control-admin` is at v1 — never re-issued and
+  never copied since creation (2026-09-14T06:51:07Z);
+  `archivist-backup-restore` likewise v1; `archivist-raw-writer` v2 (the
+  recorded abort re-issue); `archivist-control-reader` v2 (this
+  rotation).
+
+When ingest replicas are provisioned, their ExternalSecrets must
+reference only `secret/rs-manager/iad-ci/armor/archivist-control-reader`
+and `.../archivist-raw-writer` — never `.../archivist-control-admin`,
+which stays with the offline admin CLI.
+
+KV state after this exercise: `secret/rs-manager/iad-ci/armor/credentials`
+v7, `.../archivist-control-reader` v2 — current serving state matches
+both. Residue noted: the `armor-credentials-externalsecret.yaml` header
+comment in declarative-config still lists five named credentials (ten
+since 2026-09-14); comment-only, no functional effect.
