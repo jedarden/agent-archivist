@@ -30,6 +30,10 @@
 //!   enters through.
 //! - [`link`] — the link request: public identity and requested scope, and
 //!   nothing else.
+//! - [`authority`] — the tenant-authority key rotation chain: the
+//!   predecessor-signed, predecessor-addressed rotation link, and the
+//!   fetch-verify-adopt walk from the pinned root that resolves a signer
+//!   with its 24-hour dual-key acceptance window.
 //! - [`error`] — the failure taxonomy; every variant names a class and
 //!   carries no path, value, or key material.
 //!
@@ -52,10 +56,15 @@
 //! Phase 3, first slice: the owned Ed25519 and SHA-512 primitives — key
 //! construction, signing, verification, and the hash underneath them —
 //! plus identity generation, protected-reference discovery, and the
-//! public-only link request built on top. Per-attempt request signing,
-//! linked-client records, tenant authority chains, delegation, revocation
-//! and rotation epochs, receipt signing keys, and receipt verification
-//! arrive with their owning deliverables on these same primitives.
+//! public-only link request built on top, and the tenant-authority
+//! rotation chain — the predecessor-signed link and the pinned-root walk
+//! with the 24-hour dual-key window (control-trust story item 7), replayed
+//! offline against the committed corpus vectors
+//! (`schemas/v1/examples/control/authority-rotation-chain.json`).
+//! Per-attempt request signing, linked-client records, delegation,
+//! revocation and rotation epochs, receipt signing keys, and receipt
+//! verification arrive with their owning deliverables on these same
+//! primitives.
 //!
 //! The workspace is dependency-free by policy: the curve and hash
 //! implementations here are owned, small, and pinned by RFC 8032 and FIPS
@@ -64,6 +73,7 @@
 //! primitives casually — each new surface carries its own vectors pinning
 //! every negative case, on top of the RFC §7.1 pairs pinned here.
 
+pub mod authority;
 pub mod ed25519;
 pub mod error;
 pub mod identity;

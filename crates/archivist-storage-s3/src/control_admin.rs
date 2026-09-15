@@ -25,18 +25,22 @@
 //!   record registry (`tools/control-records.toml`) and the envelope's
 //!   object-key patterns pin (plan Section 7.5, ID-008). A record whose
 //!   members do not carry their record family's grammar fails closed before
-//!   any request is issued.
+//!   any request is issued. The six derivable layouts include the
+//!   authority-rotation link's predecessor-addressed key — the chain
+//!   history appends precisely because the retiring half's own ID is the
+//!   address an immutable write can never repeat at.
 //! - **Two write classes.** An immutable family (`revocation`, `rotation`,
-//!   `receipt-key`) is written once at its derived key: a byte-identical
-//!   re-put is an idempotent success, an incompatible object at the key is
-//!   an integrity conflict (`EC-06`). A current-pointer family
-//!   (`linked-client`, `delegation`) is replaced only when the presented
-//!   record's signed `authorization_epoch` strictly increases over the
-//!   stored pointer — equal or lower is a stale write.
+//!   `receipt-key`, `authority-rotation`) is written once at its derived
+//!   key: a byte-identical re-put is an idempotent success, an incompatible
+//!   object at the key is an integrity conflict (`EC-06`). A
+//!   current-pointer family (`linked-client`, `delegation`) is replaced
+//!   only when the presented record's signed `authorization_epoch`
+//!   strictly increases over the stored pointer — equal or lower is a
+//!   stale write.
 //! - **One tenant, one prefix.** The configuration pins the tenant whose
 //!   control prefix the administration credential provisions, and
 //!   [`permits_key`](crate::config::ControlAdminConfig::permits_key) is the
-//!   raw-key model of that scope: the five control
+//!   raw-key model of that scope: the six control
 //!   layouts under `tenants/<tenant>/v1/control/`, and nothing else. Every
 //!   non-control prefix — raw, catalog, derived, tombstone, legal-hold,
 //!   another tenant's control prefix — is denied. The deployment's backend
@@ -110,11 +114,12 @@ const DETAIL_WRITE_METHOD: &str = "record family does not use this write method"
 const DETAIL_EPOCH: &str = "authorization epoch is missing or outside its bounds";
 const DETAIL_SELF_DELEGATION: &str = "relay and origin name the same client";
 const DETAIL_RECEIPT_EPOCH: &str = "receipt-key record carries no authorization epoch";
+const DETAIL_AUTHORITY_EPOCH: &str = "authority-rotation record carries no authorization epoch";
 const DETAIL_IMMUTABLE_CONFLICT: &str = "stored record differs from the presented immutable record";
 const DETAIL_POINTER_CONFLICT: &str = "stored pointer is not a valid record of its family";
 const DETAIL_SCOPE: &str = "record tenant is outside this administration identity";
 
-/// A server-derived control object key: one of the five canonical layouts
+/// A server-derived control object key: one of the six canonical layouts
 /// below `tenants/<tenant>/v1/control/` (plan Section 7.5; the control
 /// record registry's `object_key` entries).
 ///
@@ -195,13 +200,29 @@ impl ControlObjectKey {
         }
     }
 
-    /// Parse one object key against the five canonical layouts, failing
+    /// Derive the authority-rotation link key:
+    /// `tenants/<tenant>/v1/control/authority-rotations/<key>.json`, the
+    /// retiring authority half's key ID under the pinned SHA-256
+    /// derivation — predecessor addressing, so the verifier holding a
+    /// trusted half fetches the link that retires it at that half's own
+    /// address and successive rotations append as one immutable object per
+    /// retired key.
+    #[must_use]
+    pub fn authority_rotation(tenant: &TenantId, previous_key: &KeyId) -> Self {
+        Self {
+            text: format!("tenants/{tenant}/v1/control/authority-rotations/{previous_key}.json"),
+            kind: ControlRecordKind::AuthorityRotation,
+            tenant: tenant.clone(),
+        }
+    }
+
+    /// Parse one object key against the six canonical layouts, failing
     /// closed on anything else — every non-control prefix, a malformed
     /// identifier segment, a non-canonical epoch, and a wrong family shape
     /// all refuse rather than normalize.
     ///
     /// # Errors
-    /// [`ControlKeyError::NotCanonical`] for any text outside the five
+    /// [`ControlKeyError::NotCanonical`] for any text outside the six
     /// layouts.
     pub fn parse(text: &str) -> Result<Self, ControlKeyError> {
         let invalid = || ControlKeyError::NotCanonical;
@@ -254,6 +275,11 @@ impl ControlObjectKey {
                 let key = key_segment(segments.next())?;
                 ends_here(segments.next())?;
                 Ok(Self::receipt_key(&tenant, &key))
+            }
+            "authority-rotations" => {
+                let previous_key = key_segment(segments.next())?;
+                ends_here(segments.next())?;
+                Ok(Self::authority_rotation(&tenant, &previous_key))
             }
             _ => Err(invalid()),
         }
@@ -369,14 +395,18 @@ struct ValidatedEnvelope {
 /// the registry's agreement (the kind the envelope declares is the class
 /// its family pins); `tenant_id`; the family's key members; the epoch rules
 /// (required and bounded for the four epoch-bearing families, absent for
-/// the receipt-key record); and the wrapper's `signed_at`,
-/// `authority_key_id`, and `authority_signature` shapes. Payload members
+/// the two key-addressed families, receipt-key and authority-rotation); and
+/// the wrapper's `signed_at`, `authority_key_id`, and `authority_signature`
+/// shapes. Payload members
 /// beyond the wrapper are the record schema's business — the schema gate
 /// (`tools/check-control-schemas.py`) and Phase 3 verification own them.
 ///
 /// # Errors
 /// [`StorageErrorKind::MalformedInput`] for the first violated rule; the
 /// detail is a static literal and never echoes envelope content.
+// One closed function per family arm: the derivation rules read as one
+// table, and splitting the table would hide the per-family symmetry.
+#[allow(clippy::too_many_lines)]
 fn validate_envelope(bytes: &[u8]) -> Result<ValidatedEnvelope, StorageError> {
     let malformed = StorageError::of_kind(StorageErrorKind::MalformedInput);
     let Value::Object(object) = json::parse(bytes).map_err(|_| malformed)? else {
@@ -466,6 +496,23 @@ fn validate_envelope(bytes: &[u8]) -> Result<ValidatedEnvelope, StorageError> {
             }
             let key_id = key_member(&object, "key_id")?;
             (ControlObjectKey::receipt_key(&tenant, &key_id), None)
+        }
+        ControlRecordKind::AuthorityRotation => {
+            // The chain has no epoch sequence — the links themselves are
+            // the order, each retiring exactly the key the previous link
+            // established (the envelope's write-class rule: the identity
+            // this record's key names is the retired authority key ID).
+            if object.contains("authorization_epoch") {
+                return Err(StorageError::new(
+                    StorageErrorKind::MalformedInput,
+                    DETAIL_AUTHORITY_EPOCH,
+                ));
+            }
+            let previous_key_id = key_member(&object, "previous_key_id")?;
+            (
+                ControlObjectKey::authority_rotation(&tenant, &previous_key_id),
+                None,
+            )
         }
     };
 
@@ -882,6 +929,24 @@ mod tests {
         envelope(&members)
     }
 
+    /// The golden chain link: the pinned authority root (the `ab` half
+    /// every golden envelope's `authority_key_id` names) retires itself
+    /// and establishes the `9e` successor half — the same one-root trust
+    /// story the schema gate's golden authority-rotation record tells, so
+    /// the store's derivation and the registry's layout are proven in
+    /// agreement on the same identifiers the gate pins.
+    fn authority_rotation_envelope() -> Vec<u8> {
+        let mut members = wrapper("authority-rotation", "immutable");
+        members.extend([
+            ("previous_public_key", text(&"ab".repeat(32))),
+            ("previous_key_id", text(&key_id_of(&[0xab; 32]))),
+            ("key_algorithm", text("ed25519")),
+            ("public_key", text(&"9e".repeat(32))),
+            ("key_id", text(&key_id_of(&[0x9e; 32]))),
+        ]);
+        envelope(&members)
+    }
+
     /// The in-memory backend: an object map plus the prefix denial the
     /// deployment's administration-credential policy states. The check is
     /// the policy's own shape — a literal string-prefix rule over the key,
@@ -1001,7 +1066,15 @@ mod tests {
         result.expect_err("this write must fail").kind()
     }
 
+    /// Registry families whose Rust derivation has not landed — each sits
+    /// here only while its implementing slice is open work, and landing the
+    /// derivation removes the name. Anything the registry ships that is in
+    /// neither this list nor the derivation fails the proof below, so a new
+    /// registry family cannot drift past the Rust side silently.
+    const PENDING_DERIVATIONS: &[&str] = &["retention"];
+
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn derived_keys_agree_with_the_registry_layouts() {
         // The agreement is mechanical, not transcribed: the registry's own
         // `object_key` layouts, read from tools/control-records.toml and
@@ -1018,22 +1091,29 @@ mod tests {
             .unwrap_or_else(|e| panic!("the control record registry must parse: {e}"));
 
         // The derivation implements exactly the registry's record set —
-        // no family without a Rust layout, no layout without a family.
+        // no family without a Rust layout, no layout without a family —
+        // minus the families whose derivation is still pending its own
+        // implementing slice.
         // (The registry's append-only rule lands a new family's schema,
         // envelope entry, enum token, object-key pattern, and this
         // derivation in one change; this assertion is the Rust side of
         // that rule.)
-        let families: Vec<&str> = registry.keys().map(String::as_str).collect();
+        let families: Vec<&str> = registry
+            .keys()
+            .map(String::as_str)
+            .filter(|family| !PENDING_DERIVATIONS.contains(family))
+            .collect();
         assert_eq!(
             families,
             [
+                "authority-rotation",
                 "delegation",
                 "linked-client",
                 "receipt-key",
                 "revocation",
                 "rotation"
             ],
-            "the registry and the derivation must name the same five families"
+            "the registry and the derivation must name the same families"
         );
 
         let tenant = tenant();
@@ -1042,6 +1122,8 @@ mod tests {
         let epoch = AuthorizationEpoch::new(3).unwrap();
         let receipt_key =
             archivist_protocol::vocabulary::KeyId::parse(&key_id_of(&[0x3c; 32])).unwrap();
+        let authority_root =
+            archivist_protocol::vocabulary::KeyId::parse(&key_id_of(&[0xab; 32])).unwrap();
         let golden: HashMap<&str, String> = HashMap::from([
             ("tenant_id", TENANT.to_owned()),
             ("client_id", CLIENT.to_owned()),
@@ -1049,14 +1131,22 @@ mod tests {
             ("origin_client_id", CLIENT.to_owned()),
             ("authorization_epoch", epoch.get().to_string()),
             ("key_id", key_id_of(&[0x3c; 32])),
+            ("previous_key_id", key_id_of(&[0xab; 32])),
         ]);
 
         for (family, entry) in &registry {
+            if PENDING_DERIVATIONS.contains(&family.as_str()) {
+                continue;
+            }
             let expected = entry
                 .substitute(family, &golden)
                 .unwrap_or_else(|e| panic!("{family}: {e}"));
 
             let (kind, derived) = match family.as_str() {
+                "authority-rotation" => (
+                    ControlRecordKind::AuthorityRotation,
+                    ControlObjectKey::authority_rotation(&tenant, &authority_root),
+                ),
                 "delegation" => (
                     ControlRecordKind::Delegation,
                     ControlObjectKey::delegation(&tenant, &relay, &client),
@@ -1108,6 +1198,7 @@ mod tests {
             // And the family's signed envelope derives that same key from
             // its own validated members.
             let bytes = match family.as_str() {
+                "authority-rotation" => authority_rotation_envelope(),
                 "delegation" => delegation_envelope(3),
                 "linked-client" => linked_client_envelope(3),
                 "receipt-key" => receipt_key_envelope(),
@@ -1118,8 +1209,7 @@ mod tests {
             let validated = super::validate_envelope(&bytes)
                 .unwrap_or_else(|e| panic!("{family}: the golden envelope must validate: {e}"));
             assert_eq!(
-                validated.key.as_str(),
-                expected,
+                validated.key, derived,
                 "{family}: the envelope's own members must derive the registry layout"
             );
         }
@@ -1285,7 +1375,7 @@ mod tests {
     }
 
     #[test]
-    fn key_parsing_fails_closed_outside_the_five_layouts() {
+    fn key_parsing_fails_closed_outside_the_six_layouts() {
         let digest = "0f".repeat(32);
         let epoch_ceiling = "999999999999999999"; // the 18-digit bound
         for accepted in [
@@ -1294,6 +1384,7 @@ mod tests {
             format!("tenants/{TENANT}/v1/control/revocations/{CLIENT}/{epoch_ceiling}.json"),
             format!("tenants/{TENANT}/v1/control/rotations/{CLIENT}/1.json"),
             format!("tenants/{TENANT}/v1/control/receipt-keys/{digest}.json"),
+            format!("tenants/{TENANT}/v1/control/authority-rotations/{digest}.json"),
         ] {
             assert!(
                 ControlObjectKey::parse(&accepted).is_ok(),
@@ -1314,6 +1405,12 @@ mod tests {
             format!("tenants/{TENANT}/v1/control/revocations/{CLIENT}/9999999999999999999.json"),
             format!("tenants/{TENANT}/v1/control/revocations/{CLIENT}/x.json"),
             format!("tenants/{TENANT}/v1/control/receipt-keys/{digest}.json.bak"),
+            // The authority-rotation layout is key-addressed like the
+            // receipt-key one: an epoch segment where the retiring key's
+            // ID belongs is a wrong family shape, and a bare segment
+            // without the `.json` suffix never parses.
+            format!("tenants/{TENANT}/v1/control/authority-rotations/1.json"),
+            format!("tenants/{TENANT}/v1/control/authority-rotations/{digest}"),
             // An uppercase rendering is not canonical.
             format!("tenants/{TENANT}/v1/control/clients/{CLIENT}.json").to_uppercase(),
             // Over the key-length bound the envelope's key patterns pin:
@@ -1345,12 +1442,15 @@ mod tests {
         let client = client();
         let relay = relay();
         let digest = archivist_protocol::vocabulary::KeyId::parse(&key_id_of(&[0x3c; 32])).unwrap();
+        let authority_root =
+            archivist_protocol::vocabulary::KeyId::parse(&key_id_of(&[0xab; 32])).unwrap();
         let derived = [
             ControlObjectKey::linked_client(&tenant, &client),
             ControlObjectKey::delegation(&tenant, &relay, &client),
             ControlObjectKey::revocation(&tenant, &client, AuthorizationEpoch::new(1).unwrap()),
             ControlObjectKey::rotation(&tenant, &client, AuthorizationEpoch::new(2).unwrap()),
             ControlObjectKey::receipt_key(&tenant, &digest),
+            ControlObjectKey::authority_rotation(&tenant, &authority_root),
         ];
         for key in derived {
             assert!(config.permits_key(key.as_str()), "{}", key.as_str());
@@ -1418,6 +1518,14 @@ mod tests {
                     &archivist_protocol::vocabulary::KeyId::parse(&key_id_of(&[0x3c; 32])).unwrap(),
                 ),
             ),
+            (
+                authority_rotation_envelope(),
+                ControlRecordKind::AuthorityRotation,
+                ControlObjectKey::authority_rotation(
+                    &tenant,
+                    &archivist_protocol::vocabulary::KeyId::parse(&key_id_of(&[0xab; 32])).unwrap(),
+                ),
+            ),
         ] {
             let validated = super::validate_envelope(&bytes)
                 .unwrap_or_else(|e| panic!("golden envelope must validate: {e}"));
@@ -1428,6 +1536,43 @@ mod tests {
     }
 
     #[test]
+    fn authority_rotation_links_publish_at_the_predecessor_address() {
+        // The write path the chain walk depends on: the offline store
+        // accepts a structurally validated link and publishes it at the
+        // retiring half's own key ID — the address a verifier holding the
+        // pinned root fetches — with no epoch anywhere in its identity
+        // (the links themselves are the order) and the family routed
+        // through the immutable method alone.
+        let store = store();
+        let key = format!(
+            "tenants/{TENANT}/v1/control/authority-rotations/{}.json",
+            key_id_of(&[0xab; 32])
+        );
+        block_on(store.put_immutable_record(&record(
+            ControlRecordKind::AuthorityRotation,
+            authority_rotation_envelope(),
+        )))
+        .unwrap();
+        assert_eq!(
+            store.backend.stored(&key).as_deref(),
+            Some(authority_rotation_envelope().as_slice())
+        );
+
+        // The validated view carries the whole addressing decision: the
+        // family, the provisioned tenant, the predecessor-addressed key,
+        // and no epoch for the chain to disagree about.
+        let validated = super::validate_envelope(&authority_rotation_envelope()).unwrap();
+        assert_eq!(validated.kind, ControlRecordKind::AuthorityRotation);
+        assert_eq!(validated.tenant, tenant());
+        assert_eq!(
+            validated.key,
+            ControlObjectKey::parse(&key).expect("the stored-at key is canonical")
+        );
+        assert_eq!(validated.epoch, None);
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
     fn envelope_validation_fails_closed() {
         fn assert_rejected(bytes: &[u8]) {
             let error =
@@ -1474,7 +1619,8 @@ mod tests {
         assert_rejected(&without_member(&delegation_envelope(1), "origin_client_id"));
 
         // Epoch rules: missing, zero, above the 18-digit ceiling, or a
-        // receipt-key record carrying one at all.
+        // key-addressed record (receipt-key, authority-rotation) carrying
+        // one at all.
         assert_rejected(&without_member(
             &linked_client_envelope(1),
             "authorization_epoch",
@@ -1500,6 +1646,31 @@ mod tests {
             members.push(("authorization_epoch", Value::Int(1)));
             envelope(&members)
         });
+
+        // The authority-rotation link is key-addressed like the receipt-key
+        // record: the chain has no epoch sequence, so carrying one is not
+        // the record this family writes, and its deriving member
+        // (`previous_key_id`) is required and must carry the key grammar.
+        assert_rejected(&{
+            let mut members = wrapper("authority-rotation", "immutable");
+            members.extend([
+                ("previous_public_key", text(&"ab".repeat(32))),
+                ("key_algorithm", text("ed25519")),
+                ("public_key", text(&"9e".repeat(32))),
+                ("key_id", text(&key_id_of(&[0x9e; 32]))),
+            ]);
+            members.push(("authorization_epoch", Value::Int(1)));
+            envelope(&members)
+        });
+        assert_rejected(&without_member(
+            &authority_rotation_envelope(),
+            "previous_key_id",
+        ));
+        assert_rejected(&replace_member(
+            &authority_rotation_envelope(),
+            "previous_key_id",
+            text("not-a-key-id"),
+        ));
 
         // Wrapper signature members: missing, wrong shape.
         assert_rejected(&without_member(
@@ -1543,8 +1714,9 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn immutable_families_write_once_replay_idempotently_and_reject_incompatible_bytes() {
-        // The immutable write class is one rule over its three families
+        // The immutable write class is one rule over its four families
         // (plan Section 5; the trait's EC-06 contract): a fresh record
         // creates the object at its derived key, the byte-identical retry
         // of that same administrative write is already the object there —
@@ -1603,6 +1775,26 @@ mod tests {
                         &receipt_key_envelope(),
                         "authority_signature",
                         text(&"22".repeat(64)),
+                    ),
+                ],
+            ),
+            (
+                ControlRecordKind::AuthorityRotation,
+                format!(
+                    "tenants/{TENANT}/v1/control/authority-rotations/{}.json",
+                    key_id_of(&[0xab; 32])
+                ),
+                authority_rotation_envelope(),
+                vec![
+                    replace_member(
+                        &authority_rotation_envelope(),
+                        "public_key",
+                        text(&"ef".repeat(32)),
+                    ),
+                    replace_member(
+                        &authority_rotation_envelope(),
+                        "authority_signature",
+                        text(&"33".repeat(64)),
                     ),
                 ],
             ),
@@ -1693,6 +1885,76 @@ mod tests {
                 .as_deref(),
             Some(revocation_envelope(3).as_slice())
         );
+    }
+
+    #[test]
+    fn successive_authority_rotations_append_one_object_per_retired_key() {
+        // The authority-rotation family's append-only history, at the
+        // store level: each link is addressed at the key it retires, so
+        // successive rotations land as distinct objects that coexist —
+        // the second write never touches the first, and re-publishing
+        // either link byte-identically stays the idempotent replay its
+        // immutable class promises. The chain order itself (in-order
+        // append, one link per retired key) is the verifier's gate in
+        // `archivist-auth`; the store contributes exactly the addressing
+        // and the write class, which is what this proof pins.
+        let first = authority_rotation_envelope();
+        let first_key = format!(
+            "tenants/{TENANT}/v1/control/authority-rotations/{}.json",
+            key_id_of(&[0xab; 32])
+        );
+        // The next link: the `9e` successor half retires itself and
+        // establishes a fresh half, at the successor's own address.
+        let second = {
+            let mut members = wrapper("authority-rotation", "immutable");
+            members.extend([
+                ("previous_public_key", text(&"9e".repeat(32))),
+                ("previous_key_id", text(&key_id_of(&[0x9e; 32]))),
+                ("key_algorithm", text("ed25519")),
+                ("public_key", text(&"7c".repeat(32))),
+                ("key_id", text(&key_id_of(&[0x7c; 32]))),
+            ]);
+            envelope(&members)
+        };
+        let second_key = format!(
+            "tenants/{TENANT}/v1/control/authority-rotations/{}.json",
+            key_id_of(&[0x9e; 32])
+        );
+
+        let store = store();
+        block_on(
+            store
+                .put_immutable_record(&record(ControlRecordKind::AuthorityRotation, first.clone())),
+        )
+        .unwrap();
+        block_on(store.put_immutable_record(&record(
+            ControlRecordKind::AuthorityRotation,
+            second.clone(),
+        )))
+        .unwrap();
+        assert_eq!(
+            store.backend.stored(&first_key).as_deref(),
+            Some(first.as_slice()),
+            "the second link must not touch the first"
+        );
+        assert_eq!(
+            store.backend.stored(&second_key).as_deref(),
+            Some(second.as_slice())
+        );
+
+        // Both replays stay idempotent, each issuing no second write.
+        block_on(
+            store
+                .put_immutable_record(&record(ControlRecordKind::AuthorityRotation, first.clone())),
+        )
+        .unwrap();
+        block_on(store.put_immutable_record(&record(
+            ControlRecordKind::AuthorityRotation,
+            second.clone(),
+        )))
+        .unwrap();
+        assert_eq!(store.backend.puts_at(&first_key), 1);
+        assert_eq!(store.backend.puts_at(&second_key), 1);
     }
 
     #[test]
@@ -1976,6 +2238,26 @@ mod tests {
             )))),
             StorageErrorKind::MalformedInput
         );
+        // The authority-rotation link is immutable like the rest of the
+        // key-addressed families — the chain history appends, never moves
+        // a pointer.
+        assert_eq!(
+            error_kind(block_on(store.put_current_pointer(&record(
+                ControlRecordKind::AuthorityRotation,
+                authority_rotation_envelope(),
+            )))),
+            StorageErrorKind::MalformedInput
+        );
+        // Nothing was written by the refused pointer writes.
+        assert!(
+            store
+                .backend
+                .stored(&format!(
+                    "tenants/{TENANT}/v1/control/authority-rotations/{}.json",
+                    key_id_of(&[0xab; 32])
+                ))
+                .is_none()
+        );
         // An envelope whose own record_type disagrees with the kind the
         // record was constructed with.
         let mut masquerading = revocation_envelope(3);
@@ -2054,6 +2336,7 @@ mod tests {
             super::DETAIL_EPOCH,
             super::DETAIL_SELF_DELEGATION,
             super::DETAIL_RECEIPT_EPOCH,
+            super::DETAIL_AUTHORITY_EPOCH,
             super::DETAIL_IMMUTABLE_CONFLICT,
             super::DETAIL_POINTER_CONFLICT,
             super::DETAIL_SCOPE,

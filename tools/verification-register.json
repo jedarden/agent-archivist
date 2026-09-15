@@ -663,6 +663,12 @@
       "verifications": [
         "T-VAL-008"
       ]
+    },
+    "ID-010": {
+      "status": "implemented",
+      "verifications": [
+        "T-ID-010"
+      ]
     }
   },
   "verifications": {
@@ -1596,6 +1602,15 @@
       "kind": "test",
       "lane": "slow",
       "owner": "protocol-corpus"
+    },
+    "T-ID-010": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "slow",
+      "locator": "crates/archivist-auth/src/authority.rs",
+      "owner": "auth-conformance"
     }
   }
 }

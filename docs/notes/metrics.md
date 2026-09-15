@@ -1,6 +1,6 @@
 # Agent Archivist metrics and telemetry naming conventions
 
-Status: accepted baseline · Last updated: 2026-09-11
+Status: accepted baseline · Last updated: 2026-09-15
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are
 to be interpreted as described by RFC 2119 and RFC 8174 when they appear in bold.
@@ -50,7 +50,10 @@ and must be fixed in the same commit.
 
   The surface map is frozen in the checker: a registry edit cannot move a
   surface to another crate or phase, and adding a surface is a same-commit
-  update to this document, the plan, and the checker (MET-040).
+  update to this document, the plan, and the checker (MET-040). A signal's
+  `phase` field names the plan phase that emits it, and the checker pins its
+  range — from its surface's base phase through the plan's last phase (11);
+  a signal declared outside its surface's range is rejected.
 - **MET-003** — A signal exists only by appending an entry to the registry
   in the same commit as the producer that emits it. Emitting an unregistered
   metric, span, attribute, or label value is a defect, exactly as emitting an
@@ -230,7 +233,9 @@ and must be fixed in the same commit.
   registry: at least one and at most **32**, each positive and finite, in
   strictly increasing order, expressed in the signal's unit. Boundaries are
   advice to the SDK and the exact bucket edges of the exported `_bucket`
-  series; a histogram without registered boundaries does not exist.
+  series; a histogram without registered boundaries does not exist, and only
+  a histogram carries them — the gate rejects a `boundaries` key on a gauge
+  or counter.
 - **MET-028** — Boundary sets are pinned decisions like defaults (CFG-021):
   each traces to the plan limit or budget it brackets. The request-duration
   histogram brackets up to the 15-minute request deadline; the scheduling
@@ -253,8 +258,10 @@ and must be fixed in the same commit.
 - **MET-031** — An HTTP span is named `{METHOD} {route}` with the routed
   template, never a concrete path: `POST /v1/ingest`, `GET /health/ready`.
   A name containing a request-specific segment, a brace placeholder, or any
-  identifier value is a defect. Routes are static in v1; if a parameterized
-  route ever exists, its template is registered here first.
+  identifier value is a defect, as is a name over **64** characters; the
+  checker pins the method set, the length bound, and the brace ban. Routes
+  are static in v1; if a parameterized route ever exists, its template is
+  registered here first.
 - **MET-032** — Span attributes are registered label keys only, plus
   OpenTelemetry standard semantic attributes (for example `http.route`,
   `url.scheme`) used as the SDK defines them and never extended with
@@ -297,7 +304,10 @@ and must be fixed in the same commit.
   signal carries `kind`, `unit`, `phase`, `description`, and optionally
   `labels`, `boundaries`, and `deprecated`; a label carries its kind's
   bound keys and `description`; a span carries `surface`, `description`,
-  and optionally `attributes` and `deprecated`. Unknown keys are rejected —
+  and optionally `attributes` and `deprecated`. Every `description` is a
+  single line of printable ASCII without braces, at most **200** characters
+  — the bound the error registry's prose also carries — so registry prose
+  never drifts toward free text. Unknown keys are rejected —
   there is no free-form metadata field, for the same reason the error
   registry has none.
 - **MET-039** — Within registry v1, entries are append-only. Renaming or

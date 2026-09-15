@@ -5,8 +5,9 @@
 //! `tenants/<tenant>/v1/control/`.
 //!
 //! - [`ControlReadStore`] — the ingestion replica's view: read-only access
-//!   to the five record families, one method per family, each key derived
-//!   from validated identifiers. It has no write method of any kind.
+//!   to the record families the ingest path authenticates against, one
+//!   method per family, each key derived from validated identifiers. It
+//!   has no write method of any kind.
 //! - [`ControlAdminStore`] — the offline administrator's write authority:
 //!   complete, tenant-authority-signed records only, never arbitrary keys
 //!   or payload bytes. Ingest replicas never receive this credential.
@@ -35,7 +36,9 @@ pub type ControlVocabularyError = GrammarError;
 /// The closed set of signed record families the control prefix carries
 /// (`archivist.control-registry/v1`; the set is append-only within v1 —
 /// a new record type lands here as a new variant in the same change that
-/// extends the registry).
+/// extends the registry). The retention record is the one shipped registry
+/// family without a variant here; it lands with that family's own
+/// implementing slice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ControlRecordKind {
     /// One installation's identity in one tenant; current-pointer write
@@ -52,6 +55,15 @@ pub enum ControlRecordKind {
     Rotation,
     /// A tenant-scoped receipt-verification key; immutable write class.
     ReceiptKey,
+    /// One link of the tenant-authority key rotation chain — the immutable,
+    /// predecessor-addressed record that retires one authority half and
+    /// establishes its successor; immutable write class. Chain
+    /// verification (the predecessor-signature check, the strictly
+    /// advancing walk, and the 24-hour dual-key acceptance window) is
+    /// `archivist-auth`'s contract, not this boundary's, and its
+    /// language-neutral replay vectors live at
+    /// `schemas/v1/examples/control/authority-rotation-chain.json`.
+    AuthorityRotation,
 }
 
 impl ControlRecordKind {
@@ -64,6 +76,7 @@ impl ControlRecordKind {
             Self::Revocation,
             Self::Rotation,
             Self::ReceiptKey,
+            Self::AuthorityRotation,
         ]
     }
 
@@ -76,6 +89,7 @@ impl ControlRecordKind {
             Self::Revocation => "revocation",
             Self::Rotation => "rotation",
             Self::ReceiptKey => "receipt-key",
+            Self::AuthorityRotation => "authority-rotation",
         }
     }
 
@@ -91,6 +105,7 @@ impl ControlRecordKind {
             "revocation" => Ok(Self::Revocation),
             "rotation" => Ok(Self::Rotation),
             "receipt-key" => Ok(Self::ReceiptKey),
+            "authority-rotation" => Ok(Self::AuthorityRotation),
             _ => Err(ControlVocabularyError::NotCanonical),
         }
     }
@@ -98,16 +113,19 @@ impl ControlRecordKind {
     /// The write class governing overwrites of this family.
     ///
     /// The class is a property of the record family, not of the caller:
-    /// immutable families (`revocation`, `rotation`, `receipt-key`) are
-    /// addressed by their own epoch or key, so a conflicting object at the
-    /// same key is an integrity conflict, never a rewrite; current-pointer
-    /// families (`linked-client`, `delegation`) live at one key per client
-    /// pair and advance only by a strictly increasing signed epoch.
+    /// immutable families (`revocation`, `rotation`, `receipt-key`,
+    /// `authority-rotation`) are addressed by their own epoch or key, so a
+    /// conflicting object at the same key is an integrity conflict, never
+    /// a rewrite; current-pointer families (`linked-client`, `delegation`)
+    /// live at one key per client pair and advance only by a strictly
+    /// increasing signed epoch.
     #[must_use]
     pub fn write_class(self) -> ControlWriteClass {
         match self {
             Self::LinkedClient | Self::Delegation => ControlWriteClass::CurrentPointer,
-            Self::Revocation | Self::Rotation | Self::ReceiptKey => ControlWriteClass::Immutable,
+            Self::Revocation | Self::Rotation | Self::ReceiptKey | Self::AuthorityRotation => {
+                ControlWriteClass::Immutable
+            }
         }
     }
 }
@@ -344,7 +362,7 @@ pub trait ControlReadStore {
 /// publishes the next epoch.
 pub trait ControlAdminStore {
     /// Put one record of an immutable family (`revocation`, `rotation`,
-    /// `receipt-key`).
+    /// `receipt-key`, `authority-rotation`).
     ///
     /// Re-putting the byte-identical record is idempotent success. An
     /// incompatible object at the same derived key is
@@ -391,7 +409,7 @@ mod tests {
         for kind in ControlRecordKind::all() {
             assert_eq!(ControlRecordKind::parse(kind.token()).unwrap(), *kind);
         }
-        assert_eq!(ControlRecordKind::all().len(), 5);
+        assert_eq!(ControlRecordKind::all().len(), 6);
         assert!(ControlRecordKind::parse("linked_client").is_err());
         assert!(ControlRecordKind::parse("tombstone").is_err());
         assert!(ControlRecordKind::parse("").is_err());
@@ -411,6 +429,7 @@ mod tests {
             ControlRecordKind::Revocation,
             ControlRecordKind::Rotation,
             ControlRecordKind::ReceiptKey,
+            ControlRecordKind::AuthorityRotation,
         ] {
             assert_eq!(kind.write_class(), ControlWriteClass::Immutable);
         }
