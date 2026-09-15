@@ -220,6 +220,7 @@ Regeneration and verification:
 ```sh
 tools/usagegen.py --generate   # write the bundle (byte-identical)
 tools/usagegen.py --verify     # regenerate, byte-compare, schema-validate
+tools/usagegen.py --self-test  # prove the rejection paths
 ```
 
 `--verify` regenerates the bundle and byte-compares every file, requires
@@ -242,10 +243,28 @@ classes. Exit codes: 0 pass, 2 bundle directory missing, 3 byte drift,
 non-canonical formatting, or schema/invariant failure, 4 `jsonschema`
 unavailable.
 
+`--self-test` proves the same rejection paths without the committed
+bundle: the digest construction recomputes from a record's own
+canonical bytes, changes under tampering, excludes the digest member
+from its own preimage, and pins its domain label; the derived object
+key matches the `usage-summary-object-key` pattern with the digest's
+own shard, and foreign pipelines and non-hex shards miss it; the
+per-record invariants reject every fault class (tampered digest, null
+where a member is omitted, counts beside an `unknown`, a reason outside
+the closed set, wrong pipeline or projection identity, an
+unvouchable occurrence, zero summed messages, negative and fractional
+counts, an extra ephemeral class) while a valid record passes clean;
+`--generate` writes every file byte-identically, is idempotent on its
+own bundle, and refuses a foreign directory; and the schema rejects
+the whole reserved-name matrix while the valid control stays valid.
+It shares `--verify`'s exit-code contract: 0 pass, 3 on any failed
+proof, 4 `jsonschema` unavailable.
+
 The bundle is wired into the definition-of-done fast lane as the
-`usage corpus` check (the way the fixture and exact-inference corpora
-are wired: the scan runs per change, and `--all` inherits the full
-regeneration), and the Rust side replays the committed corpus against
+`usage corpus` check, with `--self-test` beside it as the
+`usage corpus policy` check (the way the fixture and exact-inference
+corpora are wired: the scan runs per change, and `--all` inherits the
+full regeneration), and the Rust side replays the committed corpus against
 the schema in
 [`crates/archivist-protocol/tests/usage_summary_corpus.rs`](../../crates/archivist-protocol/tests/usage_summary_corpus.rs) —
 the crate's own parser, canonicalizer, and `FrameBuilder` re-derive

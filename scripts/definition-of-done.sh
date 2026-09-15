@@ -263,6 +263,14 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # so the record shape is enforced where its producer will be built.
   require_modules jsonschema referencing \
     && run_check "usage corpus"  python3 tools/usagegen.py --verify
+  # The generator's rejection paths proven without the committed bundle:
+  # the digest construction's label/preimage/key rules, the per-record
+  # fault rejection, the write guard, and the schema's negative matrix
+  # with a valid control. Shares "usage corpus"'s exit-code contract
+  # (3 on any failed proof, 4 without jsonschema), so one run_check
+  # wrapper governs both.
+  require_modules jsonschema referencing \
+    && run_check "usage corpus policy"  python3 tools/usagegen.py --self-test
   # Requirement-to-verification mapping (docs/notes/verification.md):
   # `check` validates this tree's register (consistency with the
   # requirements document plus the located-check rule for anything marked

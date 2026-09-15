@@ -28,15 +28,25 @@ content carriers, monetary material, governance, raw paths, stability
 breakers, and grand-total tokens — is injected one name at a time and
 must be rejected), and the committed records collectively round-trip
 every member the schema defines, optionals included, omitted-never-null.
+
+--self-test proves the same rejection paths without the committed
+bundle: the digest construction pins its domain label, its preimage
+rule, and its object-key layout, the per-record invariants reject every
+fault class, the write guard refuses a foreign directory, and the
+schema rejects the full negative matrix while the valid control stays
+valid.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -721,6 +731,162 @@ def verify_bundle() -> int:
     return 0
 
 
+def self_test() -> int:
+    """Prove the rejection paths without the committed bundle: the digest
+    construction pins its domain label, preimage rule, and object-key
+    layout; the per-record invariants reject every fault class; the write
+    guard refuses a foreign directory and rewrites its own bundle
+    byte-identically; and the schema rejects the full negative matrix
+    while the valid control stays valid."""
+    checks: list[tuple[str, bool]] = []
+
+    def check(name: str, condition: bool) -> None:
+        checks.append((name, condition))
+
+    # --- the digest construction ---------------------------------------
+    full, _ = build_full_coverage()
+    body = {k: v for k, v in full.items() if k != "usage_summary_digest"}
+    stored = full["usage_summary_digest"]
+    canonical = provenancegen.canonical_json(body).encode("utf-8")
+    check("digest recomputes from the record's own canonical bytes",
+          usage_digest(body) == stored)
+    check("the digest member is excluded from its own preimage",
+          usage_digest(full) != stored)
+    tampered = json.loads(json.dumps(body))
+    tampered["harness_usage"]["input_tokens"] += 1
+    check("a tampered record digests differently",
+          usage_digest(tampered) != stored)
+    check("the domain label is pinned",
+          provenancegen.derive("usage-summary-v0", canonical) != stored)
+
+    # The derived object key: pinned prefix, the digest's own shard, the
+    # digest as the object name — re-derivable from the stored record.
+    key = usage_object_key(stored)
+    common = json.loads(COMMON_SCHEMA.read_text(encoding="utf-8"))
+    pattern = re.compile(
+        common["$defs"]["usage-summary-object-key"]["pattern"])
+    check("object key matches the common.json pattern",
+          bool(pattern.fullmatch(key)))
+    check("the key shard is the digest's first two hex",
+          key.rsplit("/", 2)[1] == stored[:2])
+    check("a foreign pipeline misses the key pattern",
+          not pattern.fullmatch(
+              key.replace("/derived/usage/1/", "/derived/other/1/")))
+    check("a non-hex shard misses the key pattern",
+          not pattern.fullmatch(key.replace(f"/{stored[:2]}/", "/zz/", 1)))
+    check("a digest change moves the object key",
+          usage_object_key("ff" + stored[2:]) != key)
+
+    # --- the per-record invariants -------------------------------------
+    def record_failure(record: dict) -> str | None:
+        found: list[str] = []
+        verify_record("self-test", record, found)
+        return found[0] if found else None
+
+    check("a valid record passes the per-record invariants",
+          record_failure(full) is None)
+    absent = build_usage_absent()[0]
+    unknown_counts = json.loads(json.dumps(absent))
+    unknown_counts["harness_usage"]["input_tokens"] = 0
+    unknown_reason = json.loads(json.dumps(absent))
+    unknown_reason["harness_usage"]["reason"] = "nobody_knows"
+    zero_messages = json.loads(json.dumps(full))
+    zero_messages["harness_usage"]["assistant_message_count"] = 0
+    negative_count = json.loads(json.dumps(full))
+    negative_count["harness_usage"]["input_tokens"] = -1
+    float_count = json.loads(json.dumps(full))
+    float_count["harness_usage"]["input_tokens"] = 1.5
+    extra_class = json.loads(json.dumps(full))
+    extra_class["harness_usage"]["cache_creation"]["ephemeral_15m"] = 5
+    faults = [
+        ("tampered digest member", dict(full, usage_summary_digest="0" * 64)),
+        ("null where a member is omitted", dict(full, model_id=None)),
+        ("an unknown state carrying counts", unknown_counts),
+        ("an unknown reason outside the closed set", unknown_reason),
+        ("a wrong pipeline_id", dict(full, pipeline_id="not-a-pipeline")),
+        ("a wrong adapter projection",
+         dict(full, adapter_projection_version="2")),
+        ("an occurrence the bundle cannot vouch for",
+         dict(full, occurrence_id="0" * 64)),
+        ("measured with zero summed messages", zero_messages),
+        ("measured with a negative count", negative_count),
+        ("measured with a fractional count", float_count),
+        ("measured with an extra ephemeral class", extra_class),
+    ]
+    for name, mutated in faults:
+        check(f"invariants reject: {name}",
+              record_failure(mutated) is not None)
+
+    # --- the write guard -------------------------------------------------
+    # write_bundle narrates each write; the self-test's scratch paths are
+    # noise in the gate log, so the writes run quiet and only the proofs
+    # speak.
+    files = build_bundle()
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "bundle"
+        with contextlib.redirect_stdout(io.StringIO()):
+            write_bundle(out, files)
+            check("--generate writes every file byte-identically",
+                  all((out / path).read_bytes() == data
+                      for path, data in files.items()))
+            try:
+                write_bundle(out, files)
+                rewritten = True
+            except SystemExit:
+                rewritten = False
+        check("rewriting its own bundle is allowed", rewritten)
+        foreign = Path(tmp) / "foreign"
+        foreign.mkdir()
+        (foreign / "unrelated.txt").write_bytes(b"not a bundle\n")
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                write_bundle(foreign, files)
+            refused = False
+        except SystemExit:
+            refused = True
+        check("the write guard refuses a foreign directory", refused)
+
+    # --- the schema's rejection paths -----------------------------------
+    make_validator = load_jsonschema()
+    if make_validator is None:
+        print("jsonschema is not installed: self-test cannot run",
+              file=sys.stderr)
+        return 4
+    _, usage_validator = make_validator(USAGE_SCHEMA)
+    reserved = json.loads(
+        USAGE_SCHEMA.read_text(encoding="utf-8")
+    )["x-archivist"]["reservedFields"]
+    matrix = negative_cases(full)
+    injected = [case for case in matrix
+                if case[2] and case[0].startswith("forbidden member: ")]
+    check("the matrix injects every reserved name",
+          len(injected) == len(reserved))
+    escaped = [case[0] for case in matrix
+               if case[2]
+               and not list(usage_validator.iter_errors(case[1]))]
+    check("the schema rejects every negative case", not escaped)
+    control_ok = False
+    for label, mutated, must_reject in matrix:
+        if not must_reject:
+            control_ok = not bool(list(usage_validator.iter_errors(mutated)))
+    check("the valid control stays valid", control_ok)
+
+    # The member-exercise helpers the manifest's invariant counts lean on.
+    check("the schema scan covers the digest member",
+          "usage_summary_digest" in schema_member_names())
+    check("the record scan walks nested members",
+          record_member_names({"a": {"b": [1]}}) == {"a", "b"})
+
+    failed = [name for name, ok in checks if not ok]
+    for name, ok in checks:
+        print(f"  {'ok  ' if ok else 'FAIL'} {name}")
+    if failed:
+        print(f"self-test FAILED ({len(failed)})", file=sys.stderr)
+        return 3
+    print(f"self-test passed: {len(checks)} checks")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     modes = parser.add_mutually_exclusive_group(required=True)
@@ -732,11 +898,15 @@ def main(argv: list[str]) -> int:
                        const=str(DEFAULT_OUTPUT),
                        help="write the bundle (default: the committed "
                             "location)")
+    modes.add_argument("--self-test", action="store_true",
+                       help="prove the rejection paths")
     args = parser.parse_args(argv)
 
     if args.generate is not None:
         write_bundle(Path(args.generate), build_bundle())
         return 0
+    if args.self_test:
+        return self_test()
     return verify_bundle()
 
 
