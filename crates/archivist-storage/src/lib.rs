@@ -11,7 +11,11 @@
 //! - [`control::ControlAdminStore`] — offline administrator writes of validated,
 //!   tenant-authority-signed control records;
 //! - [`audit_restore::AuditRestoreStore`] — offline enumeration that freezes an immutable
-//!   `inventory-v1` before rebuild, restore, or reference scans.
+//!   `inventory-v1` before rebuild, restore, or reference scans;
+//! - [`scoped_write::CatalogWriteStore`] and
+//!   [`scoped_write::DerivedWriteStore`] — the Phase 10 append identities:
+//!   `put` and `list` below one derived namespace each (catalog
+//!   checkpoints, derived projections), and nothing else.
 //!
 //! An ingestion replica is configured with exactly the first two
 //! ([`ingest::IngestStorage`]); because the traits are disjoint by
@@ -55,6 +59,9 @@
 //!   and bounded reads.
 //! - [`ingest`] — the composition of the two ingest identities, proving the
 //!   authority boundary at the type level.
+//! - [`scoped_write`] — the Phase 10 scoped writers: catalog checkpoints
+//!   and derived projections, appended and enumerated below one derived
+//!   namespace each.
 //!
 //! # Status
 //!
@@ -84,3 +91,4 @@ pub mod metadata;
 pub mod multipart;
 pub mod probe;
 pub mod raw_write;
+pub mod scoped_write;

@@ -28,7 +28,11 @@
 //! through the atomic conditional-create decision layer when the observed
 //! capability report establishes it and deterministic overwrite otherwise,
 //! multipart sessions committed on exactly their own recorded
-//! commitments, and idempotent abort as the cancellation-safe cleanup. The
+//! commitments, and idempotent abort as the cancellation-safe cleanup.
+//! Fourth slice: the Phase 10 scoped writers ([`scoped_write`]) — the
+//! portable `CatalogWriteStore` and `DerivedWriteStore` over the two
+//! provisioned `put+list` identities, appending and enumerating catalog
+//! checkpoints and derived projections below one namespace each. The
 //! remaining adapter behavior arrives with its own deliverables:
 //! capability probing, the synthetic compatibility suite against the
 //! local reference backend, B2, and ARMOR, and the ingest reads.
@@ -42,3 +46,4 @@
 pub mod config;
 pub mod control_admin;
 pub mod raw_write;
+pub mod scoped_write;
