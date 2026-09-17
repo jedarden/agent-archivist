@@ -34,6 +34,10 @@
 //!   predecessor-signed, predecessor-addressed rotation link, and the
 //!   fetch-verify-adopt walk from the pinned root that resolves a signer
 //!   with its 24-hour dual-key acceptance window.
+//! - [`revocation`] — runtime revocation enforcement: the verified
+//!   revocation record and linked-client pointer, the append-only
+//!   client trust view, the per-attempt fail-closed evaluation, and the
+//!   60-second propagation bound (EC-09).
 //! - [`error`] — the failure taxonomy; every variant names a class and
 //!   carries no path, value, or key material.
 //!
@@ -61,10 +65,12 @@
 //! with the 24-hour dual-key window (control-trust story item 7), replayed
 //! offline against the committed corpus vectors
 //! (`schemas/v1/examples/control/authority-rotation-chain.json`).
-//! Per-attempt request signing, linked-client records, delegation,
-//! revocation and rotation epochs, receipt signing keys, and receipt
-//! verification arrive with their owning deliverables on these same
-//! primitives.
+//! Runtime revocation enforcement — record verification, the
+//! append-only trust view, and per-attempt evaluation — is
+//! [`revocation`]. Per-attempt request signing, full linked-client and
+//! delegation records, rotation epochs, receipt signing keys, and
+//! receipt verification arrive with their owning deliverables on these
+//! same primitives.
 //!
 //! The workspace is dependency-free by policy: the curve and hash
 //! implementations here are owned, small, and pinned by RFC 8032 and FIPS
@@ -80,4 +86,5 @@ pub mod identity;
 pub mod link;
 mod random;
 pub mod reference;
+pub mod revocation;
 mod sha512;
