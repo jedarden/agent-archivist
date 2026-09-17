@@ -19,8 +19,11 @@
 //! walk reads links through a caller-supplied fetch (the bytes a
 //! `ControlReadStore` serves at the predecessor's address), so the same
 //! code resolves signers on a client, on an ingestion replica, and in
-//! tests, with the 60-second trust cache and every storage decision left
-//! to the caller (plan Section 5, EC-09).
+//! tests, with every storage decision left to the caller (plan Section
+//! 5) — and with the caller-side 60-second trust cache itself left to
+//! its own deliverable, which composes with this rule at the resolution
+//! seam this module ships by the construction the next paragraph pins
+//! (EC-09).
 //!
 //! Three surfaces cover the story end to end: [`resolve_authority`] walks
 //! the chain and [`ResolvedAuthority`] carries the acceptance decision;
@@ -29,7 +32,12 @@
 //! and retained records verifiable forever; and
 //! [`prepare_rotation_publication`] gates the offline store's publication
 //! of a new link against the chain state, so succession stays in order
-//! and one retired key keeps exactly one link.
+//! and one retired key keeps exactly one link. Two more serve the
+//! consumers of those three: [`resolve_active_authority`] walks to the
+//! chain's current tip — the active trust anchor a fresh publication or
+//! a readiness check wants — and
+//! [`verify_control_record_resolved`] is the resolution seam a bounded
+//! trust cache's cached verifier composes at.
 //!
 //! The acceptance rule this module pins, at the record's own `signed_at`
 //! and never at read time:
@@ -550,6 +558,26 @@ impl ResolvedAuthority {
         matches!(self.acceptance(at), Acceptance::Accepted)
     }
 
+    /// The acceptance decision at `at` as its error class — the granular
+    /// form of [`ResolvedAuthority::accepts_signing_at`] a cached
+    /// resolution applies at the record's own instant, identical to the
+    /// classes [`verify_signing_authority`] reports.
+    ///
+    /// # Errors
+    /// [`AuthorityChainError::MalformedRecord`] for an instant that is
+    /// not a real calendar moment,
+    /// [`AuthorityChainError::NotEstablished`] before this half's
+    /// establishing link, and [`AuthorityChainError::Retired`] past the
+    /// 24-hour dual-key window after its retirement.
+    pub fn verify_signing_at(&self, at: &Timestamp) -> Result<(), AuthorityChainError> {
+        match self.acceptance(at) {
+            Acceptance::Accepted => Ok(()),
+            Acceptance::InvalidInstant => Err(AuthorityChainError::MalformedRecord),
+            Acceptance::BeforeEstablishment => Err(AuthorityChainError::NotEstablished),
+            Acceptance::AfterRetirement => Err(AuthorityChainError::Retired),
+        }
+    }
+
     /// The granular acceptance decision the boolean narrows.
     fn acceptance(&self, at: &Timestamp) -> Acceptance {
         if !at.calendar_valid() {
@@ -664,6 +692,58 @@ pub fn resolve_authority(
     }
 }
 
+/// Resolve the chain's **active trust anchor**: the newest half the walk
+/// from `root` can adopt — established by the last verified link, retired
+/// by nothing, the half the next publication extends and a readiness
+/// check names as the tenant's current authority.
+///
+/// The walk is [`resolve_authority`]'s without a destination: it adopts
+/// each link that retires the half it holds until the store serves no
+/// link at the current half's address — that absence is what "active"
+/// means, so the returned [`ResolvedAuthority`] always carries
+/// `retired_at == None` (and `established_at == None` only for a pinned
+/// root no link has ever retired). Every link the walk does read is held
+/// to the full admission rule — addressed at the half it retires, the
+/// root's tenant, the pinned derivations, the strictly advancing
+/// succession, and a predecessor signature against the half already
+/// trusted — so a broken chain fails closed exactly as a named-signer
+/// walk does, and termination needs no step bound for the same reason:
+/// the store can extend the walk only with links the operator actually
+/// signed ([`resolve_authority`] documents the argument).
+///
+/// # Errors
+/// The link-level failures of [`AuthorityRotationLink::parse`] and
+/// [`resolve_authority`] — a missing link mid-chain never happens here
+/// (an absent link is the walk's terminus), but a present link that
+/// mis-addresses, cross-tenants, mis-derives, loops, or fails its
+/// predecessor signature fails closed as usual.
+pub fn resolve_active_authority(
+    root: &PinnedAuthorityRoot,
+    mut fetch: impl FnMut(&KeyId) -> Option<Vec<u8>>,
+) -> Result<ResolvedAuthority, AuthorityChainError> {
+    let mut current_id = *root.key_id();
+    let mut current_public = *root.public_key();
+    let mut established_at = None;
+    let mut visited = vec![*root.key_id()];
+    while let Some(bytes) = fetch(&current_id) {
+        let link = verified_link_at(&current_id, root, &bytes)?;
+        let successor = link.key_id;
+        if visited.contains(&successor) {
+            return Err(AuthorityChainError::ChainRule);
+        }
+        visited.push(successor);
+        established_at = Some(link.signed_at);
+        current_id = successor;
+        current_public = link.public_key;
+    }
+    Ok(ResolvedAuthority {
+        key_id: current_id,
+        public_key: current_public,
+        established_at,
+        retired_at: None,
+    })
+}
+
 /// Verify that `signer` may have signed a record whose own `signed_at` is
 /// `signed_at`: resolve the signer through the chain from `root`, then
 /// apply the dual-key acceptance rule at the record's own instant.
@@ -693,12 +773,8 @@ pub fn verify_signing_authority(
         return Err(AuthorityChainError::MalformedRecord);
     }
     let resolved = resolve_authority(root, signer, fetch)?;
-    match resolved.acceptance(signed_at) {
-        Acceptance::Accepted => Ok(resolved),
-        Acceptance::InvalidInstant => Err(AuthorityChainError::MalformedRecord),
-        Acceptance::BeforeEstablishment => Err(AuthorityChainError::NotEstablished),
-        Acceptance::AfterRetirement => Err(AuthorityChainError::Retired),
-    }
+    resolved.verify_signing_at(signed_at)?;
+    Ok(resolved)
 }
 
 /// Verify one tenant-authority-signed control record of any record type —
@@ -738,7 +814,45 @@ pub fn verify_signing_authority(
 pub fn verify_control_record(
     root: &PinnedAuthorityRoot,
     envelope: &[u8],
-    fetch: impl FnMut(&KeyId) -> Option<Vec<u8>>,
+    mut fetch: impl FnMut(&KeyId) -> Option<Vec<u8>>,
+) -> Result<ResolvedAuthority, AuthorityChainError> {
+    verify_control_record_resolved(envelope, |record_tenant, signer, signed_at| {
+        // The chain has no force outside the root's tenant: a record
+        // claiming another tenant fails closed before the walk, whatever
+        // half signed it.
+        if *record_tenant != root.tenant_id {
+            return Err(AuthorityChainError::RecordDisagreement);
+        }
+        verify_signing_authority(root, signer, signed_at, &mut fetch)
+    })
+}
+
+/// Verify one tenant-authority-signed control record through a
+/// caller-supplied signer resolution — the seam a trust cache composes
+/// at (a bounded trust cache's cached verifier is this function with
+/// the 60-second cache in front of the walk, and a readiness probe is
+/// this function over a signed control read).
+///
+/// Everything but the resolution is [`verify_control_record`]'s own
+/// contract: the wrapper members are read and grammar-checked, the
+/// namespace fails closed first, and `resolve` names the acceptance
+/// policy — it is handed the record's parsed `tenant_id`,
+/// `authority_key_id`, and `signed_at`, decides which tenant's chain the
+/// record verifies against (and rejects a tenant it holds no root for),
+/// and returns the resolved authority that accepted the signer at that
+/// instant. The signature then verifies against the half `resolve`
+/// returned — never against the record's own assertion of it.
+///
+/// # Errors
+/// As [`verify_control_record`], plus whatever `resolve` reports for
+/// its own policy's rejections.
+pub fn verify_control_record_resolved(
+    envelope: &[u8],
+    resolve: impl FnOnce(
+        &TenantId,
+        &KeyId,
+        &Timestamp,
+    ) -> Result<ResolvedAuthority, AuthorityChainError>,
 ) -> Result<ResolvedAuthority, AuthorityChainError> {
     let malformed = AuthorityChainError::MalformedRecord;
     let Value::Object(mut object) = json::parse(envelope).map_err(|_| malformed)? else {
@@ -756,10 +870,7 @@ pub fn verify_control_record(
         }
     }
     let tenant_text = text_member(&object, "tenant_id").ok_or(malformed)?;
-    let tenant = TenantId::parse(tenant_text).map_err(|_| malformed)?;
-    if tenant != *root.tenant_id() {
-        return Err(AuthorityChainError::RecordDisagreement);
-    }
+    let tenant_id = TenantId::parse(tenant_text).map_err(|_| malformed)?;
     let signer_id_text = text_member(&object, "authority_key_id").ok_or(malformed)?;
     let signer_id = KeyId::parse(signer_id_text).map_err(|_| malformed)?;
     let signature_text = text_member(&object, "authority_signature").ok_or(malformed)?;
@@ -767,14 +878,15 @@ pub fn verify_control_record(
     let signed_at_text = text_member(&object, "signed_at").ok_or(malformed)?;
     let signed_at = Timestamp::parse(signed_at_text).map_err(|_| malformed)?;
 
-    // Acceptance first, against the chain: the signer must resolve and
-    // may have signed at this record's own instant. On success the
-    // resolved authority carries the public half the signature checks
-    // against.
-    let resolved = verify_signing_authority(root, &signer_id, &signed_at, fetch)?;
+    // Acceptance first, against the resolution policy: the record's
+    // tenant must be one the policy holds a root for, the signer must
+    // resolve against that tenant's chain, and it may have signed at
+    // this record's own instant. On success the resolved authority
+    // carries the public half the signature checks against.
+    let resolved = resolve(&tenant_id, &signer_id, &signed_at)?;
 
     // The control-record-v1 construction: canonicalize without the
-    // signature member, then verify against the chain-resolved half.
+    // signature member, then verify against the resolved half.
     let _ = object.remove("authority_signature");
     let canonical = Value::Object(object).canonical_bytes();
     let signature = ed25519::Signature::from_bytes(*signature.as_raw());
@@ -2010,6 +2122,267 @@ mod tests {
         assert_eq!(
             prepare_rotation_publication(&root(), &foreign, fetch_from(&empty)).unwrap_err(),
             AuthorityChainError::RecordDisagreement
+        );
+    }
+
+    #[test]
+    fn the_active_walk_lands_on_the_chain_tip() {
+        // Two links: the walk adopts both and anchors at the third half,
+        // established by the second link and retired by nothing.
+        let store = chain_store(vec![
+            signed_link(&ROOT_SEED, &SUCCESSOR_SEED, LINK_INSTANT, &tenant()),
+            signed_link(&SUCCESSOR_SEED, &THIRD_SEED, SECOND_LINK_INSTANT, &tenant()),
+        ]);
+        let third_id = KeyId::from_public_key(&public_half(&THIRD_SEED));
+
+        let anchor = resolve_active_authority(&root(), fetch_from(&store))
+            .expect("the walk lands on the newest half the store admits");
+        assert_eq!(*anchor.key_id(), third_id);
+        assert_eq!(*anchor.public_key(), public_half(&THIRD_SEED));
+        assert_eq!(
+            anchor.established_at().map(Timestamp::as_str),
+            Some(SECOND_LINK_INSTANT)
+        );
+        assert!(
+            anchor.retired_at().is_none(),
+            "the active anchor is retired by nothing — that absence is what active means"
+        );
+        // The granular acceptance form on the anchor itself: it signs
+        // from its establishing instant, and not one nanosecond before.
+        assert!(
+            anchor
+                .verify_signing_at(&instant(SECOND_LINK_INSTANT))
+                .is_ok()
+        );
+        assert!(
+            anchor
+                .verify_signing_at(&instant("2030-01-01T00:00:00Z"))
+                .is_ok()
+        );
+        assert_eq!(
+            anchor
+                .verify_signing_at(&instant("2026-09-11T23:59:59.999999999Z"))
+                .unwrap_err(),
+            AuthorityChainError::NotEstablished
+        );
+
+        // One link: the tip is the successor, anchored at its own link.
+        let one_link = chain_store(vec![signed_link(
+            &ROOT_SEED,
+            &SUCCESSOR_SEED,
+            LINK_INSTANT,
+            &tenant(),
+        )]);
+        let successor = resolve_active_authority(&root(), fetch_from(&one_link))
+            .expect("one link, one adoption");
+        assert_eq!(
+            *successor.key_id(),
+            KeyId::from_public_key(&public_half(&SUCCESSOR_SEED))
+        );
+        assert_eq!(
+            successor.established_at().map(Timestamp::as_str),
+            Some(LINK_INSTANT)
+        );
+        assert!(successor.retired_at().is_none());
+    }
+
+    #[test]
+    fn the_pinned_root_alone_is_the_active_anchor() {
+        // The empty store: no link has ever retired the root, so the root
+        // is the active anchor — pinned, never established, retired by
+        // nothing.
+        let store = chain_store(vec![]);
+        let anchor = resolve_active_authority(&root(), fetch_from(&store))
+            .expect("a chain of no links anchors at the pinned root");
+        assert_eq!(*anchor.key_id(), *root().key_id());
+        assert_eq!(*anchor.public_key(), *root().public_key());
+        assert!(
+            anchor.established_at().is_none(),
+            "the root was pinned, never established by a link"
+        );
+        assert!(anchor.retired_at().is_none());
+        // And the root-anchor signs at every instant, the granular form
+        // agreeing with the boolean.
+        for at in ["2020-01-01T00:00:00Z", LINK_INSTANT, "2040-06-01T12:00:00Z"] {
+            assert!(anchor.accepts_signing_at(&instant(at)), "{at}");
+            assert!(anchor.verify_signing_at(&instant(at)).is_ok(), "{at}");
+        }
+    }
+
+    #[test]
+    fn an_active_walk_fails_closed_on_a_broken_mid_chain_link() {
+        // The first link admits the walk; the link at the successor's
+        // address is tampered, and the walk refuses the chain instead of
+        // quietly anchoring at the last good half.
+        let tampered_second = {
+            let bytes = signed_link(&SUCCESSOR_SEED, &THIRD_SEED, SECOND_LINK_INSTANT, &tenant());
+            let Value::Object(mut object) = json::parse(&bytes).expect("json") else {
+                panic!("object");
+            };
+            object.set("signed_at", text("2026-09-12T00:00:01Z"));
+            Value::Object(object).canonical_bytes()
+        };
+        let tampered = chain_store(vec![
+            signed_link(&ROOT_SEED, &SUCCESSOR_SEED, LINK_INSTANT, &tenant()),
+            tampered_second,
+        ]);
+        assert_eq!(
+            resolve_active_authority(&root(), fetch_from(&tampered)).unwrap_err(),
+            AuthorityChainError::Signature,
+            "a mid-chain link the predecessor never signed breaks the whole walk"
+        );
+
+        // A mid-chain link addressed at the wrong half: the bytes at the
+        // successor's address retire the root, a key the walk no longer
+        // holds there.
+        let displaced = {
+            let mut store = HashMap::new();
+            store.insert(
+                *root().key_id(),
+                signed_link(&ROOT_SEED, &SUCCESSOR_SEED, LINK_INSTANT, &tenant()),
+            );
+            store.insert(
+                KeyId::from_public_key(&public_half(&SUCCESSOR_SEED)),
+                signed_link(&ROOT_SEED, &THIRD_SEED, SECOND_LINK_INSTANT, &tenant()),
+            );
+            store
+        };
+        assert_eq!(
+            resolve_active_authority(&root(), fetch_from(&displaced)).unwrap_err(),
+            AuthorityChainError::RecordDisagreement
+        );
+    }
+
+    #[test]
+    fn an_active_walk_refuses_a_link_that_loops_the_chain() {
+        // The successor's link retires the successor and re-establishes
+        // the root: individually signed, jointly a loop, and the walk
+        // refuses it instead of walking forever.
+        let loop_store = chain_store(vec![
+            signed_link(&ROOT_SEED, &SUCCESSOR_SEED, LINK_INSTANT, &tenant()),
+            signed_link(&SUCCESSOR_SEED, &ROOT_SEED, SECOND_LINK_INSTANT, &tenant()),
+        ]);
+        assert_eq!(
+            resolve_active_authority(&root(), fetch_from(&loop_store)).unwrap_err(),
+            AuthorityChainError::ChainRule,
+            "a succession that revisits the pinned root is a loop, not a history"
+        );
+    }
+
+    /// The tenant-pinned resolver [`verify_control_record`] itself closes
+    /// over, named so the seam tests compose exactly what production
+    /// composes: the chain has no force outside the root's tenant, and
+    /// the walk plus acceptance rule decide the rest.
+    fn pinned_resolver(
+        store: &HashMap<KeyId, Vec<u8>>,
+    ) -> impl Fn(&TenantId, &KeyId, &Timestamp) -> Result<ResolvedAuthority, AuthorityChainError> + '_
+    {
+        move |tenant, signer, at| {
+            if *tenant != root().tenant_id {
+                return Err(AuthorityChainError::RecordDisagreement);
+            }
+            verify_signing_authority(&root(), signer, at, fetch_from(store))
+        }
+    }
+
+    #[test]
+    fn the_resolution_seam_applies_the_resolvers_acceptance_classes() {
+        let store = chain_store(vec![signed_link(
+            &ROOT_SEED,
+            &SUCCESSOR_SEED,
+            LINK_INSTANT,
+            &tenant(),
+        )]);
+
+        // Accepted: the predecessor mid-overlap, and the seam hands back
+        // the half the signature checks against.
+        let mid_overlap = "2026-09-10T12:00:00Z";
+        let accepted = verify_control_record_resolved(
+            &signed_control_record(&ROOT_SEED, mid_overlap, &tenant()),
+            pinned_resolver(&store),
+        )
+        .expect("the resolver accepts the predecessor mid-overlap");
+        assert_eq!(*accepted.key_id(), *root().key_id());
+        assert_eq!(*accepted.public_key(), *root().public_key());
+
+        // The successor's record one nanosecond before its establishment:
+        // the resolver's NotEstablished class is the seam's answer.
+        assert_eq!(
+            verify_control_record_resolved(
+                &signed_control_record(
+                    &SUCCESSOR_SEED,
+                    "2026-09-09T23:59:59.999999999Z",
+                    &tenant()
+                ),
+                pinned_resolver(&store),
+            )
+            .unwrap_err(),
+            AuthorityChainError::NotEstablished
+        );
+
+        // The predecessor past its 24-hour window: Retired.
+        assert_eq!(
+            verify_control_record_resolved(
+                &signed_control_record(&ROOT_SEED, "2026-09-12T00:00:00Z", &tenant()),
+                pinned_resolver(&store),
+            )
+            .unwrap_err(),
+            AuthorityChainError::Retired
+        );
+
+        // A presented instant that is not a real moment: the grammar
+        // parses it, the resolver's calendar check refuses it.
+        assert_eq!(
+            verify_control_record_resolved(
+                &signed_control_record(&SUCCESSOR_SEED, "2026-02-30T00:00:00Z", &tenant()),
+                pinned_resolver(&store),
+            )
+            .unwrap_err(),
+            AuthorityChainError::MalformedRecord
+        );
+
+        // A signer no chain names: Unreachable, through the seam unchanged.
+        assert_eq!(
+            verify_control_record_resolved(
+                &signed_control_record(&THIRD_SEED, mid_overlap, &tenant()),
+                pinned_resolver(&store),
+            )
+            .unwrap_err(),
+            AuthorityChainError::Unreachable
+        );
+    }
+
+    #[test]
+    fn the_resolution_seam_fails_closed_before_verifying_a_foreign_tenant() {
+        let store = chain_store(vec![signed_link(
+            &ROOT_SEED,
+            &SUCCESSOR_SEED,
+            LINK_INSTANT,
+            &tenant(),
+        )]);
+        // The record claims another tenant AND carries a signature that
+        // verifies against nothing: RecordDisagreement is the answer only
+        // if the resolver's rejection runs first — the ordering this seam
+        // pins.
+        let foreign = {
+            let bytes = signed_control_record(
+                &ROOT_SEED,
+                LINK_INSTANT,
+                &OTHER_TENANT.parse().expect("grammar"),
+            );
+            let Value::Object(mut object) = json::parse(&bytes).expect("json") else {
+                panic!("object");
+            };
+            object.set(
+                "authority_signature",
+                text(&Ed25519Signature::from_raw([0x42; 64]).to_hex()),
+            );
+            Value::Object(object).canonical_bytes()
+        };
+        assert_eq!(
+            verify_control_record_resolved(&foreign, pinned_resolver(&store)).unwrap_err(),
+            AuthorityChainError::RecordDisagreement,
+            "a tenant the resolver holds no root for fails closed before the walk and the signature"
         );
     }
 }
