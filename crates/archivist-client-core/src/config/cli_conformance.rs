@@ -483,7 +483,14 @@ impl Command {
 /// section and attribute shapes as the parse goes.
 fn command_registry(document: &str) -> Result<Vec<Command>, String> {
     const COMMAND_REQUIRED: [&str; 8] = [
-        "summary", "phase", "owner", "state_lock", "stdout", "operand", "stdin", "keys",
+        "summary",
+        "phase",
+        "owner",
+        "state_lock",
+        "stdout",
+        "operand",
+        "stdin",
+        "keys",
     ];
     const COMMAND_OPTIONAL: [&str; 3] = ["flags", "result_schema", "deprecated"];
     const FLAG_REQUIRED: [&str; 1] = ["summary"];
@@ -494,11 +501,10 @@ fn command_registry(document: &str) -> Result<Vec<Command>, String> {
         .split_first()
         .ok_or_else(|| "empty registry document".to_owned())?;
     check_closed_fields(root, &["schema"], &[], "the registry root")?;
-    if root.fields.first().and_then(|(_, value)| value.text())
-        != Some("archivist.cli-registry/v1")
+    if root.fields.first().and_then(|(_, value)| value.text()) != Some("archivist.cli-registry/v1")
     {
         return Err(
-            "the registry root does not declare schema archivist.cli-registry/v1".to_owned()
+            "the registry root does not declare schema archivist.cli-registry/v1".to_owned(),
         );
     }
 
@@ -514,7 +520,10 @@ fn command_registry(document: &str) -> Result<Vec<Command>, String> {
                     .into_iter()
                     .map(str::to_owned)
                     .collect();
-                let result_schema = match section.fields.iter().find(|(key, _)| key == "result_schema")
+                let result_schema = match section
+                    .fields
+                    .iter()
+                    .find(|(key, _)| key == "result_schema")
                 {
                     Some((_, value)) => Some(
                         value
@@ -550,9 +559,7 @@ fn command_registry(document: &str) -> Result<Vec<Command>, String> {
                 };
                 let command = commands
                     .iter_mut()
-                    .find(|command| {
-                        command.path.len() == 1 && command.path[0] == *name
-                    })
+                    .find(|command| command.path.len() == 1 && command.path[0] == *name)
                     .ok_or_else(|| format!("[{label}] arrives before its command"))?;
                 command.flags.push(OperationalFlag {
                     name: flag.clone(),
@@ -600,9 +607,7 @@ fn printable(text: &str) -> bool {
 
 /// Whether a summary is non-empty, printable, and within the bound.
 fn summary_ok(summary: &str) -> bool {
-    !summary.is_empty()
-        && printable(summary)
-        && summary.chars().count() <= SUMMARY_MAX
+    !summary.is_empty() && printable(summary) && summary.chars().count() <= SUMMARY_MAX
 }
 
 /// Validate the command registry's own shape (CLI-004 through CLI-006,
@@ -638,10 +643,15 @@ fn validate_commands(commands: &[Command]) -> Vec<String> {
             joined_forms.insert(command.joined(), label.clone());
         }
         if !summary_ok(&command.summary) {
-            violations.push(format!("{label}: summary leaves the bounded printable shape"));
+            violations.push(format!(
+                "{label}: summary leaves the bounded printable shape"
+            ));
         }
         if !(command.phase >= PHASE_RANGE.0 && command.phase <= PHASE_RANGE.1) {
-            violations.push(format!("{label}: phase {} leaves the plan range", command.phase));
+            violations.push(format!(
+                "{label}: phase {} leaves the plan range",
+                command.phase
+            ));
         }
         if !grammar_ok(&command.owner, FLAG_NAME_MAX) {
             violations.push(format!(
@@ -676,7 +686,9 @@ fn validate_commands(commands: &[Command]) -> Vec<String> {
         let mut seen = BTreeSet::new();
         for key in &command.keys {
             if !seen.insert(key.as_str()) {
-                violations.push(format!("{label}: key {key} appears twice in the command's list"));
+                violations.push(format!(
+                    "{label}: key {key} appears twice in the command's list"
+                ));
             }
         }
         if command.stdout != "document" && command.result_schema.is_some() {
@@ -690,7 +702,9 @@ fn validate_commands(commands: &[Command]) -> Vec<String> {
                     .extension()
                     .is_some_and(|extension| extension.to_str() == Some("json")))
         {
-            violations.push(format!("{label}: result schema {schema:?} leaves schemas/v1/"));
+            violations.push(format!(
+                "{label}: result schema {schema:?} leaves schemas/v1/"
+            ));
         }
         for flag in &command.flags {
             if !grammar_ok(&flag.name, FLAG_NAME_MAX) {
@@ -713,7 +727,10 @@ fn validate_commands(commands: &[Command]) -> Vec<String> {
 /// Validate the three flag namespaces against each other (CLI-008 through
 /// CLI-012): operational flags are globally unique and disjoint from the
 /// mode-flag set and from every key-derived flag name.
-fn validate_flag_namespaces(commands: &[Command], key_flag_names: &BTreeSet<String>) -> Vec<String> {
+fn validate_flag_namespaces(
+    commands: &[Command],
+    key_flag_names: &BTreeSet<String>,
+) -> Vec<String> {
     let mut violations = Vec::new();
     let mode_names: BTreeSet<&str> = MODE_FLAGS.iter().map(|(name, _)| *name).collect();
     let mut operational: BTreeMap<String, String> = BTreeMap::new();
@@ -886,7 +903,10 @@ fn validate_exit_mappings(classes: &[ClassRow], codes: &[CodeRow]) -> Vec<String
     }
     for row in classes {
         if row.exit == SUCCESS_EXIT {
-            violations.push(format!("class {} claims exit 0, the success exit", row.name));
+            violations.push(format!(
+                "class {} claims exit 0, the success exit",
+                row.name
+            ));
         } else if row.exit >= SIGNAL_EXIT_FLOOR {
             violations.push(format!(
                 "class {} claims exit {} inside the 128+n signal range",
@@ -1086,8 +1106,11 @@ fn the_output_envelope_schema_agrees_with_the_command_registry() {
         root.get("$id"),
         Some(&json::Value::Text(ENVELOPE_SCHEMA_ID.to_owned()))
     );
-    let properties = as_object(root.get("properties").expect("the schema types its members"))
-        .expect("properties is an object");
+    let properties = as_object(
+        root.get("properties")
+            .expect("the schema types its members"),
+    )
+    .expect("properties is an object");
     let namespace_const = as_object(properties.get("schema").expect("the schema member"))
         .and_then(|schema| schema.get("const"));
     assert_eq!(
@@ -1095,8 +1118,11 @@ fn the_output_envelope_schema_agrees_with_the_command_registry() {
         Some(&json::Value::Text(OUTPUT_NAMESPACE.to_owned())),
         "the envelope namespace const is the one the CLI pins"
     );
-    let required = as_array(root.get("required").expect("the envelope pins required members"))
-        .expect("required is an array");
+    let required = as_array(
+        root.get("required")
+            .expect("the envelope pins required members"),
+    )
+    .expect("required is an array");
     let members: Vec<Option<&str>> = required
         .iter()
         .map(|value| match value {
@@ -1122,11 +1148,17 @@ fn the_output_envelope_schema_agrees_with_the_command_registry() {
     );
     assert_eq!(
         command_property.get("maxLength"),
-        Some(&json::Value::Int(i64::try_from(COMMAND_TOKEN_MAX + 1).expect("fits"))),
+        Some(&json::Value::Int(
+            i64::try_from(COMMAND_TOKEN_MAX + 1).expect("fits")
+        )),
         "the command-token length bound agrees with the pattern"
     );
-    let generated_at = as_object(properties.get("generated_at").expect("the generated_at member"))
-        .expect("the generated_at member is an object");
+    let generated_at = as_object(
+        properties
+            .get("generated_at")
+            .expect("the generated_at member"),
+    )
+    .expect("the generated_at member is an object");
     assert_eq!(
         generated_at.get("$ref"),
         Some(&json::Value::Text(TIMESTAMP_REF.to_owned())),
