@@ -67,6 +67,9 @@ mod toml;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod cli_conformance;
+
 use std::collections::BTreeMap;
 use std::fmt::{self, Write as _};
 use std::fs::File;
