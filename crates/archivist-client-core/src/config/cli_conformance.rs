@@ -613,6 +613,9 @@ fn summary_ok(summary: &str) -> bool {
 /// Validate the command registry's own shape (CLI-004 through CLI-006,
 /// CLI-011, CLI-015, CLI-025, CLI-027): grammar, bounds, closed kinds,
 /// joined-form uniqueness, flag summaries, and the result-schema rule.
+// One flat violation list per rule reads closer to the gate it mirrors than
+// a decomposition would.
+#[allow(clippy::too_many_lines)]
 fn validate_commands(commands: &[Command]) -> Vec<String> {
     let mut violations = Vec::new();
     let mut joined_forms: BTreeMap<String, String> = BTreeMap::new();
