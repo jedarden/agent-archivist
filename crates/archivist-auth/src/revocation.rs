@@ -349,8 +349,11 @@ impl LinkedClientPointer {
     /// The family checks mirror [`RevocationRecord::verify`]'s, plus the
     /// pointer's own VAL-002 checks: the `key_id` member must be the
     /// pinned derivation of the record's own `public_key` half, and the
-    /// `scopes` member must be an array — its token grammar is the
-    /// linked-client family's contract, not the revocation decision's.
+    /// `scopes` member must be the record schema's two-allowlist object
+    /// (`schemas/v1/control-client.json`: exactly `harnesses` and
+    /// `operations`, each a non-empty bounded array) — the tokens inside
+    /// it are the linked-client family's contract, not the revocation
+    /// decision's.
     ///
     /// # Errors
     /// As [`RevocationRecord::verify`].
@@ -394,9 +397,7 @@ impl LinkedClientPointer {
         if text_member(&object, "key_algorithm") != Some("ed25519") {
             return Err(RevocationError::RecordDisagreement);
         }
-        if !matches!(object.get("scopes"), Some(Value::Array(scopes)) if
-            scopes.iter().all(|s| matches!(s, Value::Text(token) if !token.is_empty())))
-        {
+        if !scopes_allowlist_object(object.get("scopes")) {
             return Err(MALFORMED);
         }
         let epoch = epoch_member(&object)?;
@@ -844,6 +845,33 @@ fn epoch_member(object: &Object) -> Result<u64, RevocationError> {
     }
 }
 
+/// Whether `value` is the linked-client record schema's `scopes` member
+/// (`schemas/v1/control-client.json`, `additionalProperties: false`):
+/// an object carrying exactly the `harnesses` and `operations`
+/// allowlists, each a non-empty array of at most 64 non-empty text
+/// tokens. Which tokens those are is the family's grammar, not the
+/// revocation decision's.
+fn scopes_allowlist_object(value: Option<&Value>) -> bool {
+    const SCOPE_BOUND: usize = 64;
+    let Some(Value::Object(scopes)) = value else {
+        return false;
+    };
+    if scopes.len() != 2 || !scopes.contains("harnesses") || !scopes.contains("operations") {
+        return false;
+    }
+    let allowlist = |name: &str| match scopes.get(name) {
+        Some(Value::Array(items)) => {
+            !items.is_empty()
+                && items.len() <= SCOPE_BOUND
+                && items
+                    .iter()
+                    .all(|item| matches!(item, Value::Text(token) if !token.is_empty()))
+        }
+        _ => false,
+    };
+    allowlist("harnesses") && allowlist("operations")
+}
+
 /// A canonical text value, for the record builders.
 fn text(value: &str) -> Value {
     Value::Text(value.to_owned())
@@ -919,7 +947,10 @@ mod tests {
         members.set("key_id", text(&KeyId::from_public_key(&half).to_hex()));
         members.set("key_algorithm", text("ed25519"));
         members.set("public_key", text(&half.to_hex()));
-        members.set("scopes", Value::Array(vec![text("raw-write")]));
+        let mut scopes = Object::new();
+        scopes.set("harnesses", Value::Array(vec![text("claude-code")]));
+        scopes.set("operations", Value::Array(vec![text("ingest")]));
+        members.set("scopes", Value::Object(scopes));
         members.set("authorization_epoch", Value::Int(epoch.cast_signed()));
         members.set("signed_at", text(signed_at));
         members.set("authority_key_id", text(&key_id(&AUTHORITY_SEED).to_hex()));
