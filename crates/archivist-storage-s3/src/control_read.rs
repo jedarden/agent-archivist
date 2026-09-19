@@ -32,7 +32,7 @@
 //!   pinned canonical-document maximum ([`CANONICAL_MAX_BYTES`], the same
 //!   bound the wire envelope and the raw manifest paths pin) is a
 //!   [`StorageErrorKind::MalformedInput`] classification — never a
-//!   truncated acceptance. Absent records are [`Ok(None)`]: an unlinked
+//!   truncated acceptance. Absent records are `Ok(None)`: an unlinked
 //!   client and a client with no delegation are ordinary states, not
 //!   errors.
 //! - **Scope before the network.** Every request path checks the derived
@@ -295,7 +295,7 @@ impl<B: ControlReadBackend + Sync> ControlReadStore for S3ControlReadStore<B> {
 
 impl<B: ControlReadBackend + Sync> S3ControlReadStore<B> {
     /// Gate one derived key, GET it, and hand over the byte-exact record
-    /// with its observation — absent is [`Ok(None)`], oversize is a
+    /// with its observation — absent is `Ok(None)`, oversize is a
     /// classification, never a truncated acceptance.
     async fn read(&self, key: ControlObjectKey) -> Result<Option<ControlRecord>, StorageError> {
         self.authorize(&key)?;
@@ -536,10 +536,6 @@ mod tests {
 
     fn store() -> S3ControlReadStore<MapBackend> {
         S3ControlReadStore::new(read_config(), MapBackend::new(&tenant()))
-    }
-
-    fn error_kind(result: Result<Option<impl std::fmt::Debug>, StorageError>) -> StorageErrorKind {
-        result.expect_err("this read must fail").kind()
     }
 
     /// The five (identifiers, derived key, stored bytes) rows one story
