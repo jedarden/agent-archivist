@@ -1842,10 +1842,10 @@ mod tests {
     use archivist_protocol::vocabulary::{GrammarError, SafeMessage};
 
     use super::{
-        ControlAdminConfig, ControlAdminConfigBuilder, ControlReadConfig,
-        ControlReadConfigBuilder, CredentialKind, CredentialReference,
-        EncryptionPolicy, EndpointUrl, PathStyle, S3ConfigError, S3ConfigErrorKind,
-        S3StorageConfig, S3StorageConfigBuilder, STRING_MAX, StorageRole, Tls,
+        ControlAdminConfig, ControlAdminConfigBuilder, ControlReadConfig, ControlReadConfigBuilder,
+        CredentialKind, CredentialReference, EncryptionPolicy, EndpointUrl, PathStyle,
+        S3ConfigError, S3ConfigErrorKind, S3StorageConfig, S3StorageConfigBuilder, STRING_MAX,
+        StorageRole, Tls,
     };
 
     const ENDPOINT: &str = "https://s3.example.invalid";
@@ -2633,7 +2633,10 @@ mod tests {
         assert_eq!(config.region(), REGION);
         assert_eq!(config.control_bucket(), CONTROL_BUCKET);
         assert_eq!(config.tenant().as_str(), READ_TENANT);
-        assert_eq!(config.control_read_credentials().kind(), CredentialKind::File);
+        assert_eq!(
+            config.control_read_credentials().kind(),
+            CredentialKind::File
+        );
     }
 
     #[test]
@@ -2770,5 +2773,4 @@ mod tests {
             .reject_administration_credential(&distinct)
             .expect("distinct identities are accepted");
     }
-
 }
