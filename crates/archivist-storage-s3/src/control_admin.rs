@@ -811,7 +811,8 @@ impl<B: ControlAdminBackend + Sync> S3ControlAdminStore<B> {
                 DETAIL_PUBLICATION_FAMILY,
             ));
         }
-        if declared.tenant() != self.config.tenant() || !self.config.permits_key(declared.as_str()) {
+        if declared.tenant() != self.config.tenant() || !self.config.permits_key(declared.as_str())
+        {
             return Err(StorageError::new(
                 StorageErrorKind::ScopeViolation,
                 DETAIL_SCOPE,
