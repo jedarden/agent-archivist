@@ -32,7 +32,12 @@
 //! Fourth slice: the Phase 10 scoped writers ([`scoped_write`]) — the
 //! portable `CatalogWriteStore` and `DerivedWriteStore` over the two
 //! provisioned `put+list` identities, appending and enumerating catalog
-//! checkpoints and derived projections below one namespace each. The
+//! checkpoints and derived projections below one namespace each. Fifth
+//! slice: the ingestion replica's control reads ([`control_read`]) — the
+//! portable `ControlReadStore` over the dedicated read-only credential
+//! the [`config`] module's `ControlReadConfig` surface validates, five
+//! bounded signed-record reads and their head inspections derived through
+//! the same key grammar the administration store writes with. The
 //! remaining adapter behavior arrives with its own deliverables:
 //! capability probing, the synthetic compatibility suite against the
 //! local reference backend, B2, and ARMOR, and the ingest reads.
@@ -45,5 +50,6 @@
 
 pub mod config;
 pub mod control_admin;
+pub mod control_read;
 pub mod raw_write;
 pub mod scoped_write;
