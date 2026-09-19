@@ -53,6 +53,35 @@
 //! registry key yet: it is assembled by the offline tooling directly, and
 //! the registry format gains optional reference keys in a later phase.
 //!
+//! # The Phase 10 scoped-writer surface
+//!
+//! [`ScopedWritersConfig`] is the pair surface the process hosting the
+//! Phase 10 pipelines assembles — the catalog-writer and derived-writer
+//! identities (plan Section 7.5; the ARMOR provisioning's two `put+list`
+//! grants below one tenant's catalog and derived prefixes), the way
+//! [`ControlAdminConfig`] is the offline administration surface. The two
+//! writers share the deployment's endpoint, region, addressing style, and
+//! tenant bucket and differ only in the namespace each credential
+//! provisions. Each half validates by its own standalone surface in
+//! [`crate::scoped_write`] — the same fail-closed gates the stores compose
+//! from — and never becomes a field of [`S3StorageConfig`] or a
+//! [`StorageRole`]: the writer credentials are not ingest identities, and
+//! the joint refusals that keep them disjoint from every ingest role, the
+//! administration credential, and each other stay on the writer surfaces
+//! themselves. This surface adds the one check the two halves cannot see
+//! on their own — the pair never maps both namespaces onto one credential
+//! — and hands back the two validated writer configurations.
+//!
+//! The credentials enter as registry references
+//! (`storage.catalog_write_credentials_ref`,
+//! `storage.derived_write_credentials_ref` — optional secret references,
+//! CFG-019 and CFG-028: a replica that hosts none of the Phase 10
+//! pipelines never carries them) and validate by the CFG-029 grammar, so
+//! a literal value assigned to either setting is a construction failure,
+//! never a store (CFG-032). The scoping settings ride the deployment's
+//! `storage.endpoint_url` and `storage.region` values and the tenant
+//! bucket the two identities provision.
+//!
 //! # Transport security
 //!
 //! The endpoint scheme and the [`Tls`] setting must agree: an `https://`
@@ -76,6 +105,7 @@ use std::fmt;
 use archivist_protocol::vocabulary::{GrammarError, TenantId};
 
 use crate::control_admin::ControlObjectKey;
+use crate::scoped_write::{CatalogWriterConfig, DerivedWriterConfig};
 
 /// Why a configuration failed validation: a closed class of failure
 /// carrying the decision the operator must make next.
@@ -144,6 +174,7 @@ enum Setting {
     Credentials,
     Tenant,
     AdminCredentials,
+    ReadCredentials,
 }
 
 impl Setting {
@@ -160,6 +191,7 @@ impl Setting {
             Self::Credentials,
             Self::Tenant,
             Self::AdminCredentials,
+            Self::ReadCredentials,
         ]
     }
 
@@ -174,6 +206,7 @@ impl Setting {
             Self::Credentials => "raw-write and control-read credentials are required",
             Self::Tenant => "tenant is required",
             Self::AdminCredentials => "control-administration credential is required",
+            Self::ReadCredentials => "control-read credential is required",
         }
     }
 
@@ -190,6 +223,7 @@ impl Setting {
             Self::AdminCredentials => {
                 "control-administration credential is outside the closed grammar"
             }
+            Self::ReadCredentials => "control-read credential is outside the closed grammar",
         }
     }
 }
@@ -1301,8 +1335,457 @@ impl ControlAdminConfigBuilder {
             path_style: self.path_style.unwrap_or_default(),
             control_bucket: Box::from(control_bucket),
             tenant,
+
             admin_credentials,
         })
+    }
+}
+
+/// The validated configuration of an ingest replica's control-READ
+/// identity (plan Section 5): the credential that may read
+/// tenant-authority-signed control records and hold no other authority.
+///
+/// This is a separate surface from [`ControlAdminConfig`] by necessity,
+/// not convenience. The administration identity writes the control prefix
+/// and is never configured on a replica; this one reads it and can neither
+/// publish nor retract a record. Keeping them as distinct types means a
+/// deployment cannot quietly hand an ingest replica write authority by
+/// reusing one configuration in both places, and
+/// [`ControlReadConfig::reject_administration_credential`] refuses the
+/// remaining way to collapse them.
+///
+/// It carries no raw bucket and no role mapping: this identity has exactly
+/// one capability over exactly one prefix.
+#[derive(Clone, Debug)]
+pub struct ControlReadConfig {
+    endpoint: EndpointUrl,
+    tls: Tls,
+    region: Box<str>,
+    path_style: PathStyle,
+    control_bucket: Box<str>,
+    tenant: TenantId,
+    read_credentials: CredentialReference,
+}
+
+impl ControlReadConfig {
+    /// Start assembling a control-read configuration from its tier values.
+    #[must_use]
+    pub fn builder() -> ControlReadConfigBuilder {
+        ControlReadConfigBuilder::default()
+    }
+
+    /// The validated endpoint of the control bucket.
+    #[must_use]
+    pub fn endpoint(&self) -> &EndpointUrl {
+        &self.endpoint
+    }
+
+    /// The transport security agreed with the endpoint scheme.
+    #[must_use]
+    pub const fn tls(&self) -> Tls {
+        self.tls
+    }
+
+    /// The configured region.
+    #[must_use]
+    pub fn region(&self) -> &str {
+        &self.region
+    }
+
+    /// The addressing style for this endpoint.
+    #[must_use]
+    pub const fn path_style(&self) -> PathStyle {
+        self.path_style
+    }
+
+    /// The bucket holding this tenant's control prefix.
+    #[must_use]
+    pub fn control_bucket(&self) -> &str {
+        &self.control_bucket
+    }
+
+    /// The tenant whose control prefix this identity is provisioned for.
+    #[must_use]
+    pub const fn tenant(&self) -> &TenantId {
+        &self.tenant
+    }
+
+    /// The control-read credential reference. A reference only: no
+    /// credential value is parsed, stored, or echoed on this surface.
+    #[must_use]
+    pub const fn control_read_credentials(&self) -> &CredentialReference {
+        &self.read_credentials
+    }
+
+    /// Whether a key is inside this credential's provisioned read scope:
+    /// one of the five canonical control layouts under this tenant's
+    /// control prefix (plan Section 7.5), and nothing else.
+    ///
+    /// This is the Rust-side model of the deployment's backend policy for
+    /// the read identity — read-only below `tenants/<tenant>/v1/control/`,
+    /// deny every other prefix. Raw blobs, occurrences, attestations,
+    /// catalog checkpoints, derived objects, tombstones, legal holds, and
+    /// every other tenant's prefix (control included) are denied, and a
+    /// control-layout key with a non-canonical identifier or epoch segment
+    /// is denied rather than normalized.
+    ///
+    /// It deliberately shares [`ControlObjectKey::parse`] with the
+    /// administration surface: reader and writer agreeing on what a
+    /// canonical control key is, is the property that makes a record
+    /// written by the administrator findable by the replica.
+    #[must_use]
+    pub fn permits_key(&self, key: &str) -> bool {
+        ControlObjectKey::parse(key).is_ok_and(|derived| derived.tenant() == &self.tenant)
+    }
+
+    /// Refuse a deployment that maps the read identity onto the
+    /// administration credential.
+    ///
+    /// Neither configuration can state this violation alone — each is
+    /// valid on its own terms — so the check is a joint one over the pair,
+    /// mirroring [`S3StorageConfig::reject_administration_credential`].
+    ///
+    /// # Errors
+    /// [`S3ConfigErrorKind::DuplicateIdentity`] when the control-read
+    /// credential reference is the control-administration credential
+    /// reference. The offending reference is not echoed.
+    pub fn reject_administration_credential(
+        &self,
+        admin: &ControlAdminConfig,
+    ) -> Result<(), S3ConfigError> {
+        if &self.read_credentials == admin.control_admin_credentials() {
+            return Err(S3ConfigError::new(
+                S3ConfigErrorKind::DuplicateIdentity,
+                "the control-read identity is the control-administration credential",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// The unvalidated control-read configuration under assembly;
+/// [`ControlReadConfigBuilder::build`] is its single fail-closed gate,
+/// with the same endpoint/TLS agreement rule the other surfaces pin.
+#[derive(Clone, Debug, Default)]
+pub struct ControlReadConfigBuilder {
+    endpoint_url: Option<String>,
+    tls: Option<Tls>,
+    region: Option<String>,
+    path_style: Option<PathStyle>,
+    control_bucket: Option<String>,
+    tenant: Option<String>,
+    read_credentials: Option<String>,
+}
+
+impl ControlReadConfigBuilder {
+    /// Set the S3-compatible endpoint URL of the control bucket.
+    #[must_use]
+    pub fn endpoint_url(mut self, value: impl Into<String>) -> Self {
+        self.endpoint_url = Some(value.into());
+        self
+    }
+
+    /// Set the transport security. Defaults to [`Tls::Enabled`]; a
+    /// plaintext endpoint is valid only with an explicit
+    /// [`Tls::Disabled`].
+    #[must_use]
+    pub const fn tls(mut self, value: Tls) -> Self {
+        self.tls = Some(value);
+        self
+    }
+
+    /// Set the region.
+    #[must_use]
+    pub fn region(mut self, value: impl Into<String>) -> Self {
+        self.region = Some(value.into());
+        self
+    }
+
+    /// Set the addressing style. Defaults to the portable default.
+    #[must_use]
+    pub const fn path_style(mut self, value: PathStyle) -> Self {
+        self.path_style = Some(value);
+        self
+    }
+
+    /// Set the bucket holding the control prefix.
+    #[must_use]
+    pub fn control_bucket(mut self, value: impl Into<String>) -> Self {
+        self.control_bucket = Some(value.into());
+        self
+    }
+
+    /// Set the tenant this identity is provisioned for.
+    #[must_use]
+    pub fn tenant(mut self, value: impl Into<String>) -> Self {
+        self.tenant = Some(value.into());
+        self
+    }
+
+    /// Set the control-read credential reference (CFG-029). A reference,
+    /// never a credential value.
+    #[must_use]
+    pub fn control_read_credentials(mut self, value: impl Into<String>) -> Self {
+        self.read_credentials = Some(value.into());
+        self
+    }
+
+    /// Validate every tier value and produce the configuration.
+    ///
+    /// # Errors
+    /// [`S3ConfigErrorKind::MissingSetting`] for an absent required
+    /// value, [`S3ConfigErrorKind::MalformedSetting`] for one outside its
+    /// grammar, and [`S3ConfigErrorKind::TransportMismatch`] when the
+    /// endpoint scheme and the TLS setting disagree. No error echoes the
+    /// offending value.
+    pub fn build(self) -> Result<ControlReadConfig, S3ConfigError> {
+        let endpoint_text = required_string(self.endpoint_url, Setting::EndpointUrl)?;
+        let (endpoint, tls) = agreed_transport(&endpoint_text, self.tls)?;
+
+        let region_text = required_string(self.region, Setting::Region)?;
+        check_bounded_string(
+            &region_text,
+            S3ConfigError::new(
+                S3ConfigErrorKind::MalformedSetting,
+                Setting::Region.malformed_detail(),
+            ),
+        )?;
+
+        let control_bucket = bucket_string(self.control_bucket, Setting::ControlBucket)?;
+
+        let tenant_text = required_string(self.tenant, Setting::Tenant)?;
+        let tenant = TenantId::parse(&tenant_text).map_err(|_| {
+            S3ConfigError::new(
+                S3ConfigErrorKind::MalformedSetting,
+                Setting::Tenant.malformed_detail(),
+            )
+        })?;
+
+        let read_text = required_string(self.read_credentials, Setting::ReadCredentials)?;
+        let read_credentials = CredentialReference::parse(&read_text).map_err(|_| {
+            S3ConfigError::new(
+                S3ConfigErrorKind::MalformedSetting,
+                Setting::ReadCredentials.malformed_detail(),
+            )
+        })?;
+
+        Ok(ControlReadConfig {
+            endpoint,
+            tls,
+            region: Box::from(region_text),
+            path_style: self.path_style.unwrap_or_default(),
+            control_bucket: Box::from(control_bucket),
+            tenant,
+            read_credentials,
+        })
+    }
+}
+
+/// The validated configuration of the two Phase 10 scoped-writer
+/// identities (plan Section 7.5): the catalog-writer and derived-writer
+/// pair the process hosting the Phase 10 pipelines assembles once and
+/// composes both stores from.
+///
+/// This is a separate surface from [`S3StorageConfig`] and from
+/// [`ControlAdminConfig`] by design — and the two writers stay off the
+/// ingest surface entirely: neither credential is a [`StorageRole`] nor a
+/// field of [`StorageIdentities`], because a replica that hosts none of
+/// the Phase 10 pipelines never carries their credentials and an ingest
+/// replica is never granted them. Each half is validated by its own
+/// standalone surface ([`CatalogWriterConfig`],
+/// [`DerivedWriterConfig`], both in [`crate::scoped_write`]) — this type
+/// carries the pair, adds the one refusal the halves cannot see on their
+/// own (both namespaces on one credential), and hands the validated
+/// halves back.
+#[derive(Clone, Debug)]
+pub struct ScopedWritersConfig {
+    catalog: CatalogWriterConfig,
+    derived: DerivedWriterConfig,
+}
+
+impl ScopedWritersConfig {
+    /// Start assembling the scoped-writer pair from its tier values.
+    #[must_use]
+    pub fn builder() -> ScopedWritersConfigBuilder {
+        ScopedWritersConfigBuilder::default()
+    }
+
+    /// The validated catalog-writer configuration: the half that puts
+    /// and lists below one tenant's catalog namespace.
+    #[must_use]
+    pub const fn catalog(&self) -> &CatalogWriterConfig {
+        &self.catalog
+    }
+
+    /// The validated derived-writer configuration: the half that puts
+    /// and lists below one tenant's derived namespace.
+    #[must_use]
+    pub const fn derived(&self) -> &DerivedWriterConfig {
+        &self.derived
+    }
+}
+
+/// The unvalidated scoped-writer pair under assembly;
+/// [`ScopedWritersConfigBuilder::build`] is its single fail-closed gate:
+/// each half through its standalone surface's gate, then the pair-level
+/// distinctness rule. A literal value assigned to either writer
+/// credential setting is refused here, before any store exists (CFG-032).
+#[derive(Clone, Debug, Default)]
+pub struct ScopedWritersConfigBuilder {
+    endpoint_url: Option<String>,
+    tls: Option<Tls>,
+    region: Option<String>,
+    path_style: Option<PathStyle>,
+    tenant_bucket: Option<String>,
+    tenant: Option<String>,
+    catalog_credentials: Option<String>,
+    derived_credentials: Option<String>,
+}
+
+impl ScopedWritersConfigBuilder {
+    /// Set the S3-compatible endpoint URL of the tenant bucket
+    /// (`storage.endpoint_url`).
+    #[must_use]
+    pub fn endpoint_url(mut self, value: impl Into<String>) -> Self {
+        self.endpoint_url = Some(value.into());
+        self
+    }
+
+    /// Set the transport security. Defaults to [`Tls::Enabled`]; a
+    /// plaintext endpoint is valid only with an explicit
+    /// [`Tls::Disabled`].
+    #[must_use]
+    pub fn tls(mut self, value: Tls) -> Self {
+        self.tls = Some(value);
+        self
+    }
+
+    /// Set the region string (`storage.region`).
+    #[must_use]
+    pub fn region(mut self, value: impl Into<String>) -> Self {
+        self.region = Some(value.into());
+        self
+    }
+
+    /// Set the bucket addressing style. Defaults to [`PathStyle::Path`].
+    #[must_use]
+    pub fn path_style(mut self, value: PathStyle) -> Self {
+        self.path_style = Some(value);
+        self
+    }
+
+    /// Set the tenant bucket both writer identities provision.
+    #[must_use]
+    pub fn tenant_bucket(mut self, value: impl Into<String>) -> Self {
+        self.tenant_bucket = Some(value.into());
+        self
+    }
+
+    /// Set the tenant whose catalog and derived prefixes the pair
+    /// provisions. Required: each writer identity is single-tenant by
+    /// design.
+    #[must_use]
+    pub fn tenant(mut self, value: impl Into<String>) -> Self {
+        self.tenant = Some(value.into());
+        self
+    }
+
+    /// Set the catalog-writer credential reference
+    /// (`storage.catalog_write_credentials_ref`, CFG-029 grammar).
+    /// Required on this surface.
+    #[must_use]
+    pub fn catalog_write_credentials(mut self, value: impl Into<String>) -> Self {
+        self.catalog_credentials = Some(value.into());
+        self
+    }
+
+    /// Set the derived-writer credential reference
+    /// (`storage.derived_write_credentials_ref`, CFG-029 grammar).
+    /// Required on this surface.
+    #[must_use]
+    pub fn derived_write_credentials(mut self, value: impl Into<String>) -> Self {
+        self.derived_credentials = Some(value.into());
+        self
+    }
+
+    /// Validate everything assembled so far into a
+    /// [`ScopedWritersConfig`].
+    ///
+    /// # Errors
+    /// [`S3ConfigErrorKind::MissingSetting`] when a required setting
+    /// never arrived; [`S3ConfigErrorKind::MalformedSetting`] when a
+    /// setting is outside its grammar — including a literal value
+    /// assigned to either writer credential reference (CFG-032);
+    /// [`S3ConfigErrorKind::TransportMismatch`] when the endpoint scheme
+    /// and the TLS setting disagree; and
+    /// [`S3ConfigErrorKind::DuplicateIdentity`] when both writers map to
+    /// one credential. No error echoes the offending value.
+    pub fn build(self) -> Result<ScopedWritersConfig, S3ConfigError> {
+        let Self {
+            endpoint_url,
+            tls,
+            region,
+            path_style,
+            tenant_bucket,
+            tenant,
+            catalog_credentials,
+            derived_credentials,
+        } = self;
+
+        // A setting never supplied stays never supplied: only a present
+        // tier string is forwarded, so the delegated gates report a
+        // missing setting as missing, never as a malformed empty one.
+        let mut catalog_builder = CatalogWriterConfig::builder();
+        let mut derived_builder = DerivedWriterConfig::builder();
+        if let Some(value) = endpoint_url.as_deref() {
+            catalog_builder = catalog_builder.endpoint_url(value);
+            derived_builder = derived_builder.endpoint_url(value);
+        }
+        if let Some(value) = tls {
+            catalog_builder = catalog_builder.tls(value);
+            derived_builder = derived_builder.tls(value);
+        }
+        if let Some(value) = region.as_deref() {
+            catalog_builder = catalog_builder.region(value);
+            derived_builder = derived_builder.region(value);
+        }
+        if let Some(value) = path_style {
+            catalog_builder = catalog_builder.path_style(value);
+            derived_builder = derived_builder.path_style(value);
+        }
+        if let Some(value) = tenant_bucket.as_deref() {
+            catalog_builder = catalog_builder.tenant_bucket(value);
+            derived_builder = derived_builder.tenant_bucket(value);
+        }
+        if let Some(value) = tenant.as_deref() {
+            catalog_builder = catalog_builder.tenant(value);
+            derived_builder = derived_builder.tenant(value);
+        }
+        if let Some(value) = catalog_credentials.as_deref() {
+            catalog_builder = catalog_builder.catalog_write_credentials(value);
+        }
+        if let Some(value) = derived_credentials.as_deref() {
+            derived_builder = derived_builder.derived_write_credentials(value);
+        }
+
+        let catalog = catalog_builder.build()?;
+        let derived = derived_builder.build()?;
+
+        // The one refusal the two halves cannot see on their own: one
+        // credential asked to serve two namespaces whose grants differ
+        // collapses the authority split the pair exists to keep (plan
+        // Section 7.5). The other reuse shapes — an ingest role, the
+        // administration credential — stay on the writer surfaces'
+        // joint checks, which see those configurations and this one
+        // does not.
+        if catalog.catalog_write_credentials() == derived.derived_write_credentials() {
+            return Err(S3ConfigError::new(
+                S3ConfigErrorKind::DuplicateIdentity,
+                "the two scoped writers share one credential",
+            ));
+        }
+
+        Ok(ScopedWritersConfig { catalog, derived })
     }
 }
 
@@ -1359,7 +1842,8 @@ mod tests {
     use archivist_protocol::vocabulary::{GrammarError, SafeMessage};
 
     use super::{
-        ControlAdminConfig, ControlAdminConfigBuilder, CredentialKind, CredentialReference,
+        ControlAdminConfig, ControlAdminConfigBuilder, ControlReadConfig,
+        ControlReadConfigBuilder, CredentialKind, CredentialReference,
         EncryptionPolicy, EndpointUrl, PathStyle, S3ConfigError, S3ConfigErrorKind,
         S3StorageConfig, S3StorageConfigBuilder, STRING_MAX, StorageRole, Tls,
     };
@@ -2124,4 +2608,167 @@ mod tests {
             }
         }
     }
+
+    // ----- control-read configuration surface (aa-7f92223e) -----
+
+    const READ_TENANT: &str = "1a2b3c4d-5e6f-4a1b-9c2d-3e4f5a6b7c8d";
+    const READ_CLIENT: &str = "9f8e7d6c-5b4a-4938-8271-6a5b4c3d2e1f";
+    const READ_REF: &str = "file:/etc/archivist/storage/control-read-credentials";
+
+    fn read_builder() -> ControlReadConfigBuilder {
+        ControlReadConfig::builder()
+            .endpoint_url(ENDPOINT)
+            .region(REGION)
+            .control_bucket(CONTROL_BUCKET)
+            .tenant(READ_TENANT)
+            .control_read_credentials(READ_REF)
+    }
+
+    #[test]
+    fn control_read_configuration_is_its_own_surface() {
+        let config = read_builder().build().expect("valid");
+        assert_eq!(config.endpoint().as_str(), ENDPOINT);
+        assert_eq!(config.tls(), Tls::Enabled, "tls defaults to enabled");
+        assert_eq!(config.path_style(), PathStyle::Path, "registry default");
+        assert_eq!(config.region(), REGION);
+        assert_eq!(config.control_bucket(), CONTROL_BUCKET);
+        assert_eq!(config.tenant().as_str(), READ_TENANT);
+        assert_eq!(config.control_read_credentials().kind(), CredentialKind::File);
+    }
+
+    #[test]
+    fn control_read_builder_fails_closed_on_every_absent_setting() {
+        let cases: [(ControlReadConfigBuilder, &str); 4] = [
+            (ControlReadConfig::builder(), "endpoint url is required"),
+            (
+                ControlReadConfig::builder().endpoint_url(ENDPOINT),
+                "region is required",
+            ),
+            (
+                ControlReadConfig::builder()
+                    .endpoint_url(ENDPOINT)
+                    .region(REGION)
+                    .control_bucket(CONTROL_BUCKET),
+                "tenant is required",
+            ),
+            (
+                ControlReadConfig::builder()
+                    .endpoint_url(ENDPOINT)
+                    .region(REGION)
+                    .control_bucket(CONTROL_BUCKET)
+                    .tenant(READ_TENANT),
+                "control-read credential is required",
+            ),
+        ];
+        for (builder, detail) in cases {
+            let error = builder.build().expect_err("must fail closed");
+            assert_eq!(error.kind(), S3ConfigErrorKind::MissingSetting);
+            assert_eq!(error.detail(), detail);
+        }
+    }
+
+    #[test]
+    fn control_read_builder_rejects_values_outside_their_grammar() {
+        let tenant_error = read_builder()
+            .tenant("not-a-uuid")
+            .build()
+            .expect_err("tenant must parse");
+        assert_eq!(tenant_error.kind(), S3ConfigErrorKind::MalformedSetting);
+        assert_eq!(
+            tenant_error.detail(),
+            "tenant is outside the canonical uuid grammar"
+        );
+
+        let credential_error = read_builder()
+            .control_read_credentials("plaintext-secret-not-a-reference")
+            .build()
+            .expect_err("credential must be a reference");
+        assert_eq!(credential_error.kind(), S3ConfigErrorKind::MalformedSetting);
+        assert_eq!(
+            credential_error.detail(),
+            "control-read credential is outside the closed grammar"
+        );
+    }
+
+    #[test]
+    fn control_read_builder_rejects_a_transport_disagreement() {
+        let error = read_builder()
+            .tls(Tls::Disabled)
+            .build()
+            .expect_err("https endpoint disagrees with disabled tls");
+        assert_eq!(error.kind(), S3ConfigErrorKind::TransportMismatch);
+    }
+
+    #[test]
+    fn control_read_errors_never_echo_the_offending_value() {
+        // A credential-shaped value is the one thing that must never reach a
+        // message; assert on the value itself, not on the rule that hides it.
+        let secret = "AKIAIOSFODNN7EXAMPLESECRETVALUE";
+        let error = read_builder()
+            .control_read_credentials(secret)
+            .build()
+            .expect_err("must reject");
+        assert!(!error.detail().contains(secret));
+        assert!(!format!("{error}").contains(secret));
+
+        let tenant_error = read_builder()
+            .tenant("tenant-with-embedded-secret-AKIAIOSFODNN7EXAMPLE")
+            .build()
+            .expect_err("must reject");
+        assert!(!format!("{tenant_error}").contains("AKIAIOSFODNN7EXAMPLE"));
+    }
+
+    #[test]
+    fn control_read_permits_only_this_tenants_control_layouts() {
+        let config = read_builder().build().expect("valid");
+        let other_tenant = "2b3c4d5e-6f7a-4b2c-8d3e-4f5a6b7c8d9e";
+
+        assert!(
+            config.permits_key(&format!(
+                "tenants/{READ_TENANT}/v1/control/clients/{READ_CLIENT}.json"
+            )),
+            "the linked-client layout under this tenant is in scope"
+        );
+
+        for denied in [
+            // every other tenant, control prefix included
+            format!("tenants/{other_tenant}/v1/control/clients/{READ_CLIENT}.json"),
+            // the prefixes this identity has no authority over at all
+            format!("tenants/{READ_TENANT}/v1/raw/blobs/{READ_CLIENT}.zst"),
+            format!("tenants/{READ_TENANT}/v1/catalog/checkpoints/{READ_CLIENT}.json"),
+            format!("tenants/{READ_TENANT}/v1/derived/episodes/{READ_CLIENT}.json"),
+            format!("tenants/{READ_TENANT}/v1/tombstones/{READ_CLIENT}.json"),
+            format!("tenants/{READ_TENANT}/v1/legal-hold/{READ_CLIENT}.json"),
+            // a control-layout key with a non-canonical identifier segment is
+            // denied rather than normalized
+            format!("tenants/{READ_TENANT}/v1/control/clients/not-a-uuid.json"),
+        ] {
+            assert!(!config.permits_key(&denied), "must deny {denied}");
+        }
+    }
+
+    #[test]
+    fn control_read_rejects_the_administration_credential() {
+        let admin = admin_builder()
+            .control_admin_credentials(READ_REF)
+            .build()
+            .expect("valid");
+        let config = read_builder().build().expect("valid");
+
+        let error = config
+            .reject_administration_credential(&admin)
+            .expect_err("the pair states the violation");
+        assert_eq!(error.kind(), S3ConfigErrorKind::DuplicateIdentity);
+        assert!(
+            !format!("{error}").contains(READ_REF),
+            "the reference is never echoed"
+        );
+
+        // Distinct references are the ordinary, accepted case.
+        let distinct = admin_builder().build().expect("valid");
+        config
+            .reject_administration_credential(&distinct)
+            .expect("distinct identities are accepted");
+    }
+
 }
