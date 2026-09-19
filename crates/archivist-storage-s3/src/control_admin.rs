@@ -47,6 +47,18 @@
 //!   policy for the administration credential mirrors that predicate
 //!   (read-write below the tenant control prefix, deny everything else),
 //!   and the compatibility-suite profiles prove it on live backends.
+//! - **The authority's signed publications route here.** The Phase 3
+//!   administrator act composes with the store at exactly two typed
+//!   entries: [`S3ControlAdminStore::put_link_approval`] carries an
+//!   approved link request's signed envelope onto the current-pointer
+//!   class, and [`S3ControlAdminStore::put_revocation`] carries a signed
+//!   revocation onto the immutable class. The signing surface
+//!   (`archivist-auth`) and this store meet in those two methods and
+//!   nowhere else — the publication value already binds the envelope to
+//!   the object key the authority derived, the routing re-makes that key
+//!   through [`ControlObjectKey::parse`] as a pre-flight (family and
+//!   provisioned tenant, refused before any request), and the store's own
+//!   write rules derive the landed key from the envelope's signed members.
 //!
 //! # What validation here is and is not
 //!
@@ -73,6 +85,8 @@ use std::fmt;
 use std::future::Future;
 use std::str::FromStr;
 
+use archivist_auth::link::ClientLinkPublication;
+use archivist_auth::revocation::RevocationPublication;
 use archivist_protocol::json::{self, Object, Value};
 use archivist_protocol::vocabulary::{
     ClientId, Ed25519Signature, GrammarError, KeyId, TenantId, Timestamp,
@@ -118,6 +132,9 @@ const DETAIL_AUTHORITY_EPOCH: &str = "authority-rotation record carries no autho
 const DETAIL_IMMUTABLE_CONFLICT: &str = "stored record differs from the presented immutable record";
 const DETAIL_POINTER_CONFLICT: &str = "stored pointer is not a valid record of its family";
 const DETAIL_SCOPE: &str = "record tenant is outside this administration identity";
+const DETAIL_PUBLICATION_KEY: &str =
+    "publication names an object key outside the derived control layouts";
+const DETAIL_PUBLICATION_FAMILY: &str = "publication family does not match this write method";
 
 /// A server-derived control object key: one of the six canonical layouts
 /// below `tenants/<tenant>/v1/control/` (plan Section 7.5; the control
@@ -761,6 +778,107 @@ impl<B: ControlAdminBackend + Sync> ControlAdminStore for S3ControlAdminStore<B>
                 }
             }
         }
+    }
+}
+
+// -----------------------------------------------------------------------
+// The Phase 3 administrator act: the offline authority signs, this store
+// publishes. Two typed routes carry `archivist-auth`'s signed
+// publications onto the two write classes — an approved link request is a
+// current-pointer record, a signed revocation is an immutable one — so
+// the signing surface and the storage surface meet exactly here, and the
+// administrator CLI only wires the two together.
+// -----------------------------------------------------------------------
+impl<B: ControlAdminBackend + Sync> S3ControlAdminStore<B> {
+    /// Pre-flight one publication's declared object key against the
+    /// family the calling method routes: the key must be one of the six
+    /// derived control layouts, of exactly that family, and inside the
+    /// one provisioned tenant. The store's own write rules govern the put
+    /// that follows — this check refuses a misaddressed publication
+    /// before any request is issued, the same fail-closed order every
+    /// other refusal here keeps.
+    fn route_publication(
+        &self,
+        declared_key: &str,
+        family: ControlRecordKind,
+    ) -> Result<(), StorageError> {
+        let declared = ControlObjectKey::parse(declared_key).map_err(|_| {
+            StorageError::new(StorageErrorKind::MalformedInput, DETAIL_PUBLICATION_KEY)
+        })?;
+        if declared.kind() != family {
+            return Err(StorageError::new(
+                StorageErrorKind::MalformedInput,
+                DETAIL_PUBLICATION_FAMILY,
+            ));
+        }
+        if declared.tenant() != self.config.tenant() || !self.config.permits_key(declared.as_str()) {
+            return Err(StorageError::new(
+                StorageErrorKind::ScopeViolation,
+                DETAIL_SCOPE,
+            ));
+        }
+        Ok(())
+    }
+
+    /// Route one approved link request onto the control plane: the
+    /// authority's signed current-pointer record, published at
+    /// [`ControlObjectKey::linked_client`] through
+    /// [`ControlAdminStore::put_current_pointer`].
+    ///
+    /// The publication is the byte-exact envelope
+    /// `approve_link_request` signed; the store derives the landed key
+    /// from the envelope's own signed members, so the record sits exactly
+    /// where every reader re-derives it. The pointer family's monotonic
+    /// rule applies unchanged: a write whose signed epoch is not strictly
+    /// greater than the stored pointer's — the byte-identical retry of an
+    /// approval already published included — is refused, and the stored
+    /// pointer stays what it was.
+    ///
+    /// # Errors
+    /// [`StorageErrorKind::StaleEpoch`] and the other
+    /// [`ControlAdminStore::put_current_pointer`] rejections, plus
+    /// [`StorageErrorKind::MalformedInput`] when the publication's own
+    /// object key is not a derived linked-client key and
+    /// [`StorageErrorKind::ScopeViolation`] when its tenant is outside
+    /// this administration identity.
+    pub async fn put_link_approval(
+        &self,
+        approval: &ClientLinkPublication,
+    ) -> Result<(), StorageError> {
+        self.route_publication(approval.object_key(), ControlRecordKind::LinkedClient)?;
+        self.put_current_pointer(&AdminControlRecord::new(
+            ControlRecordKind::LinkedClient,
+            approval.envelope().to_vec(),
+        ))
+        .await
+    }
+
+    /// Route one signed revocation onto the control plane: the
+    /// authority's immutable record, published at
+    /// [`ControlObjectKey::revocation`] through
+    /// [`ControlAdminStore::put_immutable_record`].
+    ///
+    /// Re-routing the same publication — the lost-response retry of one
+    /// administrative write — is the idempotent replay the immutable
+    /// class promises: the byte-identical record is already the object at
+    /// its derived key, and nothing is written again.
+    ///
+    /// # Errors
+    /// The [`ControlAdminStore::put_immutable_record`] rejections, plus
+    /// [`StorageErrorKind::MalformedInput`] when the publication's own
+    /// object key is not a derived revocation key and
+    /// [`StorageErrorKind::ScopeViolation`] when its tenant is outside
+    /// this administration identity.
+    pub async fn put_revocation(
+        &self,
+        publication: &RevocationPublication,
+    ) -> Result<(), StorageError> {
+        self.route_publication(publication.object_key(), ControlRecordKind::Revocation)?;
+        self.put_immutable_record(&AdminControlRecord::new(
+            ControlRecordKind::Revocation,
+            publication.envelope().to_vec(),
+        ))
+        .await
     }
 }
 
@@ -2345,5 +2463,544 @@ mod tests {
                 .unwrap_or_else(|_| panic!("detail is not a safe message: {detail}"));
             assert_eq!(parsed.as_str(), detail);
         }
+    }
+}
+
+/// The Phase 3 routing proofs: the authority's signed publications
+/// (`archivist-auth`) carried through [`S3ControlAdminStore`]'s two typed
+/// entries, over a mock of the [`ControlAdminBackend`] seam whose policy
+/// is the deployment's own prefix rule. Real signed envelopes throughout —
+/// a deterministic authority half signs, a deterministic installation
+/// identity asks, and every record that lands re-verifies through the
+/// auth crate the way a reader would.
+#[cfg(test)]
+mod publication_tests {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    use archivist_auth::authority::PinnedAuthorityRoot;
+    use archivist_auth::ed25519;
+    use archivist_auth::identity::InstallationIdentity;
+    use archivist_auth::link::{
+        ClientLinkPublication, LinkRequest, RequestedScopes, ScopeOperation, approve_link_request,
+    };
+    use archivist_auth::revocation::{
+        LinkedClientPointer, RevocationPublication, RevocationRecord, publish_revocation,
+    };
+    use archivist_protocol::vocabulary::{
+        ClientId, Ed25519PublicKey, HarnessId, KeyId, TenantId, Timestamp,
+    };
+    use archivist_storage::control::{AuthorizationEpoch, ControlRecordKind};
+
+    use super::{
+        ControlAdminBackend, ControlObjectKey, S3ControlAdminStore, StorageError, StorageErrorKind,
+    };
+    use crate::config::ControlAdminConfig;
+
+    // The deterministic story: the same fixture identifiers the auth
+    // crate's own approval tests pin, so every signature below is
+    // reproducible byte for byte and every re-approval re-derives the
+    // same envelope.
+    const TENANT: &str = "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b";
+    const CLIENT: &str = "0f1e2d3c-4b5a-4968-8776-5544332211ff";
+    const AUTHORITY_SEED: [u8; 32] = [0x17; 32];
+    const CLIENT_SEED: [u8; 32] = [0x2a; 32];
+    const APPROVAL_INSTANT: &str = "2026-09-19T00:00:00Z";
+    const OTHER_TENANT: &str = "00000000-1111-4222-8333-444444444444";
+    const ADMIN_REF: &str = "file:/etc/archivist/storage/control-admin-credentials";
+    const CONTROL_BUCKET: &str = "archivist-control-example";
+
+    fn tenant() -> TenantId {
+        TENANT.parse().expect("grammar")
+    }
+
+    fn client_id() -> ClientId {
+        CLIENT.parse().expect("grammar")
+    }
+
+    fn instant() -> Timestamp {
+        Timestamp::parse(APPROVAL_INSTANT).expect("pinned test instant")
+    }
+
+    fn root() -> PinnedAuthorityRoot {
+        PinnedAuthorityRoot::new(
+            tenant(),
+            Ed25519PublicKey::from_raw(ed25519::public_key_from_seed(&AUTHORITY_SEED)),
+        )
+    }
+
+    fn admin_config() -> ControlAdminConfig {
+        ControlAdminConfig::builder()
+            .endpoint_url("https://s3.example.invalid")
+            .region("us-east-1")
+            .control_bucket(CONTROL_BUCKET)
+            .tenant(TENANT)
+            .control_admin_credentials(ADMIN_REF)
+            .build()
+            .expect("golden administration configuration validates")
+    }
+
+    /// The deterministic installation identity: the client half its seed
+    /// derives, no entropy in the story.
+    fn installation() -> InstallationIdentity {
+        let public = Ed25519PublicKey::from_raw(ed25519::public_key_from_seed(&CLIENT_SEED));
+        InstallationIdentity::from_seed(client_id(), CLIENT_SEED, public)
+            .expect("the seed derives the identity")
+    }
+
+    /// The link request the installation emits: public identity, this
+    /// tenant, one harness and the one v1 operation.
+    fn link_draft(request_tenant: &TenantId) -> Vec<u8> {
+        let scopes = RequestedScopes::new(
+            vec![HarnessId::parse("claude-code").expect("grammar")],
+            vec![ScopeOperation::Ingest],
+        )
+        .expect("an in-bounds scope");
+        LinkRequest::new(
+            installation().public_identity(),
+            request_tenant.clone(),
+            scopes,
+        )
+        .canonical_bytes()
+    }
+
+    /// A chain fetch that finds nothing: the authority half here is the
+    /// pinned root itself, and a root needs no links.
+    fn no_links(_: &KeyId) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// The approval the administrator act produces: the signed
+    /// linked-client current-pointer publication at epoch 1.
+    fn approval() -> ClientLinkPublication {
+        approve_link_request(
+            &AUTHORITY_SEED,
+            &root(),
+            &link_draft(&tenant()),
+            &instant(),
+            no_links,
+        )
+        .expect("the golden draft approves")
+    }
+
+    /// The verified pointer of one approval envelope, exactly as a reader
+    /// re-derives it from the pinned root.
+    fn pointer_of(envelope: &[u8]) -> LinkedClientPointer {
+        LinkedClientPointer::verify(&root(), envelope, no_links, &client_id())
+            .expect("the approval envelope verifies from the pinned root")
+    }
+
+    /// The revocation publication at the pointer's own epoch — the
+    /// administrator act that completes the link termination.
+    fn revocation_of(pointer: &LinkedClientPointer) -> RevocationPublication {
+        publish_revocation(
+            &AUTHORITY_SEED,
+            &tenant(),
+            &client_id(),
+            pointer.epoch(),
+            pointer.key_id(),
+            pointer,
+            &instant(),
+        )
+        .expect("the pointer's own epoch revokes")
+    }
+
+    /// The derived keys the two publications are addressed at, from the
+    /// store side's own constructors.
+    fn pointer_key() -> String {
+        ControlObjectKey::linked_client(&tenant(), &client_id())
+            .as_str()
+            .to_owned()
+    }
+
+    fn revocation_key() -> String {
+        ControlObjectKey::revocation(&tenant(), &client_id(), AuthorizationEpoch::new(1).unwrap())
+            .as_str()
+            .to_owned()
+    }
+
+    /// A no-dependency executor for futures that complete without pending
+    /// (the same helper this module's store tests use).
+    fn block_on<F: std::future::Future>(future: F) -> F::Output {
+        let mut future = std::pin::pin!(future);
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        loop {
+            match future.as_mut().poll(&mut cx) {
+                std::task::Poll::Ready(output) => return output,
+                std::task::Poll::Pending => std::thread::yield_now(),
+            }
+        }
+    }
+
+    /// Which deployment policy a mock backend enforces, as a literal
+    /// string-prefix rule over object keys — the same shape the real
+    /// backend binding grants and refuses with.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Policy {
+        /// The administration credential: read-write below
+        /// `tenants/<tenant>/v1/control/`, every other prefix denied.
+        Administration,
+        /// The widest grant an ingest credential could carry: every
+        /// prefix an ingest replica may touch, everything except the
+        /// control plane. Under this policy any out-of-prefix write the
+        /// store attempted would be *granted* — bytes would land and be
+        /// seen — so an empty bucket after refused control writes is the
+        /// tripwire proof that the store aims only at the control prefix.
+        Ingest,
+    }
+
+    /// The mock [`ControlAdminBackend`]: one policy, one object map, and
+    /// the two counters a prefix proof reads — every requested key, and
+    /// every put that was actually issued.
+    #[derive(Clone, Debug)]
+    struct PolicyBackend {
+        policy: Policy,
+        objects: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+        requested: Arc<Mutex<Vec<String>>>,
+        puts: Arc<Mutex<u32>>,
+    }
+
+    impl PolicyBackend {
+        fn new(policy: Policy) -> Self {
+            Self {
+                policy,
+                objects: Arc::new(Mutex::new(HashMap::new())),
+                requested: Arc::new(Mutex::new(Vec::new())),
+                puts: Arc::new(Mutex::new(0)),
+            }
+        }
+
+        /// The reconnected backend a replica replacement builds: a fresh
+        /// client — none of the first store's in-process counters — over
+        /// the same bucket state.
+        fn reconnected(&self) -> Self {
+            Self {
+                policy: self.policy,
+                objects: Arc::clone(&self.objects),
+                requested: Arc::new(Mutex::new(Vec::new())),
+                puts: Arc::new(Mutex::new(0)),
+            }
+        }
+
+        fn grants(&self, key: &str) -> bool {
+            let control_prefix = format!("tenants/{TENANT}/v1/control/");
+            match self.policy {
+                Policy::Administration => key.starts_with(&control_prefix),
+                Policy::Ingest => !key.starts_with(&control_prefix),
+            }
+        }
+
+        fn requested(&self) -> Vec<String> {
+            self.requested.lock().expect("test backend lock").clone()
+        }
+
+        fn puts(&self) -> u32 {
+            *self.puts.lock().expect("test backend lock")
+        }
+
+        fn stored(&self, key: &str) -> Option<Vec<u8>> {
+            self.objects
+                .lock()
+                .expect("test backend lock")
+                .get(key)
+                .cloned()
+        }
+
+        fn landing_sites(&self) -> Vec<String> {
+            self.objects
+                .lock()
+                .expect("test backend lock")
+                .keys()
+                .cloned()
+                .collect()
+        }
+    }
+
+    impl ControlAdminBackend for PolicyBackend {
+        async fn get_control_object(
+            &self,
+            key: &ControlObjectKey,
+        ) -> Result<Option<Vec<u8>>, StorageError> {
+            self.requested
+                .lock()
+                .expect("test backend lock")
+                .push(key.as_str().to_owned());
+            if !self.grants(key.as_str()) {
+                return Err(StorageError::of_kind(StorageErrorKind::ScopeViolation));
+            }
+            Ok(self.stored(key.as_str()))
+        }
+
+        async fn put_control_object(
+            &self,
+            key: &ControlObjectKey,
+            bytes: &[u8],
+        ) -> Result<(), StorageError> {
+            self.requested
+                .lock()
+                .expect("test backend lock")
+                .push(key.as_str().to_owned());
+            if !self.grants(key.as_str()) {
+                return Err(StorageError::of_kind(StorageErrorKind::ScopeViolation));
+            }
+            *self.puts.lock().expect("test backend lock") += 1;
+            self.objects
+                .lock()
+                .expect("test backend lock")
+                .insert(key.as_str().to_owned(), bytes.to_vec());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn approval_and_revocation_route_through_the_store() {
+        let backend = PolicyBackend::new(Policy::Administration);
+        let store = S3ControlAdminStore::new(admin_config(), backend.clone());
+        let approved = approval();
+
+        // The approval routes onto the current-pointer class and lands,
+        // byte-exact, at the derived key the authority declared.
+        block_on(store.put_link_approval(&approved)).expect("the approval routes");
+        assert_eq!(approved.object_key(), pointer_key());
+        assert_eq!(
+            backend.stored(approved.object_key()).as_deref(),
+            Some(approved.envelope())
+        );
+        assert_eq!(backend.puts(), 1);
+
+        // A second approval of the same request re-derives the same
+        // signed bytes — the same epoch — and the pointer family refuses
+        // any write whose epoch is not strictly greater than the stored
+        // one. The refusal changes nothing on the bucket.
+        let replay = approval();
+        assert_eq!(replay, approved, "re-approval is byte-identical");
+        assert_eq!(
+            block_on(store.put_link_approval(&replay))
+                .expect_err("an equal-epoch pointer is stale")
+                .kind(),
+            StorageErrorKind::StaleEpoch
+        );
+        assert_eq!(backend.puts(), 1, "a stale pointer must not write");
+        assert_eq!(
+            backend.stored(approved.object_key()).as_deref(),
+            Some(approved.envelope())
+        );
+
+        // The stored pointer re-verifies through the auth crate and
+        // carries the epoch the revocation is published at.
+        let stored_pointer = backend.stored(approved.object_key()).expect("stored");
+        let pointer = pointer_of(&stored_pointer);
+        assert_eq!(pointer.epoch(), 1);
+        assert_eq!(pointer.client_id(), &client_id());
+
+        // The revocation routes onto the immutable class at the pointer's
+        // own epoch and lands byte-exact at its derived key.
+        let revoked = revocation_of(&pointer);
+        assert_eq!(revoked.object_key(), revocation_key());
+        block_on(store.put_revocation(&revoked)).expect("the revocation routes");
+        assert_eq!(
+            backend.stored(revoked.object_key()).as_deref(),
+            Some(revoked.envelope())
+        );
+        assert_eq!(backend.puts(), 2);
+
+        // The lost-response retry is the idempotent replay the immutable
+        // class promises: the record is already the object at its key.
+        block_on(store.put_revocation(&revoked)).expect("the replay is idempotent");
+        assert_eq!(backend.puts(), 2, "a replay must not write");
+
+        // The stored revocation re-verifies through the auth crate too,
+        // against the address it was stored at.
+        let stored_revocation = backend.stored(revoked.object_key()).expect("stored");
+        RevocationRecord::verify(
+            &root(),
+            &stored_revocation,
+            no_links,
+            &client_id(),
+            pointer.epoch(),
+        )
+        .expect("the stored revocation re-verifies from the pinned root");
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn a_replica_replacement_reads_back_byte_identical_records() {
+        // The persistence clause the plan pins: the control plane's state
+        // lives in the bucket, not in the store. A fresh store instance
+        // over a reconnected backend — a new client over the same bucket —
+        // reads every record back byte-identical, every record re-verifies
+        // through the auth crate from exactly those fresh bytes, and the
+        // replacement enforces the same monotonic epochs the first store
+        // did: the replaced state keeps the rule.
+        let backend = PolicyBackend::new(Policy::Administration);
+        let store = S3ControlAdminStore::new(admin_config(), backend.clone());
+        let approved = approval();
+        let pointer = pointer_of(approved.envelope());
+        let revoked = revocation_of(&pointer);
+        block_on(store.put_link_approval(&approved)).expect("the approval routes");
+        block_on(store.put_revocation(&revoked)).expect("the revocation routes");
+
+        let replacement = backend.reconnected();
+        let fresh = S3ControlAdminStore::new(admin_config(), replacement.clone());
+
+        // Every record reads back byte-identical at the key the authority
+        // declared — which is the derived key the store wrote: the two
+        // addressings agree across the crate boundary.
+        let read_pointer = replacement
+            .stored(approved.object_key())
+            .expect("the pointer survives the replacement");
+        let read_revocation = replacement
+            .stored(revoked.object_key())
+            .expect("the revocation survives the replacement");
+        assert_eq!(read_pointer, approved.envelope());
+        assert_eq!(read_revocation, revoked.envelope());
+        assert_eq!(
+            ControlObjectKey::parse(approved.object_key())
+                .expect("the declared key is a derived layout")
+                .kind(),
+            ControlRecordKind::LinkedClient
+        );
+
+        // Both re-verify through the auth crate from the fresh reads.
+        let replacement_pointer = pointer_of(&read_pointer);
+        assert_eq!(replacement_pointer.epoch(), 1);
+        RevocationRecord::verify(
+            &root(),
+            &read_revocation,
+            no_links,
+            &client_id(),
+            replacement_pointer.epoch(),
+        )
+        .expect("the replaced revocation re-verifies from the pinned root");
+
+        // And the replacement acts on the same state under the same
+        // rules: the revocation replay is still idempotent, and the
+        // approval's epoch is still the ceiling — the monotonic rule
+        // survived the replacement.
+        block_on(fresh.put_revocation(&revoked)).expect("the replacement sees the same state");
+        assert_eq!(replacement.puts(), 0, "the replay wrote nothing new");
+        assert_eq!(
+            block_on(fresh.put_link_approval(&approved))
+                .expect_err("the replaced state keeps the epoch rule")
+                .kind(),
+            StorageErrorKind::StaleEpoch
+        );
+        assert_eq!(replacement.puts(), 0);
+    }
+
+    #[test]
+    fn every_routed_request_stays_below_the_control_prefix() {
+        // The administration backend grants only the tenant control
+        // prefix, so a store that ever aimed a request outside it would
+        // be refused mid-flow and fail it. The flow completing, plus the
+        // requested-key log, is the proof: every request — granted or
+        // refused — named a key below `tenants/<tenant>/v1/control/`.
+        let backend = PolicyBackend::new(Policy::Administration);
+        let store = S3ControlAdminStore::new(admin_config(), backend.clone());
+        let approved = approval();
+        let revoked = revocation_of(&pointer_of(approved.envelope()));
+        block_on(store.put_link_approval(&approved)).expect("the approval routes");
+        block_on(store.put_revocation(&revoked)).expect("the revocation routes");
+
+        let control_prefix = format!("tenants/{TENANT}/v1/control/");
+        let requested = backend.requested();
+        assert!(
+            !requested.is_empty(),
+            "the flow must have reached the backend"
+        );
+        for key in requested {
+            assert!(
+                key.starts_with(&control_prefix),
+                "{key} aimed outside the control prefix"
+            );
+        }
+        // The writes landed at exactly the two derived keys — the
+        // pointer and the epoch-addressed revocation, nothing else.
+        assert_eq!(backend.puts(), 2);
+        let mut sites = backend.landing_sites();
+        sites.sort();
+        assert_eq!(sites, vec![pointer_key(), revocation_key()]);
+    }
+
+    #[test]
+    fn an_ingest_scoped_backend_never_lands_a_control_record() {
+        // The ingest credential's policy denies everything below the
+        // tenant control prefix — and this mock grants *everything else*,
+        // so any out-of-prefix write the store attempted would land bytes
+        // and be seen. Both routes are refused, nothing lands anywhere,
+        // and no put is ever issued: every request the store made aimed
+        // below the control prefix, exactly where the policy denied it.
+        let backend = PolicyBackend::new(Policy::Ingest);
+        let store = S3ControlAdminStore::new(admin_config(), backend.clone());
+        let approved = approval();
+        let revoked = revocation_of(&pointer_of(approved.envelope()));
+
+        assert_eq!(
+            block_on(store.put_link_approval(&approved))
+                .expect_err("control records are not an ingest credential's to write")
+                .kind(),
+            StorageErrorKind::ScopeViolation
+        );
+        assert_eq!(
+            block_on(store.put_revocation(&revoked))
+                .expect_err("control records are not an ingest credential's to write")
+                .kind(),
+            StorageErrorKind::ScopeViolation
+        );
+
+        assert!(
+            backend.landing_sites().is_empty(),
+            "no byte may land under an ingest-scoped credential"
+        );
+        assert_eq!(backend.puts(), 0, "no put may be issued");
+        let control_prefix = format!("tenants/{TENANT}/v1/control/");
+        let requested = backend.requested();
+        assert!(
+            !requested.is_empty(),
+            "the refusals happened at the backend"
+        );
+        for key in requested {
+            assert!(
+                key.starts_with(&control_prefix),
+                "{key} aimed outside the control prefix"
+            );
+        }
+    }
+
+    #[test]
+    fn a_foreign_tenant_publication_is_refused_before_any_request() {
+        // The other tenant's authority signs under its own root, for its
+        // own tenant; this store's administration identity is provisioned
+        // for one tenant and refuses the publication on its declared
+        // address before the backend sees anything at all.
+        let other_tenant: TenantId = OTHER_TENANT.parse().expect("grammar");
+        let other_root = PinnedAuthorityRoot::new(
+            other_tenant.clone(),
+            Ed25519PublicKey::from_raw(ed25519::public_key_from_seed(&AUTHORITY_SEED)),
+        );
+        let foreign = approve_link_request(
+            &AUTHORITY_SEED,
+            &other_root,
+            &link_draft(&other_tenant),
+            &instant(),
+            no_links,
+        )
+        .expect("the foreign authority signs its own tenant's request");
+
+        let backend = PolicyBackend::new(Policy::Administration);
+        let store = S3ControlAdminStore::new(admin_config(), backend.clone());
+        assert_eq!(
+            block_on(store.put_link_approval(&foreign))
+                .expect_err("a foreign-tenant publication is outside this identity")
+                .kind(),
+            StorageErrorKind::ScopeViolation
+        );
+        assert_eq!(
+            backend.requested(),
+            Vec::<String>::new(),
+            "the refusal happened before any request was issued"
+        );
+        assert_eq!(backend.puts(), 0);
+        assert!(backend.landing_sites().is_empty());
     }
 }
