@@ -32,14 +32,23 @@
 //! starts not-ready, expires evidence after 60 seconds, and holds no
 //! durable local state.
 //!
-//! The rest of the Phase 4 bootstrap surface — the registered metrics
-//! families and their exposition, the four routes, and cancellation-aware
+//! The **registered metrics families** and the **four routes** are
+//! implemented: [`metrics`] holds the process-local snapshot and renders
+//! the Prometheus text exposition for exactly the registered
+//! `archivist.server.*` families, omitting a series rather than
+//! inventing a value; [`routes`] mounts `/health/live` (process-only),
+//! `/health/ready` (derived strictly from the readiness ledger),
+//! `/metrics`, and `/v1/ingest` — registered but fail-closed, refusing
+//! every attempt with the stable retryable `server.unavailable` body
+//! until the pipeline slices land.
+//!
+//! The rest of the Phase 4 bootstrap surface — cancellation-aware
 //! startup and graceful shutdown — lands module by module, each with its
 //! `mod` declaration; the ingestion pipeline (bounded parsing,
 //! authorization, and validation middleware, streaming envelope
 //! validation, the blob → occurrence → attestation commit order, signed
 //! receipts) arrives on those contracts. Until then this crate contributes
-//! configuration, trust anchors, and replica state only.
+//! configuration, trust anchors, replica state, metrics, and the routes.
 //!
 //! # Dependency boundary
 //!
@@ -49,5 +58,7 @@
 //! client engine or any source adapter.
 
 pub mod config;
+pub mod metrics;
+pub mod routes;
 pub mod state;
 pub mod trust;

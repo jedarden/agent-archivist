@@ -13,6 +13,13 @@ repository.workspace = true
 archivist-auth = { path = "../archivist-auth" }
 archivist-protocol = { path = "../archivist-protocol" }
 archivist-storage = { path = "../archivist-storage" }
+axum = { workspace = true }
+
+[dev-dependencies]
+# #[tokio::test] drives the route tests' socket-level HTTP exchanges: on top
+# of the workspace feature set these add the attribute macro and the
+# client-side async read/write extension traits the raw-TCP test helpers use.
+tokio = { workspace = true, features = ["io-util", "macros"] }
 
 [lints]
 workspace = true

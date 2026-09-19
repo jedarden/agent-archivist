@@ -41,6 +41,7 @@ use archivist_protocol::vocabulary::TenantId;
 use archivist_storage::ingest::IngestStorage;
 
 use crate::config::ServerConfig;
+use crate::metrics::ServerMetrics;
 use crate::trust::TrustConfig;
 
 /// How long one successful tenant trust-record read stays fresh
@@ -210,6 +211,7 @@ pub struct ServerState<W, C> {
     trust: TrustConfig,
     storage: IngestStorage<W, C>,
     readiness: ReadinessTracker,
+    metrics: ServerMetrics,
 }
 
 impl<W, C> ServerState<W, C> {
@@ -221,6 +223,7 @@ impl<W, C> ServerState<W, C> {
     pub fn new(config: ServerConfig, trust: TrustConfig, storage: IngestStorage<W, C>) -> Self {
         Self {
             readiness: ReadinessTracker::new(&trust),
+            metrics: ServerMetrics::new(),
             config,
             trust,
             storage,
@@ -249,6 +252,13 @@ impl<W, C> ServerState<W, C> {
     #[must_use]
     pub fn readiness(&self) -> ReadinessSnapshot {
         self.readiness.evaluate(Instant::now())
+    }
+
+    /// The process-local metrics snapshot: handlers record into it,
+    /// the `/metrics` exposition renders from it.
+    #[must_use]
+    pub const fn metrics(&self) -> &ServerMetrics {
+        &self.metrics
     }
 
     /// Record one successful trust-record read for a configured tenant.

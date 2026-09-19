@@ -42,3 +42,13 @@ broken_intra_doc_links = "deny"
 # never depends on the host's library version; `default-features = false`
 # keeps the prepared-statement cache and wasm paths out of the build.
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
+# Serves the ingestion data plane (plan Sections 6 and 8 Phase 4): axum is the
+# pinned HTTP server and Tower is the middleware surface. `default-features =
+# false` keeps form/query/json body machinery out — the wire contract renders
+# canonical bytes through `archivist-protocol` and accepts none from the
+# framework — leaving only the HTTP/1 listener and the tokio integration.
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"] }
+# Drives the axum listener: the multi-threaded runtime, async TCP, the
+# shutdown-drain timer, the signal watcher behind graceful shutdown, and the
+# watch primitive the cancellation token is built on.
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "time", "signal", "sync"] }
