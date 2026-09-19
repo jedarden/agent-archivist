@@ -98,7 +98,7 @@
       ]
     },
     "CAP-010": {
-      "status": "planned",
+      "status": "implemented",
       "verifications": [
         "T-CAP-010"
       ]
@@ -377,7 +377,7 @@
       ]
     },
     "SCH-002": {
-      "status": "planned",
+      "status": "implemented",
       "verifications": [
         "T-SCH-002"
       ]
@@ -844,6 +844,7 @@
       ],
       "kind": "test",
       "lane": "slow",
+      "locator": "crates/archivist-adapter-sdk/src/status/tests.rs",
       "owner": "adapter-suites"
     },
     "T-ID-001": {
@@ -1219,6 +1220,7 @@
       ],
       "kind": "test",
       "lane": "slow",
+      "locator": "crates/archivist-client-core/src/inventory/tests.rs",
       "owner": "scheduler-simulation"
     },
     "T-SCH-003": {
