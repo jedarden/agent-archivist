@@ -274,8 +274,8 @@ fn live_usage_sums_the_unacknowledged_entries() {
     // An empty spool measures zero.
     assert_eq!(live_usage_bytes(&store).expect("measure"), 0);
 
-    let first = spool.materialize(&store, &payload(1)).expect("materialize");
-    let second = spool.materialize(&store, &payload(2)).expect("materialize");
+    let first = spool.materialize(&store, &mut PressureGate::new(PressureLimits::new(u64::MAX, 0, 80)), &payload(1)).expect("materialize");
+    let second = spool.materialize(&store, &mut PressureGate::new(PressureLimits::new(u64::MAX, 0, 80)), &payload(2)).expect("materialize");
     let expected = first
         .size_bytes()
         .checked_add(second.size_bytes())

@@ -44,9 +44,14 @@
 //! **Nothing about the pause is silent.** Every evaluation returns a
 //! [`PressureStatus`] that states whether materialization is admitted
 //! and, when it is not, names every degraded reason as a closed-set
-//! token. The scheduler that consults the gate before materializing and
-//! the `status`/`doctor` renderings of its result are later Phase 5
-//! deliverables; the renderings are content-free by the same rule as
+//! token. Admission is enforced at the one production entry point that
+//! puts bytes on disk — [`Spool::materialize`](super::Spool::materialize)
+//! evaluates the gate it is handed before it writes anything, and a
+//! held admission is the distinct
+//! [`SpoolErrorKind::MaterializationPaused`](super::SpoolErrorKind::MaterializationPaused)
+//! — so there is no ungated materialization path to bypass the policy
+//! with. The `status`/`doctor` renderings of the evaluation are later
+//! Phase 5 deliverables; the renderings are content-free by the same rule as
 //! [`SpoolError`](super::SpoolError): the token set is closed, the
 //! numbers are counts, and no rendering can carry the spool path, a
 //! bundle name, or transcript content.
@@ -333,9 +338,13 @@ impl std::fmt::Display for PressureStatus {
 ///
 /// One mutator holds one gate for the life of its scheduling loop and
 /// evaluates it against fresh measurements before every new
-/// materialization. The gate is not `Clone` and not shareable by
-/// accident: two gates over one spool would have two latches and the
-/// hysteresis would mean nothing.
+/// materialization — enforced at [`Spool::materialize`](super::Spool::materialize),
+/// which evaluates the gate it is handed before it writes anything.
+/// The gate is not `Clone` and not shareable by accident: two gates
+/// over one spool would have two latches and the hysteresis would mean
+/// nothing. The decision itself is always derived from the shared
+/// pressure state — the live byte sum in the state database and the
+/// filesystem probe — never from a copy taken earlier.
 pub struct PressureGate {
     limits: PressureLimits,
     paused: bool,

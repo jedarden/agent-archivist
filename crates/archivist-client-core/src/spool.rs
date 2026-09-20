@@ -54,12 +54,14 @@
 //!
 //! # Status
 //!
-//! Materialization, the startup reconciliation pass, the acknowledged
-//! cleanup primitive, and the spool/free-disk high-water policy's state
-//! and measurements ([`pressure`]) arrived with Phase 5. The upload
-//! scheduler, the receipt/acknowledgement transaction that marks
-//! entries `acknowledged`, and the policy's scheduling and status
-//! consumers consume this module and are later Phase 5 deliverables.
+//! Materialization — admitted only through the spool/free-disk
+//! high-water gate ([`pressure`]) — the startup reconciliation pass,
+//! the acknowledged cleanup primitive, and the policy's state and
+//! measurements arrived with Phase 5. The upload scheduler and the
+//! receipt/acknowledgement transaction that marks entries
+//! `acknowledged`, and the policy's status/doctor renderings of the
+//! gate's decisions, consume this module and are later Phase 5
+//! deliverables.
 //!
 //! # Content-free diagnostics
 //!
@@ -82,6 +84,8 @@ use archivist_protocol::vocabulary::{RequestId, Timestamp};
 use rusqlite::Connection;
 
 use crate::state::StateStore;
+
+use self::pressure::PressureGate;
 
 pub mod pressure;
 
@@ -125,6 +129,16 @@ pub enum SpoolErrorKind {
     /// The state database was locked beyond the busy timeout while
     /// committing a spool row.
     Busy,
+    /// New materialization was refused by the spool-pressure gate: live
+    /// spool usage reached the configured cap or filesystem free space
+    /// fell to the configured floor (plan Section 7.9, OPS-003). A
+    /// policy outcome rather than an operational failure — retries,
+    /// uploads, acknowledgements, and cleanup are outside the policy
+    /// and unaffected. The gate's last
+    /// [`PressureStatus`](pressure::PressureStatus) holds the
+    /// measurements and reasons; this kind is the closed token the
+    /// caller renders.
+    MaterializationPaused,
     /// A caller-supplied bundle name is not a plain bundle file name of
     /// this module's shape (`<spool_entry_id>.bundle`): it could never
     /// resolve inside the spool directory without escaping it.
@@ -144,6 +158,7 @@ impl SpoolErrorKind {
             Self::Unavailable,
             Self::UnsafePermissions,
             Self::Busy,
+            Self::MaterializationPaused,
             Self::MalformedName,
             Self::CrashInjected,
         ]
@@ -157,6 +172,9 @@ impl SpoolErrorKind {
             Self::Unavailable => "spool directory or state database operation failed",
             Self::UnsafePermissions => "spool directory or bundle file permissions are unsafe",
             Self::Busy => "state database is locked by another process",
+            Self::MaterializationPaused => {
+                "new materialization is paused by the spool pressure policy"
+            }
             Self::MalformedName => "bundle name does not match the spool bundle grammar",
             Self::CrashInjected => "injected crash point reached",
         }
@@ -169,6 +187,7 @@ impl std::fmt::Display for SpoolErrorKind {
             Self::Unavailable => "unavailable",
             Self::UnsafePermissions => "unsafe-permissions",
             Self::Busy => "busy",
+            Self::MaterializationPaused => "materialization-paused",
             Self::MalformedName => "malformed-name",
             Self::CrashInjected => "crash-injected",
         };
@@ -398,6 +417,22 @@ impl Spool {
     /// `<spool_entry_id>.bundle`, synchronize the directory, and only
     /// then commit the `spool_entries` row (state `materialized`).
     ///
+    /// Admission runs the spool-pressure policy first
+    /// ([`pressure`], plan Section 7.9, OPS-003): the caller's
+    /// [`PressureGate`] is evaluated against the shared pressure state —
+    /// the not-yet-acknowledged byte sum in the state database and a
+    /// fresh free-space probe of the spool filesystem — and when it
+    /// holds new materialization, nothing is written and nothing is
+    /// committed. This is the only production path to bytes on disk, so
+    /// there is no ungated admission, and the decision is never silent:
+    /// a held admission is the distinct
+    /// [`SpoolErrorKind::MaterializationPaused`]. The gate is the
+    /// mutator's, held across its scheduling loop so the pause latches
+    /// per the hysteresis rule; its limits come from the `spool.*`
+    /// configuration keys ([`PressureLimits::from_config`], defaults:
+    /// pause at 2 GiB of live spool or a 5 GiB free-space floor).
+    /// Pending retries are outside the policy and unaffected.
+    ///
     /// The spool entry identity is minted here and recoverable from the
     /// bundle's file name, so a crash between the rename and the row
     /// commit is repaired by [`Spool::reconcile`] into a row with the
@@ -418,15 +453,29 @@ impl Spool {
     ///
     /// # Errors
     ///
-    /// [`SpoolErrorKind::Unavailable`] when any filesystem step or the
-    /// row commit fails; [`SpoolErrorKind::Busy`] when the state
-    /// database is locked beyond its timeout. The path and the
-    /// operating system's error text never appear.
+    /// [`SpoolErrorKind::MaterializationPaused`] when the caller's gate
+    /// holds new materialization after evaluating the shared pressure
+    /// state. [`SpoolErrorKind::Unavailable`] when the gate cannot
+    /// measure — unmeasurable pressure is not admissible — or when any
+    /// filesystem step or the row commit fails;
+    /// [`SpoolErrorKind::Busy`] when the state database is locked
+    /// beyond its timeout. The path and the operating system's error
+    /// text never appear.
     pub fn materialize(
         &self,
         store: &StateStore,
+        gate: &mut PressureGate,
         payload: &[u8],
     ) -> Result<MaterializedBundle, SpoolError> {
+        // The evaluation precedes every write — no identity is minted,
+        // no staging file is created, no row is touched — so a held
+        // gate leaves the spool exactly as it found it. A measurement
+        // failure propagates and holds materialization the same way:
+        // the policy's failure mode is its own direction.
+        let status = gate.evaluate_spool(self, store)?;
+        if !status.admits_materialization() {
+            return Err(SpoolError::of_kind(SpoolErrorKind::MaterializationPaused));
+        }
         self.begin_bundle(store, payload, InjectedCrash::None)
     }
 

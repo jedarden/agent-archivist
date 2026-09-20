@@ -15,6 +15,7 @@ use super::Spool;
 use super::{
     BUNDLE_SUFFIX, ReconcileReport, SPOOL_DIR_NAME, STAGING_SUFFIX, SpoolError, SpoolErrorKind,
 };
+use super::pressure::{PressureGate, PressureLimits};
 use crate::state::StateStore;
 
 static NEXT_TEMP_ID: AtomicUsize = AtomicUsize::new(0);
@@ -67,6 +68,13 @@ fn payload(seed: u8) -> Vec<u8> {
     let mut bytes = vec![seed; usize::from(seed) * 64 + 16];
     bytes.extend_from_slice(format!("payload-{seed}").as_bytes());
     bytes
+}
+
+/// A gate that never pauses: no reachable cap and a floor no
+/// filesystem with any free space breaches. The gate every
+/// non-pressure test materializes through.
+fn open_gate() -> PressureGate {
+    PressureGate::new(PressureLimits::new(u64::MAX, 0, 80))
 }
 
 /// The mode bits of a path, masked to the permission triads.
@@ -152,7 +160,7 @@ fn materialized_bundle_is_mode_0600_with_a_committed_row() {
     let spool = Spool::open(dir.path()).expect("open spool");
     let bytes = payload(1);
 
-    let bundle = spool.materialize(&store, &bytes).expect("materialize");
+    let bundle = spool.materialize(&store, &mut open_gate(), &bytes).expect("materialize");
 
     // The final name exists at mode 0600 and no staging file remains.
     let bundle_path = spool_path(&dir).join(bundle.bundle_name());
@@ -199,8 +207,8 @@ fn materialize_mints_distinct_time_ordered_identities() {
     let store = file_store(&dir);
     let spool = Spool::open(dir.path()).expect("open spool");
 
-    let first = spool.materialize(&store, &payload(1)).expect("first");
-    let second = spool.materialize(&store, &payload(2)).expect("second");
+    let first = spool.materialize(&store, &mut open_gate(), &payload(1)).expect("first");
+    let second = spool.materialize(&store, &mut open_gate(), &payload(2)).expect("second");
     assert_ne!(first.spool_entry_id(), second.spool_entry_id());
     // UUIDv7 identities carry the mint time, so the timestamp prefix
     // never moves backwards and a directory listing reads in capture
@@ -219,7 +227,7 @@ fn spool_rows_carry_grammar_valid_timestamps() {
     let dir = TempDir::new("timestamps");
     let store = file_store(&dir);
     let spool = Spool::open(dir.path()).expect("open spool");
-    spool.materialize(&store, &payload(3)).expect("materialize");
+    spool.materialize(&store, &mut open_gate(), &payload(3)).expect("materialize");
 
     let mut statement = store
         .connection()
@@ -297,7 +305,7 @@ fn crash_before_rename_leaves_no_row_and_no_committed_range() {
 
     // Re-capture of the same payload succeeds and carries the same
     // digest: no complete range is lost, and content identity is stable.
-    let recaptured = spool.materialize(&store, &bytes).expect("re-materialize");
+    let recaptured = spool.materialize(&store, &mut open_gate(), &bytes).expect("re-materialize");
     assert_eq!(recaptured.envelope_digest(), encode_hex(&digest(&bytes)));
 }
 
@@ -405,10 +413,10 @@ fn reconcile_removes_only_acknowledged_leftovers() {
     let spool = Spool::open(dir.path()).expect("open spool");
 
     // A live entry: spooled, pending upload.
-    let live = spool.materialize(&store, &payload(7)).expect("live");
+    let live = spool.materialize(&store, &mut open_gate(), &payload(7)).expect("live");
     // An acknowledged entry whose bundle removal was interrupted: the
     // state committed, the file remains (fault-injection point 9).
-    let acked = spool.materialize(&store, &payload(8)).expect("acked");
+    let acked = spool.materialize(&store, &mut open_gate(), &payload(8)).expect("acked");
     store
         .connection()
         .execute(
@@ -500,7 +508,7 @@ fn live_rows_whose_bundle_is_missing_are_counted_not_repaired() {
     let store = file_store(&dir);
     let spool = Spool::open(dir.path()).expect("open spool");
     let bundle = spool
-        .materialize(&store, &payload(11))
+        .materialize(&store, &mut open_gate(), &payload(11))
         .expect("materialize");
     std::fs::remove_file(spool_path(&dir).join(bundle.bundle_name())).expect("remove bundle");
 
@@ -535,7 +543,7 @@ fn remove_removes_an_acknowledged_bundle_and_tolerates_absence() {
     let store = file_store(&dir);
     let spool = Spool::open(dir.path()).expect("open spool");
     let bundle = spool
-        .materialize(&store, &payload(13))
+        .materialize(&store, &mut open_gate(), &payload(13))
         .expect("materialize");
 
     // The commit-then-cleanup primitive: the file goes, the row stays.
@@ -567,7 +575,7 @@ fn every_error_detail_is_a_safe_message() {
 #[test]
 fn error_kinds_are_distinct_and_complete() {
     let all = SpoolErrorKind::all();
-    assert_eq!(all.len(), 5);
+    assert_eq!(all.len(), 6);
     let displays: Vec<_> = all.iter().map(std::string::ToString::to_string).collect();
     let mut sorted = displays.clone();
     sorted.sort_unstable();
@@ -594,4 +602,165 @@ fn failure_renderings_never_name_the_spool_path() {
         !rendered.contains(dir.path().to_string_lossy().as_ref()),
         "error leaked the path: {rendered}"
     );
+}
+
+// --- Pressure admission -----------------------------------------------------
+
+#[test]
+fn materialize_pauses_when_live_usage_reaches_the_cap() {
+    let dir = TempDir::new("pressure-cap");
+    let store = file_store(&dir);
+    let spool = Spool::open(dir.path()).expect("open spool");
+
+    // The first bundle's exact size becomes the cap, so the second
+    // admission meets a spool *at* the high-water mark — the policy
+    // reads "reaches", not "exceeds".
+    let first = spool
+        .materialize(&store, &mut open_gate(), b"0123456789")
+        .expect("first materialize");
+    let mut gate = PressureGate::new(PressureLimits::new(first.size_bytes(), 0, 80));
+
+    let paused = spool
+        .materialize(&store, &mut gate, b"more")
+        .expect_err("a spool at its cap must pause new materialization");
+    assert_eq!(paused.kind(), SpoolErrorKind::MaterializationPaused);
+
+    // The refusal is not silent (a distinct kind with its own
+    // content-free detail) and it changed nothing: no row, no
+    // staging debris, the live bundle untouched.
+    assert_eq!(
+        paused.detail(),
+        SpoolErrorKind::MaterializationPaused.default_detail()
+    );
+    assert_eq!(all_rows(&store).len(), 1);
+    assert!(
+        spool_path(&dir).join(first.bundle_name()).is_file(),
+        "the live bundle must be untouched"
+    );
+    let staging: Vec<_> = std::fs::read_dir(spool_path(&dir))
+        .expect("read dir")
+        .map(|entry| entry.expect("entry").file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(STAGING_SUFFIX))
+        .collect();
+    assert!(staging.is_empty(), "staging debris remained: {staging:?}");
+}
+
+#[test]
+fn materialize_pauses_when_free_space_reaches_the_floor() {
+    let dir = TempDir::new("pressure-floor");
+    let store = file_store(&dir);
+    let spool = Spool::open(dir.path()).expect("open spool");
+
+    // The floor sits one byte above the space actually free on the
+    // spool's filesystem, so the floor condition is live however much
+    // space this host has: free space *at or below* the floor pauses.
+    let free = spool.free_space_bytes().expect("probe free space");
+    let mut gate = PressureGate::new(PressureLimits::new(u64::MAX, free.saturating_add(1), 80));
+
+    let paused = spool
+        .materialize(&store, &mut gate, b"payload")
+        .expect_err("a breached floor must pause new materialization");
+    assert_eq!(paused.kind(), SpoolErrorKind::MaterializationPaused);
+    assert_eq!(all_rows(&store).len(), 0, "nothing may be written");
+}
+
+#[test]
+fn paused_materialization_leaves_pending_retries_untouched() {
+    let dir = TempDir::new("pressure-pending");
+    let store = file_store(&dir);
+    let spool = Spool::open(dir.path()).expect("open spool");
+
+    // A pending retry is an existing live row awaiting its upload. The
+    // policy holds new materialization only, so while the gate is
+    // paused the row, its bundle, and the recovery pass that keeps it
+    // uploadable are all untouched.
+    let pending = spool
+        .materialize(&store, &mut open_gate(), b"pending-retry")
+        .expect("pending retry materialized");
+    let mut gate = PressureGate::new(PressureLimits::new(pending.size_bytes(), 0, 80));
+    let paused = spool
+        .materialize(&store, &mut gate, b"new capture")
+        .expect_err("the at-cap spool must pause new materialization");
+    assert_eq!(paused.kind(), SpoolErrorKind::MaterializationPaused);
+
+    let rows = all_rows(&store);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, pending.bundle_name());
+    assert_eq!(rows[0].1, "materialized");
+    assert!(spool_path(&dir).join(pending.bundle_name()).is_file());
+
+    // The startup pass runs while the gate is paused — draining pending
+    // work is outside the policy, and here there is nothing to drain.
+    let report = spool.reconcile(&store).expect("reconcile while paused");
+    assert!(report.is_quiescent());
+}
+
+#[test]
+fn gate_decisions_come_from_the_shared_pressure_state() {
+    let dir = TempDir::new("pressure-shared");
+    let store = file_store(&dir);
+    let spool = Spool::open(dir.path()).expect("open spool");
+
+    let cap = spool
+        .materialize(&store, &mut open_gate(), b"0123456789")
+        .expect("first materialize")
+        .size_bytes();
+    let limits = PressureLimits::new(cap, 0, 80);
+
+    // Two gates that never observed a pause reach the same decision,
+    // because each derives it at admission from the shared facts — the
+    // live byte sum in the state database and the filesystem probe —
+    // and not from any gate-private history.
+    for tag in ["held", "fresh"] {
+        let mut gate = PressureGate::new(limits);
+        let paused = spool
+            .materialize(&store, &mut gate, b"more")
+            .expect_err(tag);
+        assert_eq!(
+            paused.kind(),
+            SpoolErrorKind::MaterializationPaused,
+            "{tag}: an at-cap spool pauses every gate"
+        );
+    }
+
+    // Drain through the acknowledgement the receipt path commits
+    // (simulated at the state layer here, ahead of that deliverable):
+    // the shared usage sum falls and the same gate admits again — the
+    // latch is hysteresis over shared state, not a sticky tombstone.
+    store
+        .connection()
+        .execute(
+            "UPDATE spool_entries SET state = 'acknowledged'",
+            [],
+        )
+        .expect("acknowledge");
+    let mut gate = PressureGate::new(limits);
+    spool
+        .materialize(&store, &mut gate, b"0123456789")
+        .expect("usage below the resume threshold admits again");
+}
+
+#[test]
+fn unmeasurable_pressure_holds_materialization() {
+    let dir = TempDir::new("pressure-unmeasurable");
+    let store = file_store(&dir);
+    let spool = Spool::open(dir.path()).expect("open spool");
+
+    // Without the shared state the usage sum reads from, the gate
+    // cannot measure — and a gate that cannot measure cannot admit:
+    // the failure mode of the policy is its own direction.
+    store
+        .connection()
+        .execute("DROP TABLE spool_entries", [])
+        .expect("drop the usage sum's source");
+
+    let error = spool
+        .materialize(&store, &mut open_gate(), b"payload")
+        .expect_err("unmeasurable pressure must hold materialization");
+    assert_eq!(error.kind(), SpoolErrorKind::Unavailable);
+    let written: Vec<_> = std::fs::read_dir(spool_path(&dir))
+        .expect("read dir")
+        .map(|entry| entry.expect("entry").file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(written.is_empty(), "nothing may be written: {written:?}");
 }
