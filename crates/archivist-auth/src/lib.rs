@@ -80,6 +80,7 @@
 //! every negative case, on top of the RFC §7.1 pairs pinned here.
 
 pub mod authority;
+pub mod consumption_policy;
 pub mod ed25519;
 pub mod error;
 pub mod identity;

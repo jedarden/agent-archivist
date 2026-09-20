@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:consumption-policy",
+  "title": "Agent Archivist consumption-policy-v1 governance records",
+  "description": "The offline tenant-governance-signed immutable consumption policy and its monotonic signed current pointer. The policy is digest-addressed below tenants/<tenant>/v1/control/consumption-policies/ and the pointer is current.json. Readers verify both objects, then walk predecessor_digest links before allowing derived-content evaluation. Unknown policy versions, classifier kinds, rule-set digests, mappings, or clock state fail closed.",
+  "oneOf": [
+    { "$ref": "#/$defs/policy" },
+    { "$ref": "#/$defs/current-pointer" }
+  ],
+  "$defs": {
+    "namespace": {
+      "const": "archivist.governance/v1",
+      "description": "The only v1 governance-policy namespace. A different namespace is a different contract and is rejected before evaluation.",
+      "x-archivist": { "bearing": "security", "failClosed": true }
+    },
+    "record-type": {
+      "type": "string",
+      "enum": ["consumption-policy", "consumption-policy-pointer"],
+      "x-archivist": { "bearing": "security", "failClosed": true }
+    },
+    "record-kind": {
+      "type": "string",
+      "enum": ["immutable", "current-pointer"],
+      "x-archivist": { "bearing": "security", "failClosed": true }
+    },
+    "tenant": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4"
+    },
+    "timestamp": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp"
+    },
+    "digest": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex"
+    },
+    "key-id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id"
+    },
+    "signature": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/ed25519-signature-hex"
+    },
+    "token": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+      "maxLength": 64
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "record_type",
+        "record_kind",
+        "tenant_id",
+        "policy_version",
+        "issued_at",
+        "effective_at",
+        "allowed_classifier_kinds",
+        "allowed_rule_set_digests",
+        "assessment_not_before",
+        "max_assessment_age_seconds",
+        "purpose_to_consumer_classes",
+        "max_approval_lifetime_seconds",
+        "predecessor_digest",
+        "governance_key_id",
+        "governance_signature"
+      ],
+      "properties": {
+        "schema": { "$ref": "#/$defs/namespace" },
+        "record_type": { "const": "consumption-policy" },
+        "record_kind": { "const": "immutable" },
+        "tenant_id": { "$ref": "#/$defs/tenant" },
+        "policy_version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 999999999999999999,
+          "description": "The monotonic policy sequence. A rollback is a new higher sequence with a predecessor digest, never a pointer rewrite."
+        },
+        "issued_at": { "$ref": "#/$defs/timestamp" },
+        "effective_at": { "$ref": "#/$defs/timestamp" },
+        "allowed_classifier_kinds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/token" },
+          "description": "Closed evaluator-kind allowlist; an evaluator that does not support every named kind denies use."
+        },
+        "allowed_rule_set_digests": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/digest" },
+          "description": "Closed artifact digest allowlist for the classifier rules."
+        },
+        "assessment_not_before": { "$ref": "#/$defs/timestamp" },
+        "max_assessment_age_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2592000,
+          "description": "Freshness bound; no policy may accept an assessment older than 30 days."
+        },
+        "purpose_to_consumer_classes": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/token" },
+          "patternProperties": {
+            "^[a-z][a-z0-9._-]{0,63}$": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/token" }
+            }
+          },
+          "additionalProperties": false,
+          "description": "Explicit purpose-to-consumer-class grants. An absent purpose has no consumer."
+        },
+        "max_approval_lifetime_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "description": "The maximum lifetime a signed use approval may carry."
+        },
+        "predecessor_digest": {
+          "anyOf": [
+            { "$ref": "#/$defs/digest" },
+            { "type": "null" }
+          ],
+          "description": "Digest of the immediately preceding complete signed policy. Null is permitted only for policy version 1."
+        },
+        "governance_key_id": { "$ref": "#/$defs/key-id" },
+        "governance_signature": { "$ref": "#/$defs/signature" }
+      },
+      "x-archivist": {
+        "writeClass": "immutable",
+        "objectKey": "tenants/<tenant_id>/v1/control/consumption-policies/<policy_digest>.json",
+        "signature": "Ed25519 by the offline tenant governance identity over RFC 8785 canonical bytes with governance_signature removed",
+        "failClosed": true
+      }
+    },
+    "current-pointer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "record_type",
+        "record_kind",
+        "tenant_id",
+        "policy_version",
+        "policy_digest",
+        "effective_at",
+        "governance_key_id",
+        "governance_signature"
+      ],
+      "properties": {
+        "schema": { "$ref": "#/$defs/namespace" },
+        "record_type": { "const": "consumption-policy-pointer" },
+        "record_kind": { "const": "current-pointer" },
+        "tenant_id": { "$ref": "#/$defs/tenant" },
+        "policy_version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 999999999999999999
+        },
+        "policy_digest": { "$ref": "#/$defs/digest" },
+        "effective_at": { "$ref": "#/$defs/timestamp" },
+        "governance_key_id": { "$ref": "#/$defs/key-id" },
+        "governance_signature": { "$ref": "#/$defs/signature" }
+      },
+      "x-archivist": {
+        "writeClass": "current-pointer",
+        "objectKey": "tenants/<tenant_id>/v1/control/consumption-policies/current.json",
+        "signature": "Ed25519 by the offline tenant governance identity over RFC 8785 canonical bytes with governance_signature removed",
+        "failClosed": true
+      }
+    }
+  }
+}
