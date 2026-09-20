@@ -76,7 +76,7 @@ use archivist_storage::control::{AuthorizationEpoch, ControlReadStore, ControlRe
 use archivist_storage::error::{StorageError, StorageErrorKind};
 
 use crate::config::ControlReadConfig;
-use crate::control_admin::{validate_envelope, ControlObjectKey};
+use crate::control_admin::{ControlObjectKey, validate_envelope};
 
 // Content-safe detail literals, one static sentence per failure site. A
 // unit test pins them against the protocol's safe-message grammar, the
@@ -367,8 +367,8 @@ mod tests {
 
     use super::{
         AuthorizationEpoch, CANONICAL_MAX_BYTES, ClientId, ControlObjectKey, ControlReadBackend,
-        ControlReadStore, DETAIL_KEY_MISMATCH, DETAIL_OVERSIZE, DETAIL_RECORD_TENANT,
-        DETAIL_SCOPE, S3ControlReadStore, StorageError, StorageErrorKind, TenantId,
+        ControlReadStore, DETAIL_KEY_MISMATCH, DETAIL_OVERSIZE, DETAIL_RECORD_TENANT, DETAIL_SCOPE,
+        S3ControlReadStore, StorageError, StorageErrorKind, TenantId,
     };
     use crate::config::ControlReadConfig;
 
@@ -1042,19 +1042,18 @@ mod tests {
             .backend
             .preload(key, &linked_client_envelope(OTHER_TENANT, CLIENT, 3));
         let error = block_on(store.read_linked_client(&tenant(), &client()))
-            .err()
-            .expect("a cross-tenant envelope must not read as a record");
+            .expect_err("a cross-tenant envelope must not read as a record");
         assert_eq!(error.kind(), StorageErrorKind::ScopeViolation);
         assert_eq!(error.detail(), DETAIL_RECORD_TENANT);
 
         // The same classification on an immutable family's read.
         let (_, revocation_key, _) = &families()[2];
-        store
-            .backend
-            .preload(revocation_key, &revocation_envelope(OTHER_TENANT, CLIENT, 3));
+        store.backend.preload(
+            revocation_key,
+            &revocation_envelope(OTHER_TENANT, CLIENT, 3),
+        );
         let error = block_on(store.read_revocation(&tenant(), &client(), epoch()))
-            .err()
-            .expect("a cross-tenant envelope must not read as a record");
+            .expect_err("a cross-tenant envelope must not read as a record");
         assert_eq!(error.kind(), StorageErrorKind::ScopeViolation);
         assert_eq!(error.detail(), DETAIL_RECORD_TENANT);
     }
@@ -1071,8 +1070,7 @@ mod tests {
             .backend
             .preload(key, &linked_client_envelope(TENANT, OTHER_CLIENT, 3));
         let error = block_on(store.read_linked_client(&tenant(), &client()))
-            .err()
-            .expect("a non-deriving envelope must not read as a record");
+            .expect_err("a non-deriving envelope must not read as a record");
         assert_eq!(error.kind(), StorageErrorKind::MalformedInput);
         assert_eq!(error.detail(), DETAIL_KEY_MISMATCH);
 
@@ -1083,8 +1081,7 @@ mod tests {
             .backend
             .preload(revocation_key, &revocation_envelope(TENANT, CLIENT, 4));
         let error = block_on(store.read_revocation(&tenant(), &client(), epoch()))
-            .err()
-            .expect("a non-deriving envelope must not read as a record");
+            .expect_err("a non-deriving envelope must not read as a record");
         assert_eq!(error.kind(), StorageErrorKind::MalformedInput);
         assert_eq!(error.detail(), DETAIL_KEY_MISMATCH);
 
@@ -1093,8 +1090,7 @@ mod tests {
             .backend
             .preload(key, &revocation_envelope(TENANT, CLIENT, 3));
         let error = block_on(store.read_linked_client(&tenant(), &client()))
-            .err()
-            .expect("a cross-family envelope must not read as a record");
+            .expect_err("a cross-family envelope must not read as a record");
         assert_eq!(error.kind(), StorageErrorKind::MalformedInput);
         assert_eq!(error.detail(), DETAIL_KEY_MISMATCH);
 
