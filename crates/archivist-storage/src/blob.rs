@@ -853,6 +853,61 @@ mod tests {
     }
 
     #[test]
+    fn writer_only_replay_reports_created_not_verified() {
+        // The blob family's weaker-truth pin (RCPT-003, RCPT-004): the
+        // mock store reports no conditional-create capability and no
+        // readable dedupe evidence, so the identical retry is a second
+        // physical write whose verdict is `Created` again — created, not
+        // verified. The layer never promotes deterministic convergence
+        // (STO-004, at the derived key STO-002) into the `AlreadyPresent`
+        // presence claim only the store's readable metadata can
+        // establish.
+        let store = MockStore::default();
+        let expectation = BlobExpectation::new(digest_of(BODY), BODY.len() as u64);
+
+        let first = commit_chunks(
+            &store,
+            &OpenUploads::new(),
+            expectation,
+            &mut IdentityEncoder,
+            &[BODY],
+        )
+        .expect("the first commit lands the blob");
+        let replay = commit_chunks(
+            &store,
+            &OpenUploads::new(),
+            expectation,
+            &mut IdentityEncoder,
+            &[BODY],
+        )
+        .expect("the retry lands the blob");
+
+        assert_eq!(
+            first.outcome(),
+            StorageOutcome::Created,
+            "the first write reports exactly what the writer-only store reported"
+        );
+        assert_eq!(
+            replay.outcome(),
+            StorageOutcome::Created,
+            "without readable dedupe evidence the retry reports the weaker truth again — created, not verified"
+        );
+        assert_eq!(
+            replay.key().as_str(),
+            first.key().as_str(),
+            "both attempts address the one derived key"
+        );
+        let (writes, _) = store
+            .evidence_of(first.key().as_str())
+            .expect("the derived key holds readable evidence");
+        assert_eq!(
+            writes, 2,
+            "the store really wrote twice: the verdict is the store's report, never the layer's"
+        );
+        assert_eq!(store.aborts(), Vec::<String>::new());
+    }
+
+    #[test]
     fn digest_mismatch_never_completes_and_aborts_the_session() {
         let other = b"a different canonical body";
         let (store, result) = {
