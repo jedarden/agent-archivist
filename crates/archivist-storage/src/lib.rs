@@ -56,6 +56,10 @@
 //!   multipart session at the derived blob key, completed only after the
 //!   declared digest and size verify — validate-before-complete with
 //!   retry convergence and honest outcome pass-through.
+//! - [`manifests`] — the occurrence-manifest and upload-attestation commit
+//!   path: the two durable raw-provenance documents built from a validated
+//!   envelope and committed at their derived keys with server-side
+//!   identity re-derivation and dedupe-not-conflict semantics.
 //! - [`control`] — the control-plane boundary: the read-only replica view,
 //!   the offline administrator store, and the record-kind vocabulary their
 //!   keys are derived from.
@@ -77,9 +81,11 @@
 //! validate-before-complete, and cancellation-safe cleanup. The
 //! deterministic commit decision layer ([`commit`]) selects the write
 //! primitive from the reported capability and resolves replays honestly,
-//! and the content-addressed blob commit path ([`blob`]) drives one
+//! the content-addressed blob commit path ([`blob`]) drives one
 //! payload through encoder and session, completing only on verified
-//! identity.
+//! identity, and the manifest commit path ([`manifests`]) lands the
+//! occurrence manifest and upload attestation at their derived keys with
+//! server-side identity re-derivation and dedupe-not-conflict semantics.
 //! Backend behavior — the portable S3 adapter's probe source and store,
 //! which implement the primitives these layers drive — arrives with its own
 //! deliverables (plan Section 8, Phase 2).
@@ -96,6 +102,7 @@ pub mod commit;
 pub mod control;
 pub mod error;
 pub mod ingest;
+pub mod manifests;
 pub mod metadata;
 pub mod multipart;
 pub mod probe;
