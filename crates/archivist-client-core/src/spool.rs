@@ -54,11 +54,12 @@
 //!
 //! # Status
 //!
-//! Materialization, the startup reconciliation pass, and the
-//! acknowledged cleanup primitive arrived with Phase 5. The upload
+//! Materialization, the startup reconciliation pass, the acknowledged
+//! cleanup primitive, and the spool/free-disk high-water policy's state
+//! and measurements ([`pressure`]) arrived with Phase 5. The upload
 //! scheduler, the receipt/acknowledgement transaction that marks
-//! entries `acknowledged`, and the spool/free-disk high-water policy
-//! consume this module and are later Phase 5 deliverables.
+//! entries `acknowledged`, and the policy's scheduling and status
+//! consumers consume this module and are later Phase 5 deliverables.
 //!
 //! # Content-free diagnostics
 //!
@@ -81,6 +82,8 @@ use archivist_protocol::vocabulary::{RequestId, Timestamp};
 use rusqlite::Connection;
 
 use crate::state::StateStore;
+
+pub mod pressure;
 
 #[cfg(test)]
 mod tests;
@@ -427,6 +430,22 @@ impl Spool {
         self.begin_bundle(store, payload, InjectedCrash::None)
     }
 
+    /// Measure the filesystem free space available to this spool: the
+    /// bytes an unprivileged process could still write on the
+    /// filesystem holding the spool directory (`statvfs`
+    /// `f_bavail * f_frsize`, the number `df` reports). This is the
+    /// measurement the policy's free-space floor applies to.
+    ///
+    /// # Errors
+    ///
+    /// [`SpoolErrorKind::Unavailable`] when the filesystem cannot be
+    /// probed. The path never appears in the error.
+    pub fn free_space_bytes(&self) -> Result<u64, SpoolError> {
+        let stats = rustix::fs::statvfs(&self.dir)
+            .map_err(|_| unavailable("spool filesystem free space could not be measured"))?;
+        Ok(stats.f_bavail.saturating_mul(stats.f_frsize))
+    }
+
     /// Reconcile the spool directory with the state database at startup
     /// (plan Section 7.9: "Startup reconciles complete unindexed bundles
     /// and removes acknowledged bundles left after a crash").
@@ -642,6 +661,33 @@ impl Spool {
             size_bytes: u64::try_from(size_bytes).unwrap_or(u64::MAX),
         })
     }
+}
+
+/// The live spool usage: the summed recorded size of every
+/// not-yet-acknowledged entry — exactly the bundles whose bytes are on
+/// disk waiting for a receipt. This is the measurement the policy's
+/// spool-cap condition ([`pressure`]) applies to: the startup
+/// reconciler keeps the `spool_entries` rows and the directory contents
+/// in agreement, so the recorded sum is the directory's live bytes.
+///
+/// Acknowledged entries are excluded: their payload cleanup is the
+/// spool's only way to shrink, so bytes already receipted must never
+/// count against new capture.
+///
+/// # Errors
+///
+/// [`SpoolErrorKind::Unavailable`] or [`SpoolErrorKind::Busy`] when the
+/// state database cannot be read.
+pub fn live_usage_bytes(store: &StateStore) -> Result<u64, SpoolError> {
+    let total: i64 = store
+        .connection()
+        .query_row(
+            "SELECT COALESCE(SUM(size_bytes), 0) FROM spool_entries WHERE state != ?1",
+            rusqlite::params![STATE_ACKNOWLEDGED],
+            |row| row.get(0),
+        )
+        .map_err(|ref err| classify_state_operation(err))?;
+    u64::try_from(total).map_err(|_| unavailable("live spool usage cannot be represented"))
 }
 
 // The static detail texts shared by more than one failure site.

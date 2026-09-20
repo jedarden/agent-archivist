@@ -42,6 +42,13 @@ broken_intra_doc_links = "deny"
 # never depends on the host's library version; `default-features = false`
 # keeps the prepared-statement cache and wasm paths out of the build.
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
+# Probes the filesystem free space behind the spool directory (plan Section
+# 7.9's free-space floor): `statvfs` is the one measurement the standard
+# library does not expose, and rustix is the reviewed safe wrapper — the
+# workspace forbids `unsafe` code, so raw `libc` bindings are not an option.
+# Only the `fs` API is adopted; the default `std` feature stays on so
+# `Path` implements rustix's `Arg`.
+rustix = { version = "1.1.4", features = ["fs"] }
 # Serves the ingestion data plane (plan Sections 6 and 8 Phase 4): axum is the
 # pinned HTTP server and Tower is the middleware surface. `default-features =
 # false` keeps form/query/json body machinery out — the wire contract renders

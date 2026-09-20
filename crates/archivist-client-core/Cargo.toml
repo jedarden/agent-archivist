@@ -13,6 +13,10 @@ repository.workspace = true
 archivist-adapter-sdk = { path = "../archivist-adapter-sdk" }
 archivist-protocol = { path = "../archivist-protocol" }
 rusqlite.workspace = true
+# Filesystem free-space probing for the spool pressure floor (plan
+# Section 7.9); the rationale for the wrapper choice lives with the
+# workspace dependency's entry.
+rustix.workspace = true
 
 [lints]
 workspace = true

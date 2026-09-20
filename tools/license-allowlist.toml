@@ -12,8 +12,11 @@
 # database (plan Section 7.9), which brings its build and utility crates. The
 # second is the `axum`/`tokio` server stack (2026-09-13): the pinned HTTP
 # server and the runtime behind `archivist-server` (plan Sections 6 and 8
-# Phase 4), which bring the hyper/tower/futures HTTP stack with them. Each
-# expression below is the one published for the version pinned in Cargo.lock.
+# Phase 4), which bring the hyper/tower/futures HTTP stack with them. The
+# third is `rustix` (2026-09-20): the safe `statvfs` wrapper behind the
+# spool pressure floor's free-space measurement (plan Section 7.9), which
+# brings its generated-bindings companion `linux-raw-sys`. Each expression
+# below is the one published for the version pinned in Cargo.lock.
 
 [approved]
 # crate-name = "SPDX identifier as published by the crate"
@@ -41,6 +44,7 @@ hyper-util = "MIT"
 itoa = "MIT OR Apache-2.0"
 libc = "MIT OR Apache-2.0"
 libsqlite3-sys = "MIT"
+linux-raw-sys = "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
 matchit = "MIT AND BSD-3-Clause"
 memchr = "Unlicense OR MIT"
 mime = "MIT OR Apache-2.0"
@@ -51,6 +55,7 @@ pkg-config = "MIT OR Apache-2.0"
 proc-macro2 = "MIT OR Apache-2.0"
 quote = "MIT OR Apache-2.0"
 rusqlite = "MIT"
+rustix = "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
 serde_core = "MIT OR Apache-2.0"
 serde_derive = "MIT OR Apache-2.0"
 shlex = "MIT OR Apache-2.0"
