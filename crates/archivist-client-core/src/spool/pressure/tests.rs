@@ -4,13 +4,15 @@
 //! land exactly where the thresholds name them (at-or-above the cap,
 //! at-or-below the floor), the pause latches until usage recovers
 //! strictly below the resume threshold with the floor recovered, the
-//! reason set is closed and ordered, and no rendering can carry a
-//! filesystem path.
+//! reason set is closed and ordered, no rendering can carry a
+//! filesystem path, and the pause stops new materialization only —
+//! pending retries and the receipts they work toward keep flowing
+//! while a gate holds.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::super::{Spool, live_usage_bytes};
+use super::super::{SPOOL_DIR_NAME, Spool, SpoolErrorKind, live_usage_bytes};
 use super::{PressureGate, PressureLimits};
 use crate::state::StateStore;
 
@@ -260,6 +262,132 @@ fn reason_tokens_are_the_closed_set_in_canonical_order() {
     let _ = gate.evaluate(1_000, 400);
     let draining = gate.evaluate(900, 1_000);
     assert_eq!(draining.degraded_reasons().tokens(), vec!["draining"]);
+}
+
+// --- the hold stops new materialization only ---------------------------------
+
+#[test]
+fn the_hold_leaves_pending_retries_flowing() {
+    let dir = TempDir::new("pending-retries");
+    let store = file_store(&dir);
+    let spool = Spool::open(dir.path()).expect("open spool");
+    let spool_dir = dir.path().join(SPOOL_DIR_NAME);
+
+    // Two live bundles under an open gate; their combined size becomes
+    // the cap, so the ratio below is exact whatever the recorded sizes.
+    let small = spool
+        .materialize(
+            &store,
+            &mut PressureGate::new(PressureLimits::new(u64::MAX, 0, 80)),
+            &payload(1),
+        )
+        .expect("materialize");
+    let large = spool
+        .materialize(
+            &store,
+            &mut PressureGate::new(PressureLimits::new(u64::MAX, 0, 80)),
+            &[b'x'; 400],
+        )
+        .expect("materialize");
+    let cap = small
+        .size_bytes()
+        .checked_add(large.size_bytes())
+        .expect("test payload sizes are small");
+    assert!(
+        large.size_bytes() * 5 >= cap * 4,
+        "the large bundle must sit at or above the resume point on its own"
+    );
+
+    // The hold latches at the cap: new materialization is refused, and
+    // the refusal wrote nothing — the spool holds exactly the bytes it
+    // held, files included.
+    let mut gate = PressureGate::new(PressureLimits::new(cap, 0, 80));
+    let refused = spool
+        .materialize(&store, &mut gate, b"new capture")
+        .expect_err("the at-cap spool must pause new materialization");
+    assert_eq!(refused.kind(), SpoolErrorKind::MaterializationPaused);
+    assert_eq!(live_usage_bytes(&store).expect("measure"), cap);
+    assert!(spool_dir.join(small.bundle_name()).is_file());
+    assert!(spool_dir.join(large.bundle_name()).is_file());
+
+    // The pause stops new materialization only. Both pending entries
+    // keep moving through their retry schedule — each attempt's
+    // bookkeeping advances independently, and the row states run their
+    // lifecycle while the gate holds, because draining pending work is
+    // the only way the spool shrinks and nothing may block it.
+    for (name, attempts) in [(small.bundle_name(), 1), (large.bundle_name(), 3)] {
+        let moved = store
+            .connection()
+            .execute(
+                "UPDATE spool_entries SET state = 'uploading', attempt_count = ?1,
+                 next_attempt_at = '2026-09-20T23:59:00.000Z'
+                 WHERE bundle_name = ?2 AND state = 'materialized'",
+                rusqlite::params![attempts, name],
+            )
+            .expect("a pending retry advances while the gate holds");
+        assert_eq!(moved, 1, "the pending entry moved to its next attempt");
+    }
+    let retried: i64 = store
+        .connection()
+        .query_row(
+            "SELECT attempt_count FROM spool_entries WHERE bundle_name = ?1",
+            [large.bundle_name()],
+            |row| row.get(0),
+        )
+        .expect("the retried row is present");
+    assert_eq!(retried, 3, "the retry schedule advanced its own entry");
+
+    // A retried entry is still live — a retry is not a receipt — so the
+    // cap still counts it and the hold stands on the same numbers.
+    assert_eq!(live_usage_bytes(&store).expect("measure"), cap);
+    let live = gate.evaluate_spool(&spool, &store).expect("evaluate");
+    assert!(!live.admits_materialization());
+    assert_eq!(live.degraded_reasons().tokens(), vec!["spool_cap"]);
+
+    // The receipt the retries work toward is also outside the policy.
+    // The small entry acknowledges under the hold and the
+    // acknowledgement's cleanup removes its bundle; the hold stays
+    // latched — the large entry's bytes are still live at or above the
+    // resume point — now naming the resume rule.
+    store
+        .connection()
+        .execute(
+            "UPDATE spool_entries SET state = 'acknowledged' WHERE bundle_name = ?1",
+            [small.bundle_name()],
+        )
+        .expect("acknowledge under the hold");
+    spool
+        .remove(small.bundle_name())
+        .expect("the acknowledgement's cleanup runs under the hold");
+    assert!(!spool_dir.join(small.bundle_name()).exists());
+
+    let draining = gate.evaluate_spool(&spool, &store).expect("evaluate");
+    assert!(!draining.admits_materialization());
+    assert!(draining.degraded_reasons().draining());
+    assert!(spool_dir.join(large.bundle_name()).is_file());
+
+    // The last pending entry receipts and cleans the same way, the
+    // drain completes, and the same held gate — not a fresh one —
+    // admits again: the next materialization really writes.
+    store
+        .connection()
+        .execute(
+            "UPDATE spool_entries SET state = 'acknowledged' WHERE bundle_name = ?1",
+            [large.bundle_name()],
+        )
+        .expect("acknowledge under the hold");
+    spool
+        .remove(large.bundle_name())
+        .expect("the acknowledgement's cleanup runs under the hold");
+    assert!(!spool_dir.join(large.bundle_name()).exists());
+
+    let resumed = gate.evaluate_spool(&spool, &store).expect("evaluate");
+    assert!(resumed.admits_materialization());
+    assert!(!resumed.is_degraded());
+    let admitted = spool
+        .materialize(&store, &mut gate, b"capture resumes")
+        .expect("the drained spool admits the held gate again");
+    assert!(spool_dir.join(admitted.bundle_name()).is_file());
 }
 
 // --- content-free renderings ------------------------------------------------
