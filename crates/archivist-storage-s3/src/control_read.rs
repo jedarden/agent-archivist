@@ -101,6 +101,42 @@ const DETAIL_KEY_MISMATCH: &str = "stored record does not derive the requested k
 /// `tenants/<tenant>/v1/control/`, deny every other prefix. The mock in
 /// this module's tests mirrors that denial so the store's requests are
 /// proven to stay inside it.
+///
+/// The missing verbs are pinned the same way the store's missing traits
+/// are — `compile_fail` doc tests that type-check only if the seam has
+/// grown the verb it must never carry:
+///
+/// ```compile_fail
+/// // No publish verb: if this compiled, the read seam had grown the
+/// // administration seam's write primitive.
+/// use archivist_storage_s3::control_admin::ControlObjectKey;
+/// use archivist_storage_s3::control_read::ControlReadBackend;
+///
+/// fn prove<B: ControlReadBackend>(backend: &B, key: &ControlObjectKey) {
+///     backend.put_control_object(key, &[]);
+/// }
+/// ```
+///
+/// ```compile_fail
+/// // No retract verb: revocation is the administrator publishing the next
+/// // record, never the replica removing one.
+/// use archivist_storage_s3::control_admin::ControlObjectKey;
+/// use archivist_storage_s3::control_read::ControlReadBackend;
+///
+/// fn prove<B: ControlReadBackend>(backend: &B, key: &ControlObjectKey) {
+///     backend.delete_control_object(key);
+/// }
+/// ```
+///
+/// ```compile_fail
+/// // No enumeration verb: the reader is addressed record by record, one
+/// // derived key at a time — there is no listing to walk.
+/// use archivist_storage_s3::control_read::ControlReadBackend;
+///
+/// fn prove<B: ControlReadBackend>(backend: &B, prefix: &str) {
+///     backend.list_control_objects(prefix);
+/// }
+/// ```
 pub trait ControlReadBackend {
     /// Read the stored bytes at one derived control key, with the
     /// observation evidence the body was read under.
@@ -146,6 +182,42 @@ pub trait ControlReadBackend {
 /// here — failing closed on a bad signature, a stale epoch, or an expired
 /// cache entry is the consumer's contract (`EC-09`), which applies its
 /// 60-second trust-cache policy over the surfaced observation metadata.
+///
+/// The absence of the write paths is pinned at compile time, so the
+/// boundary fails a build instead of a review when it erodes. Each example
+/// below is a `compile_fail` doc test whose call type-checks only if this
+/// store has grown the authority it must not have:
+///
+/// ```compile_fail
+/// // The reader is not an administrator: if this compiled, an ingest
+/// // replica could publish or replace signed control records.
+/// use archivist_storage::control::ControlAdminStore;
+/// use archivist_storage_s3::control_read::S3ControlReadStore;
+///
+/// struct ProbeBackend;
+///
+/// fn control_write_authority<T: ControlAdminStore>(_: &T) {}
+///
+/// fn prove(store: &S3ControlReadStore<ProbeBackend>) {
+///     control_write_authority(store);
+/// }
+/// ```
+///
+/// ```compile_fail
+/// // The reader is not a raw writer: if this compiled, the read identity
+/// // could drive uploads into the raw prefix — authority that stays
+/// // solely with archivist-storage's `RawWriteStore` boundary.
+/// use archivist_storage::raw_write::RawWriteStore;
+/// use archivist_storage_s3::control_read::S3ControlReadStore;
+///
+/// struct ProbeBackend;
+///
+/// fn raw_write_authority<T: RawWriteStore>(_: &T) {}
+///
+/// fn prove(store: &S3ControlReadStore<ProbeBackend>) {
+///     raw_write_authority(store);
+/// }
+/// ```
 pub struct S3ControlReadStore<B> {
     config: ControlReadConfig,
     backend: B,
