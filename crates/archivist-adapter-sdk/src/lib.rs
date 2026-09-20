@@ -27,4 +27,11 @@
 //! Depends on `archivist-protocol` only. Must not know about any specific
 //! harness, transport, storage backend, or the server.
 
+pub mod expected_inference;
 pub mod status;
+
+pub use expected_inference::{
+    CaptureRoute, CloseReason, EXPECTATION_VERSION, ExactOutcome, ExpectedEvent, ExpectedEvents,
+    ExpectedInference, ExpectedInferenceLedger, ExpectedInferenceRecord, InferenceArtifactKind,
+    InferenceIdentity, IntegrationFailure, LedgerError, ObservedArtifact, RoutePolicy,
+};
