@@ -535,8 +535,16 @@ mod tests {
     struct MockState {
         uploads: BTreeMap<String, String>,
         parts: Vec<(String, u16, usize)>,
+        /// The stored bytes streamed to each upload, in part order — the
+        /// content a commit would persist at the key.
+        streamed: BTreeMap<String, Vec<u8>>,
         completes: Vec<String>,
         committed: Vec<String>,
+        /// The readable evidence at each committed key: how many commits
+        /// physically persisted content there, and the stored form the
+        /// store holds. A replay the store dedupes (`AlreadyPresent`)
+        /// never touches it.
+        evidence: BTreeMap<String, (u32, [u8; 32])>,
         aborts: Vec<String>,
         outcomes: VecDeque<StorageOutcome>,
         content_addressed: bool,
@@ -576,6 +584,12 @@ mod tests {
 
         fn committed_keys(&self) -> Vec<String> {
             self.state.lock().unwrap().committed.clone()
+        }
+
+        /// The readable evidence at `key` — (physical writes, stored-form
+        /// SHA-256) — or `None` when the store never persisted the key.
+        fn evidence_of(&self, key: &str) -> Option<(u32, [u8; 32])> {
+            self.state.lock().unwrap().evidence.get(key).copied()
         }
 
         fn completes(&self) -> Vec<String> {
@@ -643,6 +657,11 @@ mod tests {
             state
                 .parts
                 .push((upload.as_str().to_owned(), part.get(), bytes.len()));
+            state
+                .streamed
+                .entry(upload.as_str().to_owned())
+                .or_default()
+                .extend_from_slice(bytes);
             let tag = ObjectTag::parse(&format!("\"tag-{}\"", part.get())).expect("tag grammar");
             Ok(PartCommitment::new(part, tag))
         }
@@ -658,8 +677,18 @@ mod tests {
             let outcome = if let Some(scripted) = state.outcomes.pop_front() {
                 scripted
             } else if state.content_addressed && state.committed.contains(&key) {
+                // The dedupe verdict: readable compatible metadata
+                // established prior presence, so the object the store
+                // already holds stays exactly as the first commit wrote
+                // it — no rewrite, no second object (vocabulary:
+                // `AlreadyPresent`, never `ReplacedEquivalent`).
                 StorageOutcome::AlreadyPresent
             } else {
+                let content = state.streamed.remove(upload.as_str()).unwrap_or_default();
+                let stored = sha256::digest(&content);
+                let entry = state.evidence.entry(key.clone()).or_insert((0, stored));
+                entry.0 += 1;
+                entry.1 = stored;
                 StorageOutcome::Created
             };
             if !state.committed.contains(&key) {
@@ -762,6 +791,65 @@ mod tests {
             "the deterministic body produces the identical stored form"
         );
         assert_eq!(store.aborts(), Vec::<String>::new(), "nothing was aborted");
+    }
+
+    #[test]
+    fn equivalent_retry_does_not_overwrite_readable_evidence() {
+        // The physical half of convergence: the retry must converge *on*
+        // the object the first commit established, never rewrite it. The
+        // mock's per-key evidence — how many commits physically persisted
+        // content at the key, and the stored form the store holds — pins
+        // that a deduped replay leaves the readable evidence exactly as
+        // the first commit wrote it.
+        let store = MockStore::default();
+        store.replay_reports_already_present();
+        let expectation = BlobExpectation::new(digest_of(BODY), BODY.len() as u64);
+
+        let first = commit_chunks(
+            &store,
+            &OpenUploads::new(),
+            expectation,
+            &mut IdentityEncoder,
+            &[BODY],
+        )
+        .expect("the first commit establishes the readable evidence");
+        let retry = commit_chunks(
+            &store,
+            &OpenUploads::new(),
+            expectation,
+            &mut IdentityEncoder,
+            &[BODY],
+        )
+        .expect("the equivalent retry converges");
+
+        assert_eq!(
+            retry.key().as_str(),
+            first.key().as_str(),
+            "both attempts address the one derived key"
+        );
+        assert_eq!(
+            retry.outcome(),
+            StorageOutcome::AlreadyPresent,
+            "the store deduped the replay instead of rewriting it"
+        );
+        let (writes, stored) = store
+            .evidence_of(first.key().as_str())
+            .expect("the derived key holds readable evidence");
+        assert_eq!(
+            writes, 1,
+            "the retry never persisted content over the readable evidence"
+        );
+        assert_eq!(
+            stored,
+            sha256::digest(BODY),
+            "the readable evidence is the canonical stored form, untouched"
+        );
+        assert_eq!(
+            retry.stored_sha256(),
+            &stored,
+            "the retry's own report matches the evidence the store holds"
+        );
+        assert_eq!(store.aborts(), Vec::<String>::new());
     }
 
     #[test]
