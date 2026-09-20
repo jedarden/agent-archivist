@@ -151,6 +151,96 @@ fn resume_threshold_arithmetic_stays_defined_at_the_extremes() {
     assert_eq!(PressureLimits::new(1_000, 0, 0).resume_threshold_bytes(), 0);
 }
 
+// --- the configured recovery condition --------------------------------------
+
+/// A loaded configuration of a fully-declared host with the three spool
+/// policy keys supplied through the environment tier.
+fn configured(resume_percent: &str) -> crate::config::ResolvedConfig {
+    use crate::config::ConfigSources;
+    ConfigSources::non_interactive()
+        .env("HOME", "/home/operator")
+        .env("TEST_RAW_CREDENTIAL", "fixture-raw-credential")
+        .env(
+            "ARCHIVIST_INGEST_ENDPOINT_URL",
+            "https://ingest.example.invalid",
+        )
+        .env(
+            "ARCHIVIST_STORAGE_ENDPOINT_URL",
+            "https://s3.example.invalid",
+        )
+        .env("ARCHIVIST_STORAGE_REGION", "us-east-1")
+        .env("ARCHIVIST_STORAGE_ENCRYPTION", "s3_sse")
+        .env("ARCHIVIST_STORAGE_RAW_BUCKET", "archivist-raw-example")
+        .env(
+            "ARCHIVIST_STORAGE_CONTROL_BUCKET",
+            "archivist-control-example",
+        )
+        .env(
+            "ARCHIVIST_STORAGE_RAW_WRITE_CREDENTIALS_REF",
+            "env:TEST_RAW_CREDENTIAL",
+        )
+        .env(
+            "ARCHIVIST_STORAGE_CONTROL_READ_CREDENTIALS_REF",
+            "env:TEST_CONTROL_CREDENTIAL",
+        )
+        .env("ARCHIVIST_SERVER_LISTEN_ADDRESS", "127.0.0.1:8087")
+        .env("ARCHIVIST_ADMIN_ENDPOINT_URL", "https://s3.example.invalid")
+        .env("ARCHIVIST_ADMIN_REGION", "us-east-1")
+        .env(
+            "ARCHIVIST_ADMIN_CONTROL_BUCKET",
+            "archivist-control-example",
+        )
+        .env(
+            "ARCHIVIST_ADMIN_TENANT",
+            "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b",
+        )
+        .env(
+            "ARCHIVIST_ADMIN_CREDENTIALS_REF",
+            "env:TEST_ADMIN_CREDENTIAL",
+        )
+        .env(
+            "ARCHIVIST_ADMIN_AUTHORITY_SEED_REF",
+            "env:TEST_AUTHORITY_SEED",
+        )
+        .env("ARCHIVIST_SPOOL_MAX_BYTES", "1000")
+        .env("ARCHIVIST_SPOOL_FREE_FLOOR_BYTES", "400")
+        .env("ARCHIVIST_SPOOL_RESUME_PERCENT", resume_percent)
+        .load()
+        .expect("fully declared host loads")
+}
+
+#[test]
+fn the_configured_resume_percent_governs_the_recovery_condition() {
+    // A non-default resume percent arrives through the configuration
+    // tier, and that resolved value — not the registry default — is the
+    // recovery condition the held gate resumes under.
+    let limits = PressureLimits::from_config(&configured("50"));
+    assert_eq!(limits.spool_cap_bytes(), 1_000);
+    assert_eq!(limits.free_floor_bytes(), 400);
+    assert_eq!(limits.resume_percent(), 50);
+    assert_eq!(limits.resume_threshold_bytes(), 500);
+
+    let mut gate = PressureGate::new(limits);
+    // The pause latches at the cap...
+    assert!(!gate.evaluate(1_000, 401).admits_materialization());
+    // ...holds at the configured point itself — "strictly below" — ...
+    let at_point = gate.evaluate(500, 401);
+    assert!(!at_point.admits_materialization());
+    assert!(at_point.degraded_reasons().draining());
+    // ...and opens one byte under it, the floor having recovered — the
+    // latch itself cleared, not merely this one evaluation.
+    let resumed = gate.evaluate(499, 401);
+    assert!(resumed.admits_materialization());
+    assert!(!gate.is_paused());
+    assert!(resumed.degraded_reasons().tokens().is_empty());
+
+    // A different configured percent moves the same boundary: the
+    // recovery condition is the configured one, not a constant.
+    let limits = PressureLimits::from_config(&configured("100"));
+    assert_eq!(limits.resume_percent(), 100);
+    assert_eq!(limits.resume_threshold_bytes(), 1_000);
+}
+
 // --- the closed reason vocabulary ------------------------------------------
 
 #[test]

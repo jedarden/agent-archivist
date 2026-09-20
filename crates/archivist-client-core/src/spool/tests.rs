@@ -787,3 +787,93 @@ fn unmeasurable_pressure_holds_materialization() {
         .collect();
     assert!(written.is_empty(), "nothing may be written: {written:?}");
 }
+
+#[test]
+fn held_gate_resumes_through_materialize_only_below_the_resume_point() {
+    let dir = TempDir::new("pressure-resume");
+    let store = file_store(&dir);
+    let spool = Spool::open(dir.path()).expect("open spool");
+
+    // Two live bundles under an open gate; their combined size becomes
+    // the cap, so the ratio below is exact whatever the recorded sizes.
+    let small = spool
+        .materialize(&store, &mut open_gate(), b"0123456789")
+        .expect("first materialize");
+    let large = spool
+        .materialize(&store, &mut open_gate(), &[b'x'; 80])
+        .expect("second materialize");
+    let cap = small
+        .size_bytes()
+        .checked_add(large.size_bytes())
+        .expect("test payload sizes are small");
+    assert!(
+        large.size_bytes() * 5 >= cap * 4,
+        "the large bundle must sit at or above the resume point on its own"
+    );
+    let limits = PressureLimits::new(cap, 0, 80);
+
+    // The mutator's own gate — the one it holds across its scheduling
+    // loop — latches the pause at the cap, and the live status names
+    // the high-water condition while it is live.
+    let mut gate = PressureGate::new(limits);
+    let paused = spool
+        .materialize(&store, &mut gate, b"new capture")
+        .expect_err("the at-cap spool must pause new materialization");
+    assert_eq!(paused.kind(), SpoolErrorKind::MaterializationPaused);
+    assert!(gate.is_paused());
+    let live = gate.evaluate_spool(&spool, &store).expect("evaluate");
+    assert_eq!(live.degraded_reasons().tokens(), vec!["spool_cap"]);
+
+    // Draining — the small bundle acknowledged, the large one still
+    // live — clears the cap condition but keeps the latched hold:
+    // usage sits between the resume point and the cap, materialization
+    // is still refused, and the status names the resume rule rather
+    // than a high-water condition.
+    store
+        .connection()
+        .execute(
+            "UPDATE spool_entries SET state = 'acknowledged' WHERE bundle_name = ?",
+            [small.bundle_name()],
+        )
+        .expect("acknowledge the small bundle");
+    let draining = gate.evaluate_spool(&spool, &store).expect("evaluate");
+    assert!(!draining.admits_materialization());
+    assert_eq!(draining.degraded_reasons().tokens(), vec!["draining"]);
+    // The live status document stays content-free on the real spool:
+    // reason tokens and counts, never a filesystem path.
+    let mut rendered = Vec::new();
+    draining.to_json().write_canonical(&mut rendered);
+    let rendered = String::from_utf8(rendered).expect("canonical JSON is UTF-8");
+    assert!(
+        !rendered.contains('/'),
+        "the live status document must not carry a path: {rendered}"
+    );
+    let held = spool
+        .materialize(&store, &mut gate, b"new capture")
+        .expect_err("the latched hold must keep refusing between the resume point and the cap");
+    assert_eq!(held.kind(), SpoolErrorKind::MaterializationPaused);
+
+    // Below the resume point — the last live entry acknowledged, the
+    // floor satisfied — the same held gate opens, and the admitted
+    // materialization really writes: a new row with fresh bytes.
+    store
+        .connection()
+        .execute("UPDATE spool_entries SET state = 'acknowledged'", [])
+        .expect("acknowledge the remaining entry");
+    let resumed = gate.evaluate_spool(&spool, &store).expect("evaluate");
+    assert!(resumed.admits_materialization());
+    assert!(!resumed.is_degraded());
+    assert!(!gate.is_paused());
+    let admitted = spool
+        .materialize(&store, &mut gate, b"0123456789")
+        .expect("usage below the resume point admits the held gate again");
+    assert_eq!(admitted.size_bytes(), small.size_bytes());
+    let rows = all_rows(&store);
+    assert_eq!(rows.len(), 3);
+    let committed = rows
+        .iter()
+        .find(|row| row.0 == admitted.bundle_name())
+        .expect("the admitted bundle committed its row");
+    assert_eq!(committed.1, "materialized");
+    assert!(spool_path(&dir).join(admitted.bundle_name()).is_file());
+}
