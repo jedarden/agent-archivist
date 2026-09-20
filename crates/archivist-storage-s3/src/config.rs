@@ -49,9 +49,16 @@
 //! anyway — the one composition mistake the type split alone cannot see;
 //! and [`ControlAdminConfig::permits_key`] models the reference's
 //! provisioned scope, admitting only the five control layouts under the
-//! pinned tenant's control prefix. The administration credential has no
-//! registry key yet: it is assembled by the offline tooling directly, and
-//! the registry format gains optional reference keys in a later phase.
+//! pinned tenant's control prefix. The surface is registry-backed as the
+//! `admin.*` section: `admin.endpoint_url`, `admin.region`,
+//! `admin.path_style`, `admin.control_bucket`, and `admin.tenant` assemble
+//! this configuration, and the dedicated credential reference is
+//! `admin.credentials_ref` (a secret reference, CFG-028 through CFG-031).
+//! The section is disjoint from `storage.*` by construction, so an ingest
+//! replica's configuration file never carries administration material even
+//! by accident; the tenant-authority signing seed the administration
+//! commands also consume is registered beside these as
+//! `admin.authority_seed_ref`, owned by `archivist-auth`.
 //!
 //! # The Phase 10 scoped-writer surface
 //!

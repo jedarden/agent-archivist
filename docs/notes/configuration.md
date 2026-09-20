@@ -1,6 +1,6 @@
 # Agent Archivist configuration conventions
 
-Status: accepted baseline · Last updated: 2026-09-14
+Status: accepted baseline · Last updated: 2026-09-20
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are
 to be interpreted as described by RFC 2119 and RFC 8174 when they appear in bold.
@@ -56,8 +56,13 @@ and one of the two is wrong and must be fixed in the same commit.
 - **CFG-005** — A key is two dot-separated lowercase segments,
   `section.name`, each matching `[a-z][a-z0-9_]{0,63}` — for example
   `spool.max_bytes`, `storage.raw_write_credentials_ref`. Sections group by
-  owning surface (`client`, `schedule`, `ingest`, `storage`, `server`, and
-  future appended sections); a segment is at most 64 characters.
+  owning surface (`client`, `schedule`, `ingest`, `storage`, `server`,
+  `admin`, and future appended sections); a segment is at most 64
+  characters. The `admin` section is the offline administration surface the
+  administrator CLI assembles — its own endpoint, bucket, tenant, and
+  dedicated credential settings beside the tenant-authority signing seed,
+  disjoint from `storage.*` so an ingest replica's configuration never
+  carries administration material (plan Section 5).
 - **CFG-006** — The environment form of a key is `ARCHIVIST_` plus the key
   with every dot replaced by an underscore, uppercased — for example
   `ARCHIVIST_SPOOL_MAX_BYTES`. The `ARCHIVIST_` prefix is reserved for

@@ -163,7 +163,15 @@ state_lock = "none"
 stdout = "document"
 operand = "path"
 stdin = "none"
-keys = []
+keys = [
+  "admin.endpoint_url",
+  "admin.region",
+  "admin.path_style",
+  "admin.control_bucket",
+  "admin.tenant",
+  "admin.credentials_ref",
+  "admin.authority_seed_ref",
+]
 
 [commands."admin revoke"]
 summary = "Write a signed revocation record from the supplied draft, effective on every replica within the trust-cache window."
@@ -173,7 +181,15 @@ state_lock = "none"
 stdout = "document"
 operand = "path"
 stdin = "none"
-keys = []
+keys = [
+  "admin.endpoint_url",
+  "admin.region",
+  "admin.path_style",
+  "admin.control_bucket",
+  "admin.tenant",
+  "admin.credentials_ref",
+  "admin.authority_seed_ref",
+]
 
 [commands."admin rotate"]
 summary = "Record a client key rotation with overlapping verification and a monotonic authorization epoch from the supplied draft."
