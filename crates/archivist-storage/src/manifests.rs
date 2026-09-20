@@ -368,7 +368,9 @@ mod tests {
 
     use archivist_protocol::envelope::Envelope;
     use archivist_protocol::json::{Object, Value};
-    use archivist_protocol::object_key::{BlobObjectKey, OccurrenceObjectKey};
+    use archivist_protocol::object_key::{
+        AttestationObjectKey, BlobObjectKey, OccurrenceObjectKey,
+    };
     use archivist_protocol::sha256;
     use archivist_protocol::vocabulary::{
         AdapterId, ArtifactKind, AttestationId, BlobDigest, ChecksumAlgorithm, ClientId,
@@ -738,6 +740,38 @@ mod tests {
         assert_eq!(
             state.objects.get(key.as_str()).map(Vec::as_slice),
             Some(b"{\"something\":\"else at the key\"}".as_slice()),
+            "whatever was there stays; writes are write-once at the derived key"
+        );
+        assert_eq!(state.overwrite_calls, 0);
+    }
+
+    #[test]
+    fn contradictory_evidence_at_the_attestation_key_conflicts_and_never_overwrites() {
+        let store = FakeStore::atomic();
+        let key = {
+            let envelope = direct_envelope();
+            let occurrence = envelope.rederive_occurrence_id();
+            let attestation = envelope.rederive_attestation_id();
+            ManifestKey::Attestation(AttestationObjectKey::new(
+                &envelope.tenant_id,
+                &occurrence,
+                &attestation,
+            ))
+        };
+        store.seed(&key, b"{\"forged\":\"attestation at the key\"}");
+
+        let failure = block_on(commit_attestation_manifest(
+            &store,
+            &direct_envelope(),
+            Delegation::Direct,
+        ))
+        .expect_err("a different stored object is an integrity conflict, not an overwrite");
+        assert_eq!(failure.kind(), StorageErrorKind::IntegrityConflict);
+
+        let state = store.state.lock().unwrap();
+        assert_eq!(
+            state.objects.get(key.as_str()).map(Vec::as_slice),
+            Some(b"{\"forged\":\"attestation at the key\"}".as_slice()),
             "whatever was there stays; writes are write-once at the derived key"
         );
         assert_eq!(state.overwrite_calls, 0);
