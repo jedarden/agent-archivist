@@ -19,6 +19,8 @@
 //!   domain, with bounded parsing (length and depth).
 //! - [`sha256`] — the SHA-256 implementation and lowercase-hex codec every
 //!   digest on the wire uses, owned here so the crate stays dependency-free.
+//! - [`correlation`] — `UUIDv7` trace, logical-inference, and provider-attempt
+//!   handles, with the lifecycle rules that keep their scopes distinct.
 //! - [`derivation`] — the domain-separated, length-prefixed identity
 //!   constructions ([`schemas/v1/ingest-identifiers.json`], plan Section 7.4)
 //!   and the ingest-attempt signing preimage.
@@ -55,6 +57,7 @@
 //! [`schemas/v1/ingest-identifiers.json`]: ../../../schemas/v1/ingest-identifiers.json
 //! [`schemas/v1/examples/conformance`]: ../../../schemas/v1/examples/conformance
 
+pub mod correlation;
 pub mod derivation;
 pub mod envelope;
 pub mod json;

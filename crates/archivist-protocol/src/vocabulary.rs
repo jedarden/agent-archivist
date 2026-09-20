@@ -152,6 +152,27 @@ text_newtype!(
     |t: &str| uuid_grammar(t, 7)
 );
 text_newtype!(
+    /// `UUIDv7` identifier for one orchestrator operation. This is a
+    /// correlation handle only and is never an input to a content or
+    /// provenance identity derivation (plan Phase 9).
+    TraceId,
+    |t: &str| uuid_grammar(t, 7)
+);
+text_newtype!(
+    /// `UUIDv7` identifier for one logical inference. One logical inference
+    /// can contain multiple provider transport attempts (plan Phase 9).
+    /// This is a correlation handle only.
+    InferenceRequestId,
+    |t: &str| uuid_grammar(t, 7)
+);
+text_newtype!(
+    /// `UUIDv7` identifier for one provider transport attempt. Retries receive
+    /// a fresh value while remaining under their logical inference's
+    /// `InferenceRequestId`.
+    ProviderAttemptId,
+    |t: &str| uuid_grammar(t, 7)
+);
+text_newtype!(
     /// Harness identifier (`short-token`: `^[a-z0-9][a-z0-9._-]{0,63}$`).
     HarnessId,
     |t: &str| short_token_grammar(t)
