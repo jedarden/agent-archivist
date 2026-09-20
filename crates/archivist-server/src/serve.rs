@@ -35,9 +35,9 @@
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
-use std::time::Duration;
 use std::net::TcpListener as StdListener;
 use std::sync::Arc;
+use std::time::Duration;
 
 use archivist_storage::control::ControlReadStore;
 use archivist_storage::ingest::IngestStorage;
@@ -217,17 +217,33 @@ where
                 .set_shutdown_phase(ShutdownPhase::Draining);
         };
 
-        let mut serving = std::pin::pin!(
+        // The serve future is held behind a stable heap address in its
+        // awaitable form: axum's graceful-shutdown wrapper implements
+        // `IntoFuture` rather than `Future`, so `into_future()` resolves
+        // it to the pollable type once, up front, and `Box::pin` lets
+        // both phases re-borrow the one future.
+        let mut serving = Box::pin(
             axum::serve(
                 tokio::net::TcpListener::from_std(self.listener)?,
                 routes::router(state),
             )
             .with_graceful_shutdown(cancellation)
+            .into_future(),
         );
 
         // Phase 1 — serve. No bound: this ends only when the operator's
-        // cancellation lands.
-        let _ = fired_rx.wait_for(|fired| *fired).await;
+        // cancellation lands. The server future is polled here — the
+        // accept loop only runs while this select is awaiting — so a
+        // socket that dies underneath the server ends the run early with
+        // that I/O failure instead of waiting for a cancellation that
+        // can no longer matter.
+        let early = tokio::select! {
+            _ = fired_rx.wait_for(|fired| *fired) => None,
+            result = serving.as_mut() => Some(result),
+        };
+        if let Some(result) = early {
+            return result.map(|()| ShutdownOutcome::Drained);
+        }
 
         // Phase 2 — the bounded drain.
         bounded_drain(serving.as_mut(), drain).await
@@ -686,10 +702,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_drain_inside_the_window_ends_drained() {
-        let outcome =
-            super::bounded_drain(std::future::ready(Ok(())), Duration::from_secs(5))
-                .await
-                .unwrap();
+        let outcome = super::bounded_drain(std::future::ready(Ok(())), Duration::from_secs(5))
+            .await
+            .unwrap();
         assert_eq!(outcome, ShutdownOutcome::Drained);
     }
 
