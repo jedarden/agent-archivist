@@ -15,8 +15,14 @@
 //! This bootstrap surface exports the families it owns and no others:
 //!
 //! - `archivist.server.ingest` — ingest requests by terminal outcome;
-//!   the bootstrap route admits no pipeline yet, so every request lands
-//!   in the `failed` outcome and the family is otherwise all zeros;
+//!   the bootstrap route admits no pipeline yet, so the fail-closed
+//!   refusals land in the `failed` outcome and every guard refusal in
+//!   the `throttled` outcome;
+//! - `archivist.server.ingest.inflight` — requests currently inside
+//!   admission, against the 16-per-process concurrency bound (plan
+//!   Section 7.6); the admission gate moves it and nothing else does,
+//!   and the series is one unlabeled gauge — overload is visible only
+//!   as a process total, never per client or per request (SEC-004);
 //! - `archivist.server.shutdown` — the graceful-shutdown phase gauge;
 //! - `archivist.server.trust.age` — the age of the newest successful
 //!   tenant trust-record read; the series is *omitted* until evidence
@@ -27,9 +33,9 @@
 //!   join on the series before the first attempt.
 //!
 //! The pipeline-owned families (`ingest.received`, `ingest.canonical`,
-//! `ingest.duration`, `ingest.inflight`, `commit`) are absent until the
-//! slice that produces them lands; exporting a zero histogram or a zero
-//! byte counter for work that cannot happen would misstate the replica.
+//! `ingest.duration`, `commit`) are absent until the slice that produces
+//! them lands; exporting a zero histogram or a zero byte counter for
+//! work that cannot happen would misstate the replica.
 //!
 //! Values are process-local counters and gauges backed by atomics — no
 //! metric ever carries content, an identifier, or a bounded-enum value
@@ -174,6 +180,7 @@ impl TrustRefreshOutcome {
 #[derive(Debug, Default)]
 pub struct ServerMetrics {
     ingest: [AtomicU64; 4],
+    inflight: AtomicU64,
     refresh: [AtomicU64; 3],
     phase: AtomicU8,
 }
@@ -189,6 +196,32 @@ impl ServerMetrics {
     /// Record one ingest request reaching its terminal outcome.
     pub fn record_ingest(&self, outcome: IngestOutcome) {
         self.ingest[outcome.index()].fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Count `count` ingest requests entering admission, moving the
+    /// `archivist.server.ingest.inflight` gauge up.
+    pub fn ingest_inflight_add(&self, count: u64) {
+        self.inflight.fetch_add(count, Ordering::Relaxed);
+    }
+
+    /// Count `count` ingest requests leaving admission, moving the
+    /// `archivist.server.ingest.inflight` gauge down.
+    ///
+    /// The subtraction saturates at zero: the gauge is a snapshot of a
+    /// live count, and an unbalanced release would otherwise render a
+    /// negative inventory of requests that never existed.
+    pub fn ingest_inflight_sub(&self, count: u64) {
+        let _ = self
+            .inflight
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                Some(current.saturating_sub(count))
+            });
+    }
+
+    /// The in-flight ingest count the gauge currently renders.
+    #[must_use]
+    pub fn ingest_inflight(&self) -> u64 {
+        self.inflight.load(Ordering::Relaxed)
     }
 
     /// Record one trust-registry refresh attempt.
@@ -231,6 +264,18 @@ impl ServerMetrics {
                 self.ingest[outcome.index()].load(Ordering::Relaxed),
             );
         }
+
+        family(
+            &mut out,
+            "archivist_server_ingest_inflight_requests",
+            "gauge",
+        );
+        series(
+            &mut out,
+            "archivist_server_ingest_inflight_requests",
+            &[],
+            self.ingest_inflight(),
+        );
 
         family(&mut out, "archivist_server_shutdown", "gauge");
         let current = self.shutdown_phase();
@@ -339,6 +384,8 @@ mod tests {
              archivist_server_ingest_requests_total{archivist_ingest_outcome=\"rejected\"} 0\n\
              archivist_server_ingest_requests_total{archivist_ingest_outcome=\"throttled\"} 0\n\
              archivist_server_ingest_requests_total{archivist_ingest_outcome=\"failed\"} 0\n\
+             # TYPE archivist_server_ingest_inflight_requests gauge\n\
+             archivist_server_ingest_inflight_requests 0\n\
              # TYPE archivist_server_shutdown gauge\n\
              archivist_server_shutdown{archivist_shutdown_phase=\"running\"} 1\n\
              archivist_server_shutdown{archivist_shutdown_phase=\"draining\"} 0\n\
@@ -378,6 +425,40 @@ mod tests {
         assert!(text.contains("archivist_server_trust_age_seconds 12\n"));
         assert_eq!(metrics.shutdown_phase().token(), "draining");
         assert_eq!(metrics.shutdown_phase(), ShutdownPhase::Draining);
+    }
+
+    #[test]
+    fn the_inflight_gauge_tracks_admission_and_release() {
+        let metrics = ServerMetrics::new();
+        assert_eq!(metrics.ingest_inflight(), 0);
+        metrics.ingest_inflight_add(1);
+        metrics.ingest_inflight_add(2);
+        assert_eq!(metrics.ingest_inflight(), 3);
+        metrics.ingest_inflight_sub(1);
+        assert_eq!(metrics.ingest_inflight(), 2);
+        metrics.ingest_inflight_sub(2);
+        assert_eq!(metrics.ingest_inflight(), 0);
+    }
+
+    #[test]
+    fn the_inflight_gauge_saturates_instead_of_going_negative() {
+        let metrics = ServerMetrics::new();
+        metrics.ingest_inflight_add(1);
+        metrics.ingest_inflight_sub(5);
+        assert_eq!(metrics.ingest_inflight(), 0, "no inventory of ghost requests");
+        metrics.ingest_inflight_sub(1);
+        assert_eq!(metrics.ingest_inflight(), 0);
+    }
+
+    #[test]
+    fn the_inflight_gauge_renders_one_unlabeled_series() {
+        let metrics = ServerMetrics::new();
+        metrics.ingest_inflight_add(2);
+        let text = metrics.exposition(None);
+        assert!(text.contains(
+            "# TYPE archivist_server_ingest_inflight_requests gauge\n\
+             archivist_server_ingest_inflight_requests 2\n"
+        ));
     }
 
     #[test]

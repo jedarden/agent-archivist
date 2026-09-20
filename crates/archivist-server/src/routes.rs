@@ -9,7 +9,7 @@
 //! | `/health/live` | GET | Process-only liveness: answered from the process, never from storage or configuration. |
 //! | `/health/ready` | GET | The readiness snapshot: valid configuration plus fresh trust evidence for every configured tenant. |
 //! | `/metrics` | GET | The registered server families in Prometheus text exposition. |
-//! | `/v1/ingest` | POST | Registered, fail-closed: every attempt is refused with the stable `server.unavailable` body until the pipeline slice lands. |
+//! | `/v1/ingest` | POST | Admission-guarded, then fail-closed: the request deadline bounds the attempt, the process-wide in-flight cap admits before anything request-derived is read, and an overloaded replica refuses with the retryable `request.rate_limited` body; admitted attempts are refused with the stable `server.unavailable` body until the pipeline slice lands. |
 //!
 //! Fail-closed is the operative rule for every body: responses render
 //! canonical bytes through `archivist-protocol`'s RFC 8785 writer, carry
@@ -18,7 +18,7 @@
 //! the `archivist.error/v1` shape pinned by `schemas/v1/ingest-error.json`
 //! — six members, both request identifiers null exactly because no
 //! envelope was parsed (ERR-027) — carrying the registry's pinned code,
-//! retryability, and message for `server.unavailable`.
+//! retryability, and message.
 
 use std::sync::Arc;
 
@@ -32,6 +32,8 @@ use axum::http::header::CONTENT_TYPE;
 use axum::response::Response;
 use axum::routing::{get, post};
 
+use crate::guard::{DeadlineElapsed, within_deadline};
+use crate::metrics::IngestOutcome;
 use crate::state::{ReadinessSnapshot, ServerState};
 
 /// Media type of the stable error body (`schemas/v1/ingest-error.json`).
@@ -50,6 +52,25 @@ const CODE_SERVER_UNAVAILABLE: &str = "server.unavailable";
 /// The `server.unavailable` pinned message, verbatim from the registry.
 const MESSAGE_SERVER_UNAVAILABLE: &str =
     "The service is temporarily unable to handle the request; retry the identical envelope.";
+
+/// The `request.rate_limited` code as registered in
+/// `tools/error-codes.toml`: the one retryable 429 code for admission
+/// overload, shared by every resource-guard refusal.
+const CODE_REQUEST_RATE_LIMITED: &str = "request.rate_limited";
+
+/// The `request.rate_limited` pinned message, verbatim from the registry.
+const MESSAGE_REQUEST_RATE_LIMITED: &str =
+    "The per-client request rate was exceeded; retry after the indicated interval.";
+
+/// The `request.deadline_exceeded` code as registered in
+/// `tools/error-codes.toml`: the retryable 408 the deadline wrapper
+/// renders when a bounded attempt outlives the configured deadline.
+const CODE_REQUEST_DEADLINE_EXCEEDED: &str = "request.deadline_exceeded";
+
+/// The `request.deadline_exceeded` pinned message, verbatim from the
+/// registry.
+const MESSAGE_REQUEST_DEADLINE_EXCEEDED: &str =
+    "The request exceeded the request deadline; retry the identical envelope.";
 
 /// The liveness body: process-only by design. A const so the handler
 /// cannot grow fields it does not have; a unit test pins it against the
@@ -109,23 +130,68 @@ async fn metrics<W, C>(State(state): State<Arc<ServerState<W, C>>>) -> Response 
     response(StatusCode::OK, METRICS_MEDIA_TYPE, text.into_bytes())
 }
 
-/// `POST /v1/ingest` — registered and fail-closed.
+/// `POST /v1/ingest` — admission-guarded, then fail-closed.
 ///
-/// The bootstrap surface mounts the route and refuses every attempt with
-/// the stable retryable body: no pipeline exists yet, so nothing can be
+/// The guards run in the plan's order, ahead of everything
+/// request-derived: the configured 15-minute deadline bounds the whole
+/// attempt (admission included), and the process-wide in-flight cap
+/// admits or refuses before a single request byte is read or a
+/// payload-scale buffer allocated — an overloaded replica's refusal is
+/// content-free while the request's bytes are still sitting unread in
+/// the socket. No guard refusal is ever counted as ingest work: both
+/// land in the `throttled` outcome, carrying no client, tenant, or
+/// request identifier.
+///
+/// The bootstrap surface still refuses every admitted attempt with the
+/// stable retryable body: no pipeline exists yet, so nothing can be
 /// committed and no receipt can be issued, and saying so through
 /// `server.unavailable` is the honest response (plan Section 7.8:
 /// server-failure class, retryable, no receipt). The pipeline slice
-/// replaces this handler behind the same route.
+/// replaces the admitted branch's stub — holding the admission across
+/// its streaming attempt — behind the same route.
 async fn ingest<W, C>(State(state): State<Arc<ServerState<W, C>>>) -> Response {
-    state
-        .metrics()
-        .record_ingest(crate::metrics::IngestOutcome::Failed);
-    response(
-        StatusCode::SERVICE_UNAVAILABLE,
-        ERROR_MEDIA_TYPE,
-        unavailable_error_body(),
+    // The bounded attempt is everything the handler will ever do with
+    // the request: today that is admission; the pipeline slice grows it
+    // to the streaming parse-commit-receipt work under the same bound.
+    let admitted = within_deadline(
+        state.config().request_deadline(),
+        async { state.gate().try_admit_process() },
     )
+    .await;
+    match admitted {
+        // The deadline is a real bound on the attempt, so its elapse is
+        // the deadline guard's refusal — throttle class, retryable.
+        Err(DeadlineElapsed) => {
+            state.metrics().record_ingest(IngestOutcome::Throttled);
+            response(
+                StatusCode::REQUEST_TIMEOUT,
+                ERROR_MEDIA_TYPE,
+                deadline_error_body(),
+            )
+        }
+        Ok(Err(_rejection)) => {
+            state.metrics().record_ingest(IngestOutcome::Throttled);
+            response(
+                StatusCode::TOO_MANY_REQUESTS,
+                ERROR_MEDIA_TYPE,
+                rate_limited_error_body(),
+            )
+        }
+        Ok(Ok(admission)) => {
+            // The pipeline slice holds the admission across its whole
+            // streaming attempt — that is the concurrency bound doing
+            // its job. The fail-closed stub attempts nothing, so it
+            // releases the slot before rendering the stable refusal
+            // rather than pretending to hold work it does not have.
+            drop(admission);
+            state.metrics().record_ingest(IngestOutcome::Failed);
+            response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                ERROR_MEDIA_TYPE,
+                unavailable_error_body(),
+            )
+        }
+    }
 }
 
 fn response(status: StatusCode, content_type: &str, body: Vec<u8>) -> Response {
@@ -156,30 +222,51 @@ fn ready_body(snapshot: ReadinessSnapshot) -> Vec<u8> {
     Value::Object(object).canonical_bytes()
 }
 
-/// The canonical `archivist.error/v1` body for `server.unavailable`:
+/// The canonical `archivist.error/v1` body for a registry-pinned code:
 /// both request identifiers are null because no envelope was parsed
 /// (ERR-027), and the code, retryability, and message are the registry's
 /// pinned values.
-fn unavailable_error_body() -> Vec<u8> {
+fn registry_error_body(code: &str, message: &str) -> Vec<u8> {
     let mut object = Object::new();
-    let _ = object.insert("code", Value::Text(CODE_SERVER_UNAVAILABLE.to_owned()));
+    let _ = object.insert("code", Value::Text(code.to_owned()));
     let _ = object.insert("correlation_id", Value::Null);
-    let _ = object.insert(
-        "message",
-        Value::Text(MESSAGE_SERVER_UNAVAILABLE.to_owned()),
-    );
+    let _ = object.insert("message", Value::Text(message.to_owned()));
     let _ = object.insert("request_id", Value::Null);
     let _ = object.insert("retryable", Value::Bool(true));
     let _ = object.insert("schema", Value::Text("archivist.error/v1".to_owned()));
     Value::Object(object).canonical_bytes()
 }
 
+/// The canonical `archivist.error/v1` body for `server.unavailable`.
+fn unavailable_error_body() -> Vec<u8> {
+    registry_error_body(CODE_SERVER_UNAVAILABLE, MESSAGE_SERVER_UNAVAILABLE)
+}
+
+/// The canonical `archivist.error/v1` body for `request.rate_limited`:
+/// the one content-free refusal every resource guard renders. The body
+/// names no guard, no client, and no count — the registered
+/// `archivist.server.ingest` family is the only place overload is
+/// visible, and only as an outcome total (SEC-004).
+fn rate_limited_error_body() -> Vec<u8> {
+    registry_error_body(CODE_REQUEST_RATE_LIMITED, MESSAGE_REQUEST_RATE_LIMITED)
+}
+
+/// The canonical `archivist.error/v1` body for
+/// `request.deadline_exceeded`: the deadline guard's retryable refusal.
+fn deadline_error_body() -> Vec<u8> {
+    registry_error_body(
+        CODE_REQUEST_DEADLINE_EXCEEDED,
+        MESSAGE_REQUEST_DEADLINE_EXCEEDED,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        ERROR_MEDIA_TYPE, HEALTH_MEDIA_TYPE, LIVE_BODY, METRICS_MEDIA_TYPE, ready_body,
-        unavailable_error_body,
+        ERROR_MEDIA_TYPE, HEALTH_MEDIA_TYPE, LIVE_BODY, METRICS_MEDIA_TYPE, deadline_error_body,
+        rate_limited_error_body, ready_body, unavailable_error_body,
     };
+    use crate::guard::ProcessAdmission;
     use crate::state::{NotReadyReason, ReadinessSnapshot, ServerState};
     use crate::trust::{TenantTrustRoot, TrustConfig};
     use archivist_protocol::json;
@@ -514,6 +601,7 @@ mod tests {
         let text = String::from_utf8(response.body).expect("exposition is text");
         for family in [
             "# TYPE archivist_server_ingest_requests_total counter",
+            "# TYPE archivist_server_ingest_inflight_requests gauge",
             "# TYPE archivist_server_shutdown gauge",
             "# TYPE archivist_server_trust_refresh_attempts_total counter",
         ] {
@@ -571,6 +659,152 @@ mod tests {
         let address = serve(test_state()).await;
         let response = exchange(address, &get_request("/v1/ingest")).await;
         assert_eq!(response.status, 405);
+    }
+
+    // ------------------------------------------------------------------
+    // Admission-guard tests: the resource guards refuse before anything
+    // request-derived happens, and every refusal is the throttle class.
+    // ------------------------------------------------------------------
+
+    /// Saturate the replica's whole concurrency inventory on its gate, as
+    /// sixteen concurrent admitted attempts would.
+    fn saturate(
+        state: &ServerState<SilentRawStore, SilentControlStore>,
+    ) -> Vec<ProcessAdmission> {
+        let mut admissions = Vec::new();
+        for _ in 0..16 {
+            admissions.push(state.gate().try_admit_process().expect("slot admits"));
+        }
+        admissions
+    }
+
+    #[test]
+    fn the_rate_limited_body_is_the_registry_pinned_error_shape() {
+        let body = rate_limited_error_body();
+        let value = json::parse(&body).unwrap();
+        let json::Value::Object(ref object) = value else {
+            panic!("error body is an object");
+        };
+        assert_eq!(object.len(), 6);
+        let fields: Vec<&str> = object.iter().map(|(name, _)| name).collect();
+        assert_eq!(
+            fields,
+            [
+                "code",
+                "correlation_id",
+                "message",
+                "request_id",
+                "retryable",
+                "schema"
+            ]
+        );
+        let text = String::from_utf8(body).expect("error body is text");
+        assert!(text.contains("\"code\":\"request.rate_limited\""));
+        assert!(text.contains("\"retryable\":true"));
+        assert!(text.contains("\"schema\":\"archivist.error/v1\""));
+        assert!(text.contains("\"request_id\":null"));
+        assert!(text.contains("\"correlation_id\":null"));
+        assert!(text.contains(
+            "\"message\":\"The per-client request rate was exceeded; \
+             retry after the indicated interval.\""
+        ));
+    }
+
+    #[test]
+    fn the_deadline_body_is_the_registry_pinned_error_shape() {
+        let body = deadline_error_body();
+        let value = json::parse(&body).unwrap();
+        let json::Value::Object(ref object) = value else {
+            panic!("error body is an object");
+        };
+        assert_eq!(object.len(), 6);
+        let text = String::from_utf8(body).expect("error body is text");
+        assert!(text.contains("\"code\":\"request.deadline_exceeded\""));
+        assert!(text.contains("\"retryable\":true"));
+        assert!(text.contains("\"schema\":\"archivist.error/v1\""));
+        assert!(text.contains("\"request_id\":null"));
+        assert!(text.contains("\"correlation_id\":null"));
+        assert!(text.contains(
+            "\"message\":\"The request exceeded the request deadline; \
+             retry the identical envelope.\""
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_overloaded_replica_refuses_with_the_rate_limited_body() {
+        let state = test_state();
+        let address = serve(Arc::clone(&state)).await;
+        let admissions = saturate(&state);
+        let payload = "envelope-zq9-marker-never-echoed";
+        let request = format!(
+            "POST /v1/ingest HTTP/1.1\r\nHost: test\r\nContent-Length: {}\r\n\
+             Connection: close\r\n\r\n{payload}",
+            payload.len()
+        );
+        let response = exchange(address, &request).await;
+        assert_eq!(response.status, 429);
+        assert_eq!(response.content_type.as_deref(), Some(ERROR_MEDIA_TYPE));
+        // Byte-identical to the pinned canonical refusal: no guard name,
+        // no client, no count, and none of the request's own bytes.
+        assert_eq!(response.body, rate_limited_error_body());
+        assert!(!String::from_utf8(response.body)
+            .expect("error body is text")
+            .contains("zq9-marker"));
+        // Retryable is real: releasing one slot admits the very next
+        // attempt, which reaches the fail-closed stub's stable answer.
+        drop(admissions);
+        let retried = exchange(address, &request).await;
+        assert_eq!(retried.status, 503);
+        assert_eq!(retried.body, unavailable_error_body());
+    }
+
+    #[tokio::test]
+    async fn the_throttled_refusals_land_in_the_throttled_outcome_only() {
+        let state = test_state();
+        let address = serve(Arc::clone(&state)).await;
+        let admissions = saturate(&state);
+        let refused = exchange(
+            address,
+            "POST /v1/ingest HTTP/1.1\r\nHost: test\r\nContent-Length: 0\r\n\
+             Connection: close\r\n\r\n",
+        )
+        .await;
+        assert_eq!(refused.status, 429);
+        // Overload is never ingest work: the throttle outcome carries it
+        // and the failed outcome stays untouched. The gauge counts
+        // exactly the sixteen admissions — one unlabeled series, no
+        // per-client or per-request cardinality anywhere (SEC-004).
+        let during = exchange(address, &get_request("/metrics")).await;
+        let text = String::from_utf8(during.body).expect("exposition is text");
+        assert!(text.contains("archivist_server_ingest_inflight_requests 16\n"));
+        assert!(text.contains(
+            "archivist_server_ingest_requests_total{archivist_ingest_outcome=\"throttled\"} 1\n"
+        ));
+        assert!(text.contains(
+            "archivist_server_ingest_requests_total{archivist_ingest_outcome=\"failed\"} 0\n"
+        ));
+        // Release drains the gauge back to zero exactly.
+        drop(admissions);
+        let after = exchange(address, &get_request("/metrics")).await;
+        assert!(String::from_utf8(after.body)
+            .expect("exposition is text")
+            .contains("archivist_server_ingest_inflight_requests 0\n"));
+    }
+
+    #[tokio::test]
+    async fn admission_refuses_before_any_request_byte_is_read() {
+        let state = test_state();
+        let address = serve(Arc::clone(&state)).await;
+        let _admissions = saturate(&state);
+        // Declare a body and never send it: an overloaded replica must
+        // still answer, because admission reads nothing request-derived —
+        // the refusal cannot be waiting on payload bytes that never
+        // arrive, and no payload-scale buffer was allocated to hold them.
+        let head_only = "POST /v1/ingest HTTP/1.1\r\nHost: test\r\nContent-Length: 64\r\n\
+             Connection: close\r\n\r\n";
+        let response = exchange(address, head_only).await;
+        assert_eq!(response.status, 429);
+        assert_eq!(response.body, rate_limited_error_body());
     }
 
     #[tokio::test]

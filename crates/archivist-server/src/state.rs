@@ -32,15 +32,30 @@
 //! with the trust verification slice; until then a replica starts
 //! not-ready and fails closed, which is the honest state for a replica
 //! that has proven nothing yet.
+//!
+//! # Admission
+//!
+//! The state also holds the replica's one [`AdmissionGate`] (plan
+//! Section 7.6): the process-wide in-flight cap, the per-client share,
+//! and the per-client new-request bucket, built from the validated
+//! configuration at composition and enforced before anything
+//! request-derived happens — the route-level half (deadline, process
+//! cap) on the bootstrap surface, the per-client half wherever the
+//! uploader identity is first known. The gate shares the state's
+//! metrics snapshot, so its refusals land in the registered
+//! `archivist.server.ingest` family and its admissions move the
+//! registered `archivist.server.ingest.inflight` gauge — both
+//! content-free (SEC-004).
 
 use std::fmt;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use archivist_protocol::vocabulary::TenantId;
 use archivist_storage::ingest::IngestStorage;
 
 use crate::config::ServerConfig;
+use crate::guard::AdmissionGate;
 use crate::metrics::ServerMetrics;
 use crate::trust::TrustConfig;
 
@@ -211,7 +226,8 @@ pub struct ServerState<W, C> {
     trust: TrustConfig,
     storage: IngestStorage<W, C>,
     readiness: ReadinessTracker,
-    metrics: ServerMetrics,
+    gate: AdmissionGate,
+    metrics: Arc<ServerMetrics>,
 }
 
 impl<W, C> ServerState<W, C> {
@@ -221,9 +237,11 @@ impl<W, C> ServerState<W, C> {
     /// property the no-durable-local-state acceptance names.
     #[must_use]
     pub fn new(config: ServerConfig, trust: TrustConfig, storage: IngestStorage<W, C>) -> Self {
+        let metrics = Arc::new(ServerMetrics::new());
         Self {
             readiness: ReadinessTracker::new(&trust),
-            metrics: ServerMetrics::new(),
+            gate: AdmissionGate::new(&config, Arc::clone(&metrics)),
+            metrics,
             config,
             trust,
             storage,
@@ -254,10 +272,18 @@ impl<W, C> ServerState<W, C> {
         self.readiness.evaluate(Instant::now())
     }
 
-    /// The process-local metrics snapshot: handlers record into it,
-    /// the `/metrics` exposition renders from it.
+    /// The replica's admission gate: the resource guards every ingest
+    /// request meets before anything request-derived happens.
     #[must_use]
-    pub const fn metrics(&self) -> &ServerMetrics {
+    pub const fn gate(&self) -> &AdmissionGate {
+        &self.gate
+    }
+
+    /// The process-local metrics snapshot: handlers record into it,
+    /// the `/metrics` exposition renders from it, and the admission
+    /// gate shares it.
+    #[must_use]
+    pub fn metrics(&self) -> &ServerMetrics {
         &self.metrics
     }
 

@@ -55,12 +55,24 @@
 //! out one trigger and one signal, and [`serve::shutdown_on_signal`] is
 //! the SIGTERM/SIGINT future a service deployment wires in.
 //!
+//! The **request resource guards** are implemented: [`guard`] holds the
+//! admission gate — the process-wide 16-slot in-flight cap, the
+//! four-per-client in-flight share, the 60/minute burst-8 per-client
+//! new-request token bucket, and the 15-minute request deadline —
+//! composed into the shared state and enforced before anything
+//! request-derived happens, refusing with the retryable `throttle`-class
+//! bodies the registry pins. The route-level half (deadline, process
+//! cap) runs on the bootstrap surface today; the per-client half admits
+//! through `AdmissionGate::admit_client` at the point the pipeline's
+//! authorization middleware knows the uploader identity.
+//!
 //! The Phase 4 bootstrap surface is complete: configuration, trust
-//! anchors, replica state, metrics, the routes, and the serve lifecycle.
-//! The ingestion pipeline (bounded parsing, authorization, and validation
-//! middleware, streaming envelope validation, the blob → occurrence →
-//! attestation commit order, signed receipts) arrives on those
-//! contracts, replacing the fail-closed ingest stub.
+//! anchors, replica state, metrics, the routes, the serve lifecycle, and
+//! the request resource guards. The ingestion pipeline (bounded parsing,
+//! authorization, and validation middleware, streaming envelope
+//! validation, the blob → occurrence → attestation commit order, signed
+//! receipts) arrives on those contracts, replacing the fail-closed
+//! ingest stub.
 //!
 //! # Dependency boundary
 //!
@@ -70,6 +82,7 @@
 //! client engine or any source adapter.
 
 pub mod config;
+pub mod guard;
 pub mod metrics;
 pub mod routes;
 pub mod serve;
