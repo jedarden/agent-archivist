@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """Threat-model acceptance gate for Agent Archivist.
 
-Validates ``docs/security/threat-model.md`` and the four domain documents
+Validates ``docs/security/threat-model.md`` and the five domain documents
 under ``docs/security/threats/`` against the acceptance check that document
 states for itself — the machine-checked form of the Phase 1 exit gate
 sentence "The threat model has a mitigation or explicitly accepted risk for
 every finding" (plan Section 8):
 
 1. register shape — consolidated and domain register rows carry the six
-   fixed columns, IDs follow the ``<GROUP>-<NN>`` grammar over the four
+   fixed columns, IDs follow the ``<GROUP>-<NN>`` grammar over the five
    closed groups, IDs are unique, and the STRIDE cell is a non-empty
    combination of the six STRIDE letters;
-2. coverage — the consolidated register holds every finding from all four
+2. coverage — the consolidated register holds every finding from all five
    domain documents row for row, none missing and none added, and that set
    equals the expansion of the ID ranges declared in the "Domain documents"
    table;
@@ -22,7 +22,7 @@ every finding" (plan Section 8):
    ID, with any ``(a)``/``(b)`` arm suffix stripped), its Owner column names
    at least one owner from the closed vocabulary (SEC working group, tenant
    operator, adapter owners, `` `archivist-*` `` crate owners), every
-   backticked ``archivist-*`` token anywhere in the five documents names a
+   backticked ``archivist-*`` token anywhere in the six documents names a
    real workspace crate, and the owner-bearing consolidated rows and the
    accepted-risk register rows map one to one in both directions;
 5. deliverable-list coverage — the nine plan-named threat families are each
@@ -63,22 +63,25 @@ MODEL_REL = "docs/security/threat-model.md"
 THREATS_REL = "docs/security/threats"
 CRATES_REL = "crates"
 
-# The four finding groups and their documents, fixed by the domain-documents
+# The five finding groups and their documents, fixed by the domain-documents
 # table. A new group is a reviewed change that extends this map, the table,
-# and the four documents in the same commit.
-GROUPS = ("IA", "PI", "RD", "RMD")
+# and the five documents in the same commit.
+GROUPS = ("IA", "PI", "RD", "RMD", "EC")
+GROUP_PATTERN = "|".join(GROUPS)
 
-ID_RE = re.compile(r"^(?:IA|PI|RD|RMD)-\d{2}$")
-ID_TOKEN_RE = re.compile(r"\b(?:IA|PI|RD|RMD)-\d{2}\b")
+ID_RE = re.compile(rf"^(?:{GROUP_PATTERN})-\d{{2}}$")
+ID_TOKEN_RE = re.compile(rf"\b(?:{GROUP_PATTERN})-\d{{2}}\b")
 # "IA-01 … IA-11" — both endpoints must share one group.
 RANGE_RE = re.compile(
-    r"^(?P<lo_group>IA|PI|RD|RMD)-(?P<lo>\d{2}) … (?P<hi_group>IA|PI|RD|RMD)-(?P<hi>\d{2})$"
+    rf"^(?P<lo_group>{GROUP_PATTERN})-(?P<lo>\d{{2}}) … "
+    rf"(?P<hi_group>{GROUP_PATTERN})-(?P<hi>\d{{2}})$"
 )
 RANGE_TOKEN_RE = re.compile(
-    r"\b(?P<lo_group>IA|PI|RD|RMD)-(?P<lo>\d{2}) … (?P<hi_group>IA|PI|RD|RMD)-(?P<hi>\d{2})\b"
+    rf"\b(?P<lo_group>{GROUP_PATTERN})-(?P<lo>\d{{2}}) … "
+    rf"(?P<hi_group>{GROUP_PATTERN})-(?P<hi>\d{{2}})\b"
 )
 # An accepted-risk register ID may carry one arm suffix: IA-07(b).
-BASE_ID_RE = re.compile(r"^(?P<base>(?:IA|PI|RD|RMD)-\d{2})(?:\([a-z]\))?$")
+BASE_ID_RE = re.compile(rf"^(?P<base>(?:{GROUP_PATTERN})-\d{{2}})(?:\([a-z]\))?$")
 STRIDE_RE = re.compile(r"^[STRIDE](?:/[STRIDE])*$")
 CRATE_OWNER_RE = re.compile(r"`(archivist-[a-z0-9-]+)`")
 OWNER_PHRASES = ("SEC working group", "tenant operator", "adapter owners")
@@ -552,6 +555,7 @@ SANDBOX_MODEL = """# Sandbox threat model
 | [Payload](threats/payload-integrity.md) | PI-01 … PI-01 | payload |
 | [Relay](threats/relay-delegation.md) | RD-01 … RD-02 | relay |
 | [Receipts](threats/receipts-and-disclosure.md) | RMD-01 … RMD-01 | receipts |
+| [Exact capture](threats/exact-capture.md) | EC-01 … EC-01 | exact capture |
 
 ## Consolidated register
 
@@ -563,6 +567,7 @@ SANDBOX_MODEL = """# Sandbox threat model
 | RD-01 | Out-of-scope relay | S/E | Mitigated | delegation negatives | — |
 | RD-02 | Relay fabrication | S/R | Accepted | — (bounded by RD-01 proofs) | tenant operator |
 | RMD-01 | Forged receipt | S/T | Mitigated | receipt-signature vectors | — |
+| EC-01 | Centralized provider material | I | Mitigated | exact boundary vectors | — |
 
 ## Accepted-risk register
 
@@ -579,9 +584,9 @@ SANDBOX_MODEL = """# Sandbox threat model
 - Digest confusion — PI-01
 - Decompression bombs — PI-01
 - Poisoned manifests — PI-01
-- Metadata leakage — RMD-01
 - Relay/delegation abuse — RD-01 … RD-02
 - Receipt trust failure — RMD-01
+- Metadata leakage — RMD-01, EC-01
 
 ## Acceptance check
 
@@ -623,6 +628,14 @@ SANDBOX_DOMAINS = {
 | ID | Finding | STRIDE | Disposition | Enforcing test class | Owner of residual |
 |---|---|---|---|---|---|
 | RMD-01 | Forged receipt | S/T | Mitigated | receipt-signature vectors | — |
+""",
+    "exact-capture.md": """# Sandbox exact-capture threats
+
+## Coverage and disposition register
+
+| ID | Finding | STRIDE | Disposition | Enforcing test class | Owner of residual |
+|---|---|---|---|---|---|
+| EC-01 | Centralized provider material | I | Mitigated | exact boundary vectors | — |
 """,
 }
 
@@ -690,7 +703,8 @@ def self_test() -> int:
             assert fresh is not None and not fresh_errors, "sandbox stopped parsing"
             return copy.deepcopy(fresh)
 
-        # Coverage: row-for-row agreement across the three sources.
+        # Coverage: row-for-row agreement across the consolidated register,
+        # domain registers, and declared ranges.
         state = mutated()
         state["consolidated"] = [r for r in state["consolidated"] if r["id"] != "IA-02"]
         case("finding dropped from the consolidated register", validate_state(state), True, "coverage")
