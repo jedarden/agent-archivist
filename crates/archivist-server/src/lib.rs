@@ -42,13 +42,25 @@
 //! every attempt with the stable retryable `server.unavailable` body
 //! until the pipeline slices land.
 //!
-//! The rest of the Phase 4 bootstrap surface — cancellation-aware
-//! startup and graceful shutdown — lands module by module, each with its
-//! `mod` declaration; the ingestion pipeline (bounded parsing,
-//! authorization, and validation middleware, streaming envelope
-//! validation, the blob → occurrence → attestation commit order, signed
-//! receipts) arrives on those contracts. Until then this crate contributes
-//! configuration, trust anchors, replica state, metrics, and the routes.
+//! The **serve lifecycle** is implemented: [`serve`] composes the
+//! bootstrap surface into the three-step replica lifecycle —
+//! [`serve::ArchivistServer::new`] holds the validated parts with no
+//! I/O, [`serve::ArchivistServer::bind`] opens the listening socket as
+//! the replica's first syscall (allocating nothing durable; its only
+//! failure is [`serve::StartupError`], naming the address), and
+//! [`serve::BoundServer::serve`] runs until cancelled, then drains
+//! in-flight work within the configured `server.shutdown_drain_seconds`
+//! window and reports [`serve::ShutdownOutcome`] to the composition
+//! root. Cancellation is explicit — [`serve::shutdown_channel`] hands
+//! out one trigger and one signal, and [`serve::shutdown_on_signal`] is
+//! the SIGTERM/SIGINT future a service deployment wires in.
+//!
+//! The Phase 4 bootstrap surface is complete: configuration, trust
+//! anchors, replica state, metrics, the routes, and the serve lifecycle.
+//! The ingestion pipeline (bounded parsing, authorization, and validation
+//! middleware, streaming envelope validation, the blob → occurrence →
+//! attestation commit order, signed receipts) arrives on those
+//! contracts, replacing the fail-closed ingest stub.
 //!
 //! # Dependency boundary
 //!
@@ -60,5 +72,6 @@
 pub mod config;
 pub mod metrics;
 pub mod routes;
+pub mod serve;
 pub mod state;
 pub mod trust;
