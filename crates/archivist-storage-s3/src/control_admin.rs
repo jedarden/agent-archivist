@@ -397,11 +397,25 @@ fn ends_here(next: Option<&str>) -> Result<(), ControlKeyError> {
 /// a record lives and how a replacement compares, never that the record is
 /// trustworthy (verification is `archivist-auth`'s contract).
 #[derive(Debug)]
-struct ValidatedEnvelope {
+pub(crate) struct ValidatedEnvelope {
     kind: ControlRecordKind,
     tenant: TenantId,
     key: ControlObjectKey,
     epoch: Option<AuthorizationEpoch>,
+}
+
+impl ValidatedEnvelope {
+    /// The tenant the envelope's own signed member names.
+    #[must_use]
+    pub const fn tenant(&self) -> &TenantId {
+        &self.tenant
+    }
+
+    /// The key the envelope's own validated members derive.
+    #[must_use]
+    pub const fn key(&self) -> &ControlObjectKey {
+        &self.key
+    }
 }
 
 /// Validate one envelope structurally and derive its key, failing closed on
@@ -421,10 +435,15 @@ struct ValidatedEnvelope {
 /// # Errors
 /// [`StorageErrorKind::MalformedInput`] for the first violated rule; the
 /// detail is a static literal and never echoes envelope content.
+///
+/// The read half of the boundary shares this one gate:
+/// [`crate::control_read`] routes every GET result through it before the
+/// bytes may leave the store as a record, so what the writer proved
+/// addressable and what the reader accepts are decided by the same rules.
 // One closed function per family arm: the derivation rules read as one
 // table, and splitting the table would hide the per-family symmetry.
 #[allow(clippy::too_many_lines)]
-fn validate_envelope(bytes: &[u8]) -> Result<ValidatedEnvelope, StorageError> {
+pub(crate) fn validate_envelope(bytes: &[u8]) -> Result<ValidatedEnvelope, StorageError> {
     let malformed = StorageError::of_kind(StorageErrorKind::MalformedInput);
     let Value::Object(object) = json::parse(bytes).map_err(|_| malformed)? else {
         return Err(StorageError::new(

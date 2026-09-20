@@ -35,6 +35,23 @@
 //!   truncated acceptance. Absent records are `Ok(None)`: an unlinked
 //!   client and a client with no delegation are ordinary states, not
 //!   errors.
+//! - **Structure at the boundary, trust at the consumer.** Every GET
+//!   result is routed through the same structural validation the
+//!   administration store writes with
+//!   ([`validate_envelope`](crate::control_admin::validate_envelope)):
+//!   the family token in the closed v1 registry, the declared write class,
+//!   every member the key derivation leans on, and the presence and shape
+//!   of the authority-signature members. A structurally invalid object
+//!   never leaves this store as a record — truncated bytes, an unknown
+//!   family token, a wrong schema version, or a record whose members
+//!   derive another key is a [`StorageErrorKind::MalformedInput`], an
+//!   envelope naming another tenant is a
+//!   [`StorageErrorKind::ScopeViolation`], and no failure echoes record
+//!   content. What the reader deliberately does not do is decide trust:
+//!   the tenant-authority signature is never verified here, and failing
+//!   closed on a bad signature, a stale epoch, or an expired cache entry
+//!   stays the consumer's contract (`EC-09`), applied over the
+//!   observation metadata this store surfaces.
 //! - **Scope before the network.** Every request path checks the derived
 //!   key against the provisioned tenant —
 //!   [`permits_key`](crate::config::ControlReadConfig::permits_key) —
@@ -59,13 +76,15 @@ use archivist_storage::control::{AuthorizationEpoch, ControlReadStore, ControlRe
 use archivist_storage::error::{StorageError, StorageErrorKind};
 
 use crate::config::ControlReadConfig;
-use crate::control_admin::ControlObjectKey;
+use crate::control_admin::{validate_envelope, ControlObjectKey};
 
 // Content-safe detail literals, one static sentence per failure site. A
 // unit test pins them against the protocol's safe-message grammar, the
 // same discipline the sibling stores keep.
 const DETAIL_SCOPE: &str = "key tenant is outside this control-read identity";
 const DETAIL_OVERSIZE: &str = "control record exceeds the canonical document bound";
+const DETAIL_RECORD_TENANT: &str = "record tenant is outside this control-read identity";
+const DETAIL_KEY_MISMATCH: &str = "stored record does not derive the requested key";
 
 /// The S3 request seam of the control-read identity: the two object
 /// primitives the read-only credential needs, keyed by the derived
@@ -120,9 +139,13 @@ pub trait ControlReadBackend {
 ///
 /// Composed once by the ingest replica's configuration root and handed to
 /// [`archivist_storage::ingest::IngestStorage::compose`] as the control
-/// half beside the raw writer. The store hands over unverified bytes:
-/// failing closed on a bad signature, a stale epoch, or an expired cache
-/// entry is the consumer's contract (`EC-09`), not this store's.
+/// half beside the raw writer. The store hands over structurally
+/// validated bytes: an object that does not parse as a complete signed
+/// record of the family its derived key names, inside this identity's one
+/// tenant, never leaves the boundary as a record. Trust is not decided
+/// here — failing closed on a bad signature, a stale epoch, or an expired
+/// cache entry is the consumer's contract (`EC-09`), which applies its
+/// 60-second trust-cache policy over the surfaced observation metadata.
 pub struct S3ControlReadStore<B> {
     config: ControlReadConfig,
     backend: B,
@@ -294,9 +317,13 @@ impl<B: ControlReadBackend + Sync> ControlReadStore for S3ControlReadStore<B> {
 }
 
 impl<B: ControlReadBackend + Sync> S3ControlReadStore<B> {
-    /// Gate one derived key, GET it, and hand over the byte-exact record
-    /// with its observation — absent is `Ok(None)`, oversize is a
-    /// classification, never a truncated acceptance.
+    /// Gate one derived key, GET it, and validate it at the boundary —
+    /// absent is `Ok(None)`; oversize is a classification, never a
+    /// truncated acceptance; a structurally invalid envelope never reaches
+    /// the caller as a record. What is handed over is the byte-exact
+    /// object with its observation: structurally sound (family, version,
+    /// key derivation, tenant, signature members), with signature and
+    /// trust verification still the consumer's contract (`EC-09`).
     async fn read(&self, key: ControlObjectKey) -> Result<Option<ControlRecord>, StorageError> {
         self.authorize(&key)?;
         let Some(body) = self.backend.get_control_object(&key).await? else {
@@ -306,6 +333,19 @@ impl<B: ControlReadBackend + Sync> S3ControlReadStore<B> {
             return Err(StorageError::new(
                 StorageErrorKind::MalformedInput,
                 DETAIL_OVERSIZE,
+            ));
+        }
+        let validated = validate_envelope(body.bytes())?;
+        if validated.tenant() != self.config.tenant() {
+            return Err(StorageError::new(
+                StorageErrorKind::ScopeViolation,
+                DETAIL_RECORD_TENANT,
+            ));
+        }
+        if validated.key() != &key {
+            return Err(StorageError::new(
+                StorageErrorKind::MalformedInput,
+                DETAIL_KEY_MISMATCH,
             ));
         }
         Ok(Some(ControlRecord::new(
@@ -320,14 +360,15 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
+    use archivist_protocol::json::{self, Object, Value};
     use archivist_protocol::vocabulary::{Ed25519PublicKey, KeyId as KeyIdType, SafeMessage};
     use archivist_storage::audit_restore::ObjectBody;
     use archivist_storage::metadata::{ObjectTag, Observation, StorageVersionId};
 
     use super::{
         AuthorizationEpoch, CANONICAL_MAX_BYTES, ClientId, ControlObjectKey, ControlReadBackend,
-        ControlReadStore, DETAIL_OVERSIZE, DETAIL_SCOPE, S3ControlReadStore, StorageError,
-        StorageErrorKind, TenantId,
+        ControlReadStore, DETAIL_KEY_MISMATCH, DETAIL_OVERSIZE, DETAIL_RECORD_TENANT,
+        DETAIL_SCOPE, S3ControlReadStore, StorageError, StorageErrorKind, TenantId,
     };
     use crate::config::ControlReadConfig;
 
@@ -336,12 +377,14 @@ mod tests {
     const TENANT: &str = "1a2b3c4d-5e6f-4a1b-9c2d-3e4f5a6b7c8d";
     const OTHER_TENANT: &str = "00000000-1111-4222-8333-444444444444";
     const CLIENT: &str = "0f1e2d3c-4b5a-4968-8776-5544332211ff";
+    const OTHER_CLIENT: &str = "99999999-8888-4777-8666-555555555555";
     const RELAY: &str = "2b1a0f9e-8d7c-4e6b-9a5f-1e2d3c4b5a69";
     const READ_REF: &str = "file:/etc/archivist/storage/control-read-credentials";
     const CONTROL_BUCKET: &str = "archivist-control-example";
     const OBSERVED: &str = "2026-09-19T12:00:00Z";
     const ETAG: &str = "\"d41d8cd98f00b204e9800998ecf8427e\"";
     const VERSION: &str = "3sL4kqtJlcpXroDTDmJ+rmSpXd3dIbrHY+MTRCxf3vjVBH40Nr8X8gdRQBpUMLUo";
+    const SIGNED_AT: &str = "2026-09-11T00:00:00Z";
 
     fn tenant() -> TenantId {
         TENANT.parse().unwrap()
@@ -370,6 +413,127 @@ mod tests {
     fn key_id_of(raw: &[u8; 32]) -> String {
         let public = Ed25519PublicKey::from_raw(*raw);
         KeyIdType::from_public_key(&public).to_hex()
+    }
+
+    // -------------------------------------------------------------------
+    // Golden control envelopes — the same canonical shape the sibling
+    // administration-store suite writes with, so what that store proves
+    // addressable is exactly what this boundary accepts as a record.
+    // -------------------------------------------------------------------
+
+    fn signature_hex() -> String {
+        "00".repeat(64)
+    }
+
+    fn authority_key_id() -> String {
+        key_id_of(&[0xab; 32])
+    }
+
+    /// Canonical envelope bytes from ordered members (the builder upserts,
+    /// and canonical output sorts, so call sites read in any order).
+    fn envelope(members: &[(&str, Value)]) -> Vec<u8> {
+        let mut object = Object::new();
+        for (name, value) in members {
+            object.set(name, value.clone());
+        }
+        Value::Object(object).canonical_bytes()
+    }
+
+    fn text(value: &str) -> Value {
+        Value::Text(value.to_owned())
+    }
+
+    /// The wrapper members every control record carries, with the family's
+    /// own type and kind tokens.
+    fn wrapper(record_type: &str, record_kind: &str, tenant: &str) -> Vec<(&'static str, Value)> {
+        vec![
+            ("schema", text("archivist.control/v1")),
+            ("record_type", text(record_type)),
+            ("record_kind", text(record_kind)),
+            ("tenant_id", text(tenant)),
+            ("signed_at", text(SIGNED_AT)),
+            ("authority_key_id", text(&authority_key_id())),
+            ("authority_signature", text(&signature_hex())),
+        ]
+    }
+
+    fn linked_client_envelope(tenant: &str, client: &str, epoch: i64) -> Vec<u8> {
+        let mut members = wrapper("linked-client", "current-pointer", tenant);
+        members.extend([
+            ("client_id", text(client)),
+            ("key_id", text(&key_id_of(&[0xcd; 32]))),
+            ("key_algorithm", text("ed25519")),
+            ("public_key", text(&"cd".repeat(32))),
+            ("authorization_epoch", Value::Int(epoch)),
+        ]);
+        envelope(&members)
+    }
+
+    fn delegation_envelope(tenant: &str, relay: &str, origin: &str, epoch: i64) -> Vec<u8> {
+        let mut members = wrapper("delegation", "current-pointer", tenant);
+        members.extend([
+            ("relay_client_id", text(relay)),
+            ("origin_client_id", text(origin)),
+            ("delegation_state", text("active")),
+            ("authorization_epoch", Value::Int(epoch)),
+        ]);
+        envelope(&members)
+    }
+
+    fn revocation_envelope(tenant: &str, client: &str, epoch: i64) -> Vec<u8> {
+        let mut members = wrapper("revocation", "immutable", tenant);
+        members.extend([
+            ("client_id", text(client)),
+            ("revoked_key_id", text(&key_id_of(&[0xcd; 32]))),
+            ("authorization_epoch", Value::Int(epoch)),
+        ]);
+        envelope(&members)
+    }
+
+    fn rotation_envelope(tenant: &str, client: &str, epoch: i64) -> Vec<u8> {
+        let mut members = wrapper("rotation", "immutable", tenant);
+        members.extend([
+            ("client_id", text(client)),
+            ("previous_epoch", Value::Int(epoch - 1)),
+            ("previous_public_key", text(&"ef".repeat(32))),
+            ("previous_key_id", text(&key_id_of(&[0xef; 32]))),
+            ("key_algorithm", text("ed25519")),
+            ("public_key", text(&"cd".repeat(32))),
+            ("key_id", text(&key_id_of(&[0xcd; 32]))),
+            ("authorization_epoch", Value::Int(epoch)),
+        ]);
+        envelope(&members)
+    }
+
+    fn receipt_key_envelope(tenant: &str) -> Vec<u8> {
+        let mut members = wrapper("receipt-key", "immutable", tenant);
+        members.extend([
+            ("key_id", text(&key_id_of(&[0x3c; 32]))),
+            ("key_algorithm", text("ed25519")),
+            ("public_key", text(&"3c".repeat(32))),
+            ("valid_from", text("2026-09-04T00:00:00Z")),
+            ("valid_until", text("2026-10-11T00:00:00Z")),
+        ]);
+        envelope(&members)
+    }
+
+    /// Replace one top-level text/int member of an envelope (test helper:
+    /// re-parse, set, re-serialize canonically).
+    fn replace_member(bytes: &[u8], name: &str, value: Value) -> Vec<u8> {
+        let Value::Object(mut object) = json::parse(bytes).unwrap() else {
+            panic!("test envelopes are objects");
+        };
+        object.set(name, value);
+        Value::Object(object).canonical_bytes()
+    }
+
+    /// Drop one top-level member of an envelope.
+    fn without_member(bytes: &[u8], name: &str) -> Vec<u8> {
+        let Value::Object(mut object) = json::parse(bytes).unwrap() else {
+            panic!("test envelopes are objects");
+        };
+        let _ = object.remove(name);
+        Value::Object(object).canonical_bytes()
     }
 
     fn observation() -> Observation {
@@ -539,7 +703,9 @@ mod tests {
     }
 
     /// The five (identifiers, derived key, stored bytes) rows one story
-    /// is told with: every read method and its family's key.
+    /// is told with: every read method, its family's key, and the
+    /// structurally valid golden envelope of that family that derives
+    /// exactly that key.
     fn families() -> Vec<(&'static str, ControlObjectKey, Vec<u8>)> {
         let tenant = tenant();
         let client_id = client();
@@ -550,27 +716,27 @@ mod tests {
             (
                 "linked-client",
                 ControlObjectKey::linked_client(&tenant, &client_id),
-                b"{\"record_type\":\"linked-client\"}".to_vec(),
+                linked_client_envelope(TENANT, CLIENT, 3),
             ),
             (
                 "delegation",
                 ControlObjectKey::delegation(&tenant, &relay_id, &client_id),
-                b"{\"record_type\":\"delegation\"}".to_vec(),
+                delegation_envelope(TENANT, RELAY, CLIENT, 3),
             ),
             (
                 "revocation",
                 ControlObjectKey::revocation(&tenant, &client_id, epoch_value),
-                b"{\"record_type\":\"revocation\"}".to_vec(),
+                revocation_envelope(TENANT, CLIENT, 3),
             ),
             (
                 "rotation",
                 ControlObjectKey::rotation(&tenant, &client_id, epoch_value),
-                b"{\"record_type\":\"rotation\"}".to_vec(),
+                rotation_envelope(TENANT, CLIENT, 3),
             ),
             (
                 "receipt-key",
                 ControlObjectKey::receipt_key(&tenant, &receipt),
-                b"{\"record_type\":\"receipt-key\"}".to_vec(),
+                receipt_key_envelope(TENANT),
             ),
         ]
     }
@@ -703,6 +869,25 @@ mod tests {
         assert!(store.backend.requests() > 0);
     }
 
+    /// A structurally valid linked-client record of exactly the pinned
+    /// canonical maximum: an extra payload member carries the filler, so
+    /// the bound itself is proven to be acceptance of a whole record, not
+    /// merely of a byte count.
+    fn at_bound_envelope() -> Vec<u8> {
+        let Value::Object(mut object) =
+            json::parse(&linked_client_envelope(TENANT, CLIENT, 3)).unwrap()
+        else {
+            panic!("the golden envelope is an object");
+        };
+        // `"padding":""` costs 13 canonical bytes; each filler char adds one.
+        let filler = CANONICAL_MAX_BYTES - linked_client_envelope(TENANT, CLIENT, 3).len() - 13;
+        assert!(filler > 0, "the golden envelope leaves room to pad");
+        object.set("padding", text(&"p".repeat(filler)));
+        let bytes = Value::Object(object).canonical_bytes();
+        assert_eq!(bytes.len(), CANONICAL_MAX_BYTES);
+        bytes
+    }
+
     #[test]
     fn oversize_records_are_classified_never_accepted() {
         let store = store();
@@ -716,13 +901,213 @@ mod tests {
         assert_eq!(error.detail(), DETAIL_OVERSIZE);
 
         // The bound itself is acceptance: a record of exactly the pinned
-        // maximum is handed over whole.
-        let at_bound = vec![b'x'; CANONICAL_MAX_BYTES];
+        // maximum — a valid one — is handed over whole.
+        let at_bound = at_bound_envelope();
         store.backend.preload(key, &at_bound);
         let record = block_on(store.read_linked_client(&tenant(), &client()))
             .expect("a record at the bound must read")
             .unwrap_or_else(|| panic!("{name}: the preloaded record must be present"));
         assert_eq!(record.envelope().len(), CANONICAL_MAX_BYTES);
+        assert_eq!(record.envelope(), at_bound.as_slice());
+    }
+
+    /// Every structural failure classifies, and no failure echoes record
+    /// content: the detail is a safe message that names no identifier the
+    /// stored bytes carried.
+    fn assert_boundary_rejection(
+        store: &S3ControlReadStore<MapBackend>,
+        key: &ControlObjectKey,
+        case: &str,
+        bytes: &[u8],
+        kind: StorageErrorKind,
+    ) {
+        store.backend.preload(key, bytes);
+        let error = block_on(store.read_linked_client(&tenant(), &client()))
+            .err()
+            .unwrap_or_else(|| {
+                panic!("linked-client/{case}: an invalid envelope must never read as a record")
+            });
+        assert_eq!(error.kind(), kind, "linked-client/{case}");
+        assert_eq!(
+            SafeMessage::parse(error.detail()).map(|_| ()).ok(),
+            Some(()),
+            "linked-client/{case}: the detail must be a safe message"
+        );
+        assert!(
+            !error.detail().contains(CLIENT) && !error.detail().contains(TENANT),
+            "linked-client/{case}: the detail must not echo record content"
+        );
+    }
+
+    #[test]
+    fn structurally_invalid_envelopes_never_read_as_records() {
+        let store = store();
+        let (_, key, _) = &families()[0];
+        let linked = linked_client_envelope(TENANT, CLIENT, 3);
+
+        // Truncated JSON, not JSON at all, not an object.
+        assert_boundary_rejection(
+            &store,
+            key,
+            "truncated json",
+            b"{\"schema\":\"archivist.control/v1\"",
+            StorageErrorKind::MalformedInput,
+        );
+        assert_boundary_rejection(
+            &store,
+            key,
+            "not json",
+            b"not json",
+            StorageErrorKind::MalformedInput,
+        );
+        assert_boundary_rejection(
+            &store,
+            key,
+            "not an object",
+            b"[1,2,3]",
+            StorageErrorKind::MalformedInput,
+        );
+
+        // A schema version outside the closed v1 registry.
+        assert_boundary_rejection(
+            &store,
+            key,
+            "wrong schema version",
+            &replace_member(&linked, "schema", text("archivist.control/v2")),
+            StorageErrorKind::MalformedInput,
+        );
+
+        // A family token with no variant in the closed registry — the
+        // retention record is shipped in the registry but has not landed
+        // as a family — and a declared kind its family disagrees with.
+        assert_boundary_rejection(
+            &store,
+            key,
+            "unknown family token",
+            &replace_member(&linked, "record_type", text("retention")),
+            StorageErrorKind::MalformedInput,
+        );
+        assert_boundary_rejection(
+            &store,
+            key,
+            "kind disagrees with family",
+            &replace_member(&linked, "record_kind", text("immutable")),
+            StorageErrorKind::MalformedInput,
+        );
+
+        // A member the key derivation leans on, missing or off-grammar.
+        assert_boundary_rejection(
+            &store,
+            key,
+            "missing key member",
+            &without_member(&linked, "client_id"),
+            StorageErrorKind::MalformedInput,
+        );
+        assert_boundary_rejection(
+            &store,
+            key,
+            "malformed key member",
+            &replace_member(&linked, "client_id", text("not-a-uuid")),
+            StorageErrorKind::MalformedInput,
+        );
+
+        // The authority-signature member must be present and well-formed
+        // for the family — structure only; verification stays the
+        // consumer's.
+        assert_boundary_rejection(
+            &store,
+            key,
+            "missing signature member",
+            &without_member(&linked, "authority_signature"),
+            StorageErrorKind::MalformedInput,
+        );
+        assert_boundary_rejection(
+            &store,
+            key,
+            "malformed signature member",
+            &replace_member(&linked, "authority_signature", text("00")),
+            StorageErrorKind::MalformedInput,
+        );
+    }
+
+    #[test]
+    fn a_cross_tenant_envelope_is_a_scope_violation() {
+        let store = store();
+
+        // A structurally sound record whose signed tenant names another
+        // tenant, stored inside this identity's prefix — the boundary
+        // classifies it as a scope violation, not a malformed record.
+        let (_, key, _) = &families()[0];
+        store
+            .backend
+            .preload(key, &linked_client_envelope(OTHER_TENANT, CLIENT, 3));
+        let error = block_on(store.read_linked_client(&tenant(), &client()))
+            .err()
+            .expect("a cross-tenant envelope must not read as a record");
+        assert_eq!(error.kind(), StorageErrorKind::ScopeViolation);
+        assert_eq!(error.detail(), DETAIL_RECORD_TENANT);
+
+        // The same classification on an immutable family's read.
+        let (_, revocation_key, _) = &families()[2];
+        store
+            .backend
+            .preload(revocation_key, &revocation_envelope(OTHER_TENANT, CLIENT, 3));
+        let error = block_on(store.read_revocation(&tenant(), &client(), epoch()))
+            .err()
+            .expect("a cross-tenant envelope must not read as a record");
+        assert_eq!(error.kind(), StorageErrorKind::ScopeViolation);
+        assert_eq!(error.detail(), DETAIL_RECORD_TENANT);
+    }
+
+    #[test]
+    fn an_envelope_deriving_another_key_is_refused_at_the_boundary() {
+        let store = store();
+        let (_, key, _) = &families()[0];
+
+        // A valid linked-client record for another client, stored at this
+        // client's derived key: structurally sound, but its own members
+        // derive a different key than the one it was found at.
+        store
+            .backend
+            .preload(key, &linked_client_envelope(TENANT, OTHER_CLIENT, 3));
+        let error = block_on(store.read_linked_client(&tenant(), &client()))
+            .err()
+            .expect("a non-deriving envelope must not read as a record");
+        assert_eq!(error.kind(), StorageErrorKind::MalformedInput);
+        assert_eq!(error.detail(), DETAIL_KEY_MISMATCH);
+
+        // An epoch-addressed record for a different epoch at this epoch's
+        // key: the derivation disagrees the same way.
+        let (_, revocation_key, _) = &families()[2];
+        store
+            .backend
+            .preload(revocation_key, &revocation_envelope(TENANT, CLIENT, 4));
+        let error = block_on(store.read_revocation(&tenant(), &client(), epoch()))
+            .err()
+            .expect("a non-deriving envelope must not read as a record");
+        assert_eq!(error.kind(), StorageErrorKind::MalformedInput);
+        assert_eq!(error.detail(), DETAIL_KEY_MISMATCH);
+
+        // A record of one family stored at another family's key.
+        store
+            .backend
+            .preload(key, &revocation_envelope(TENANT, CLIENT, 3));
+        let error = block_on(store.read_linked_client(&tenant(), &client()))
+            .err()
+            .expect("a cross-family envelope must not read as a record");
+        assert_eq!(error.kind(), StorageErrorKind::MalformedInput);
+        assert_eq!(error.detail(), DETAIL_KEY_MISMATCH);
+
+        // The positive control: the client's own record at its own key
+        // reads, and issues exactly one GET per attempt.
+        store
+            .backend
+            .preload(key, &linked_client_envelope(TENANT, CLIENT, 3));
+        assert!(
+            block_on(store.read_linked_client(&tenant(), &client()))
+                .expect("the honest record must read")
+                .is_some()
+        );
     }
 
     #[test]
@@ -802,7 +1187,12 @@ mod tests {
 
     #[test]
     fn error_details_are_safe_messages() {
-        for detail in [DETAIL_SCOPE, DETAIL_OVERSIZE] {
+        for detail in [
+            DETAIL_SCOPE,
+            DETAIL_OVERSIZE,
+            DETAIL_RECORD_TENANT,
+            DETAIL_KEY_MISMATCH,
+        ] {
             assert_eq!(
                 SafeMessage::parse(detail)
                     .unwrap_or_else(|_| panic!("detail is not a safe message: {detail}"))
