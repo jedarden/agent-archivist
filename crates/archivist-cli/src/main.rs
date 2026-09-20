@@ -10,11 +10,11 @@
 //! exit codes, and secret-reference handling live in the library crates, not
 //! here.
 //!
-//! # Status
-//!
-//! Skeleton scaffold (Phase 0). Commands arrive across Phases 3, 5, 6, and 7;
-//! `main` deliberately does nothing yet. There is no placeholder production
-//! behavior here and no stub pretending to work.
+//! The binary owns no command behavior. It composes the registry-driven
+//! parser and router from [`archivist_client_core::cli`]; later phases attach
+//! their library-owned handlers at this composition point. A registered
+//! command without a result schema or handler is rejected as not shipped,
+//! rather than being represented by placeholder behavior.
 //!
 //! # Dependency boundary
 //!
@@ -22,4 +22,9 @@
 //! logic that would need one of the library crates as a peer belongs in that
 //! library crate instead.
 
-fn main() {}
+/// Compose the command router and run one invocation.
+fn main() {
+    let router = archivist_client_core::cli::router::Router::new();
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    std::process::exit(router.run(&args));
+}

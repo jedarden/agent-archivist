@@ -26,8 +26,11 @@
 //! The source backlog inventory — complete outstanding bytes and events per
 //! source, cursors retained in front of uncaptured ranges, and bounded
 //! adapter/account status — arrived with Phase 5 alongside them; see
-//! [`inventory`]. The remaining surfaces are still the Phase 0
-//! skeleton and deliberately contain no placeholder production code.
+//! [`inventory`]. The registry-driven command parser, output envelope, error
+//! diagnostics, and handler router live in [`cli`]; command behavior remains
+//! in the implementing library crates and is attached by the composition
+//! root. The remaining surfaces are still the Phase 0 skeleton and
+//! deliberately contain no placeholder production code.
 //!
 //! # Dependency boundary
 //!
@@ -35,6 +38,7 @@
 //! not depend on the server, a concrete storage backend, or any specific
 //! harness adapter.
 
+pub mod cli;
 pub mod config;
 pub mod inventory;
 pub mod spool;

@@ -62,7 +62,7 @@
 //! above it.
 
 pub mod registry;
-mod toml;
+pub(crate) mod toml;
 
 #[cfg(test)]
 mod tests;
@@ -494,7 +494,7 @@ fn refused(key: &str) -> ConfigError {
 
 /// Whether `text` fits the error-body `field` placeholder grammar
 /// (ERR-012): `[a-z0-9_.-]{1,64}`.
-fn valid_field(text: &str) -> Option<&str> {
+pub(crate) fn valid_field(text: &str) -> Option<&str> {
     let well_formed = !text.is_empty()
         && text.len() <= 64
         && text.bytes().all(|byte| {
@@ -507,7 +507,7 @@ fn valid_field(text: &str) -> Option<&str> {
 /// (ERR-013): a missing or grammar-failing field renders as the
 /// bracketed placeholder name, and the result is truncated to the
 /// rendered-message bound of 200 characters.
-fn render_message(template: &str, field: Option<&str>) -> String {
+pub(crate) fn render_message(template: &str, field: Option<&str>) -> String {
     let rendered = match field.and_then(valid_field) {
         Some(field) => template.replace("{field}", field),
         None => template.replace("{field}", "[field]"),

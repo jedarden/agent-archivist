@@ -74,7 +74,7 @@ baseline rule above.
 | `archivist-adapter-opencode` | 2 | OpenCode: read-only allowlisted database projection | 6B | adapter-sdk | Phase 6B not started — documentation-only |
 | `archivist-adapter-pi` | 2 | Pi: configured-root discovery, durable session formats, coverage gaps | 6C | adapter-sdk | Phase 6C not started — documentation-only |
 | `archivist-server` | 2 | Stateless HTTP data plane: `/v1/ingest`, health, metrics, bounded middleware, commit ordering, signed receipts | 4 | protocol, auth, storage | Landed — Phase 4 opened: configuration, shared state, and control-trust wiring; the listener, routes, and metrics modules are the phase's open work |
-| `archivist-cli` | 3 | `archivist` binary: the command surface pinned in [`tools/cli-commands.toml`](../../tools/cli-commands.toml) (run, daemon, inventory, status, verify-state, doctor, serve, link request, admin, catalog rebuild); selects backend and adapters | 3, 5, 6, 7 | all of the above | Phases 3, 5, 6, and 7 not started — documentation-only |
+| `archivist-cli` | 3 | `archivist` binary: the command surface pinned in [`tools/cli-commands.toml`](../../tools/cli-commands.toml) (run, daemon, inventory, status, verify-state, doctor, serve, link request, admin, catalog rebuild); selects backend and adapters | 3, 5, 6, 7 | all of the above | Command-surface plumbing landed in `archivist-client-core::cli`: registry-driven strict parsing, the `archivist.cli-output/v1` envelope, `archivist.error/v1` diagnostics, and handler routing; command behavior arrives with its implementing phases |
 
 ## Boundary rules
 
