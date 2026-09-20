@@ -7,7 +7,6 @@
 //! reason set is closed and ordered, and no rendering can carry a
 //! filesystem path.
 
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
