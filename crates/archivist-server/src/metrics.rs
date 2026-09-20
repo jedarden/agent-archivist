@@ -444,8 +444,13 @@ mod tests {
     fn the_inflight_gauge_saturates_instead_of_going_negative() {
         let metrics = ServerMetrics::new();
         metrics.ingest_inflight_add(1);
+        // A defensive floor: a sub past zero must clamp, never wrap negative.
         metrics.ingest_inflight_sub(5);
-        assert_eq!(metrics.ingest_inflight(), 0, "no inventory of ghost requests");
+        assert_eq!(
+            metrics.ingest_inflight(),
+            0,
+            "no inventory of ghost requests"
+        );
         metrics.ingest_inflight_sub(1);
         assert_eq!(metrics.ingest_inflight(), 0);
     }

@@ -153,10 +153,9 @@ async fn ingest<W, C>(State(state): State<Arc<ServerState<W, C>>>) -> Response {
     // The bounded attempt is everything the handler will ever do with
     // the request: today that is admission; the pipeline slice grows it
     // to the streaming parse-commit-receipt work under the same bound.
-    let admitted = within_deadline(
-        state.config().request_deadline(),
-        async { state.gate().try_admit_process() },
-    )
+    let admitted = within_deadline(state.config().request_deadline(), async {
+        state.gate().try_admit_process()
+    })
     .await;
     match admitted {
         // The deadline is a real bound on the attempt, so its elapse is
@@ -668,9 +667,7 @@ mod tests {
 
     /// Saturate the replica's whole concurrency inventory on its gate, as
     /// sixteen concurrent admitted attempts would.
-    fn saturate(
-        state: &ServerState<SilentRawStore, SilentControlStore>,
-    ) -> Vec<ProcessAdmission> {
+    fn saturate(state: &ServerState<SilentRawStore, SilentControlStore>) -> Vec<ProcessAdmission> {
         let mut admissions = Vec::new();
         for _ in 0..16 {
             admissions.push(state.gate().try_admit_process().expect("slot admits"));
@@ -747,9 +744,11 @@ mod tests {
         // Byte-identical to the pinned canonical refusal: no guard name,
         // no client, no count, and none of the request's own bytes.
         assert_eq!(response.body, rate_limited_error_body());
-        assert!(!String::from_utf8(response.body)
-            .expect("error body is text")
-            .contains("zq9-marker"));
+        assert!(
+            !String::from_utf8(response.body)
+                .expect("error body is text")
+                .contains("zq9-marker")
+        );
         // Retryable is real: releasing one slot admits the very next
         // attempt, which reaches the fail-closed stub's stable answer.
         drop(admissions);
@@ -783,12 +782,15 @@ mod tests {
         assert!(text.contains(
             "archivist_server_ingest_requests_total{archivist_ingest_outcome=\"failed\"} 0\n"
         ));
-        // Release drains the gauge back to zero exactly.
+        // Release drains the gauge back to zero exactly; the counter floors
+        // at zero, so a stray double-release cannot mint negative inventory.
         drop(admissions);
         let after = exchange(address, &get_request("/metrics")).await;
-        assert!(String::from_utf8(after.body)
-            .expect("exposition is text")
-            .contains("archivist_server_ingest_inflight_requests 0\n"));
+        assert!(
+            String::from_utf8(after.body)
+                .expect("exposition is text")
+                .contains("archivist_server_ingest_inflight_requests 0\n")
+        );
     }
 
     #[tokio::test]

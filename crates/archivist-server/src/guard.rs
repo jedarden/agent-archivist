@@ -46,17 +46,14 @@
 //!
 //! The token bucket is integer-exact: credit is accumulated in
 //! micro-seconds times the configured per-minute rate, and one admission
-//! costs [`CREDIT_PER_REQUEST`] of those units — so `rate_per_minute`
+//! costs `CREDIT_PER_REQUEST` of those units — so `rate_per_minute`
 //! credits are earned per minute regardless of how the minute is divided,
 //! with no floating point and no drift. A client's first observation starts
-//! the bucket full ([`ServerConfig::rate_burst_count`] tokens); entries
+//! the bucket full (`ServerConfig::rate_burst_count` tokens); entries
 //! persist for the process lifetime so a client cannot re-arm its burst by
 //! going idle. The table footprint is bounded by the authenticated client
 //! population — a trust boundary the authorization middleware holds — and
 //! each entry is two counters and an instant, never payload-scale.
-//!
-//! [`ServerConfig::rate_burst_count`]: crate::config::ServerConfig::
-//! rate_burst_count
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -224,6 +221,10 @@ impl std::fmt::Debug for AdmissionGate {
 
 impl AdmissionGate {
     /// Build the gate for one replica from the validated configuration.
+    ///
+    /// # Panics
+    /// Only if the configured process cap does not fit a `usize` —
+    /// impossible for a `u32` on every supported target.
     #[must_use]
     pub fn new(config: &ServerConfig, metrics: Arc<ServerMetrics>) -> Self {
         let capacity = usize::try_from(config.max_inflight_upload_count())
@@ -246,10 +247,13 @@ impl AdmissionGate {
     /// the replica is at capacity and nothing was read, allocated, or
     /// recorded but the refusal.
     ///
+    /// # Errors
+    /// [`GuardRejection::ProcessAtCapacity`] when every slot is in
+    /// flight; the refusal is content-free and nothing is consumed.
+    ///
     /// # Panics
     /// Only if the process semaphore is closed — which nothing here ever
     /// does.
-    #[must_use]
     pub fn try_admit_process(&self) -> Result<ProcessAdmission, GuardRejection> {
         match Arc::clone(&self.process).try_acquire_owned() {
             Ok(permit) => {
@@ -271,26 +275,33 @@ impl AdmissionGate {
     /// token is consumed by admission, not by success — the bucket is a
     /// resource guard, not a billing quota (plan Section 7.6).
     ///
+    /// # Errors
+    /// [`GuardRejection::ClientAtCapacity`] when the client already holds
+    /// its full in-flight share, or [`GuardRejection::ClientRateExhausted`]
+    /// when its new-request bucket has no credit — in which case the
+    /// in-flight share is handed back before refusing.
+    ///
     /// # Panics
     /// Only if the client ledger is poisoned — a concurrent panic while
     /// holding it, which is itself a bug.
-    #[must_use]
     pub fn admit_client(
         &self,
         client: &ClientId,
         now: Instant,
     ) -> Result<ClientAdmission, GuardRejection> {
         let mut clients = self.clients.lock().expect("client guard ledger poisoned");
-        let entry = clients.entry(client.clone()).or_insert_with(|| ClientEntry {
-            inflight: Arc::new(Semaphore::new(
-                usize::try_from(self.max_inflight_per_client)
-                    .expect("per-client in-flight cap fits usize"),
-            )),
-            bucket: TokenBucket {
-                credit: u128::from(self.burst) * CREDIT_PER_REQUEST,
-                last: now,
-            },
-        });
+        let entry = clients
+            .entry(client.clone())
+            .or_insert_with(|| ClientEntry {
+                inflight: Arc::new(Semaphore::new(
+                    usize::try_from(self.max_inflight_per_client)
+                        .expect("per-client in-flight cap fits usize"),
+                )),
+                bucket: TokenBucket {
+                    credit: u128::from(self.burst) * CREDIT_PER_REQUEST,
+                    last: now,
+                },
+            });
         let permit = match Arc::clone(&entry.inflight).try_acquire_owned() {
             Ok(permit) => permit,
             Err(_closed_or_exhausted) => return Err(GuardRejection::ClientAtCapacity),
@@ -321,6 +332,10 @@ pub struct DeadlineElapsed;
 /// storage call inside it. Elapsing yields [`DeadlineElapsed`]; the
 /// attempt's future is dropped, which is what releases its admission and
 /// every payload-scale resource it held.
+///
+/// # Errors
+/// [`DeadlineElapsed`] when the attempt does not complete within the
+/// configured deadline; the attempt is dropped, never abandoned running.
 pub async fn within_deadline<F: Future>(
     deadline: Duration,
     attempt: F,
@@ -453,8 +468,7 @@ mod tests {
             Err(GuardRejection::ClientRateExhausted),
         );
         assert!(
-            gate.admit_client(&a, t0 + Duration::from_secs(1))
-                .is_ok(),
+            gate.admit_client(&a, t0 + Duration::from_secs(1)).is_ok(),
             "a full second of refill admits exactly one more"
         );
         // The bucket is empty again until another second passes.
@@ -471,12 +485,13 @@ mod tests {
         let a = client(CLIENT_A);
         let t0 = Instant::now();
         // An hour idle: the bucket is still capped at the burst of eight,
-        // never at the 3600 tokens the raw rate would have minted.
+        // never at the 3600 tokens the raw 60-per-minute rate would have
+        // minted over that hour.
         for _ in 0..8 {
-            assert!(gate.admit_client(&a, t0 + Duration::from_secs(3600)).is_ok());
+            assert!(gate.admit_client(&a, t0 + Duration::from_hours(1)).is_ok());
         }
         assert_eq!(
-            gate.admit_client(&a, t0 + Duration::from_secs(3600))
+            gate.admit_client(&a, t0 + Duration::from_hours(1))
                 .map(|_| ()),
             Err(GuardRejection::ClientRateExhausted),
         );
@@ -503,7 +518,7 @@ mod tests {
         assert!(gate.admit_client(&a, t0).is_ok());
         assert!(gate.admit_client(&a, t0).is_ok());
         assert_eq!(
-            gate.admit_client(&a, t0 + Duration::from_secs(3600))
+            gate.admit_client(&a, t0 + Duration::from_hours(1))
                 .map(|_| ()),
             Err(GuardRejection::ClientRateExhausted),
             "zero refill never mints another token, however long the wait"
@@ -527,8 +542,7 @@ mod tests {
     #[tokio::test]
     async fn the_deadline_bounds_a_pending_attempt() {
         let started = Instant::now();
-        let outcome =
-            within_deadline(Duration::from_millis(50), pending::<()>()).await;
+        let outcome = within_deadline(Duration::from_millis(50), pending::<()>()).await;
         assert_eq!(outcome, Err(DeadlineElapsed));
         assert!(
             started.elapsed() >= Duration::from_millis(50),
