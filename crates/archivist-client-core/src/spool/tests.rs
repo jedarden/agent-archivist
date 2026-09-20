@@ -12,10 +12,10 @@ use archivist_protocol::sha256::{digest, encode_hex};
 use archivist_protocol::vocabulary::{SafeMessage, Timestamp};
 
 use super::Spool;
+use super::pressure::{PressureGate, PressureLimits};
 use super::{
     BUNDLE_SUFFIX, ReconcileReport, SPOOL_DIR_NAME, STAGING_SUFFIX, SpoolError, SpoolErrorKind,
 };
-use super::pressure::{PressureGate, PressureLimits};
 use crate::state::StateStore;
 
 static NEXT_TEMP_ID: AtomicUsize = AtomicUsize::new(0);
@@ -160,7 +160,9 @@ fn materialized_bundle_is_mode_0600_with_a_committed_row() {
     let spool = Spool::open(dir.path()).expect("open spool");
     let bytes = payload(1);
 
-    let bundle = spool.materialize(&store, &mut open_gate(), &bytes).expect("materialize");
+    let bundle = spool
+        .materialize(&store, &mut open_gate(), &bytes)
+        .expect("materialize");
 
     // The final name exists at mode 0600 and no staging file remains.
     let bundle_path = spool_path(&dir).join(bundle.bundle_name());
@@ -207,8 +209,12 @@ fn materialize_mints_distinct_time_ordered_identities() {
     let store = file_store(&dir);
     let spool = Spool::open(dir.path()).expect("open spool");
 
-    let first = spool.materialize(&store, &mut open_gate(), &payload(1)).expect("first");
-    let second = spool.materialize(&store, &mut open_gate(), &payload(2)).expect("second");
+    let first = spool
+        .materialize(&store, &mut open_gate(), &payload(1))
+        .expect("first");
+    let second = spool
+        .materialize(&store, &mut open_gate(), &payload(2))
+        .expect("second");
     assert_ne!(first.spool_entry_id(), second.spool_entry_id());
     // UUIDv7 identities carry the mint time, so the timestamp prefix
     // never moves backwards and a directory listing reads in capture
@@ -227,7 +233,9 @@ fn spool_rows_carry_grammar_valid_timestamps() {
     let dir = TempDir::new("timestamps");
     let store = file_store(&dir);
     let spool = Spool::open(dir.path()).expect("open spool");
-    spool.materialize(&store, &mut open_gate(), &payload(3)).expect("materialize");
+    spool
+        .materialize(&store, &mut open_gate(), &payload(3))
+        .expect("materialize");
 
     let mut statement = store
         .connection()
@@ -305,7 +313,9 @@ fn crash_before_rename_leaves_no_row_and_no_committed_range() {
 
     // Re-capture of the same payload succeeds and carries the same
     // digest: no complete range is lost, and content identity is stable.
-    let recaptured = spool.materialize(&store, &mut open_gate(), &bytes).expect("re-materialize");
+    let recaptured = spool
+        .materialize(&store, &mut open_gate(), &bytes)
+        .expect("re-materialize");
     assert_eq!(recaptured.envelope_digest(), encode_hex(&digest(&bytes)));
 }
 
@@ -413,10 +423,14 @@ fn reconcile_removes_only_acknowledged_leftovers() {
     let spool = Spool::open(dir.path()).expect("open spool");
 
     // A live entry: spooled, pending upload.
-    let live = spool.materialize(&store, &mut open_gate(), &payload(7)).expect("live");
+    let live = spool
+        .materialize(&store, &mut open_gate(), &payload(7))
+        .expect("live");
     // An acknowledged entry whose bundle removal was interrupted: the
     // state committed, the file remains (fault-injection point 9).
-    let acked = spool.materialize(&store, &mut open_gate(), &payload(8)).expect("acked");
+    let acked = spool
+        .materialize(&store, &mut open_gate(), &payload(8))
+        .expect("acked");
     store
         .connection()
         .execute(
@@ -639,7 +653,13 @@ fn materialize_pauses_when_live_usage_reaches_the_cap() {
     );
     let staging: Vec<_> = std::fs::read_dir(spool_path(&dir))
         .expect("read dir")
-        .map(|entry| entry.expect("entry").file_name().to_string_lossy().into_owned())
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
         .filter(|name| name.ends_with(STAGING_SUFFIX))
         .collect();
     assert!(staging.is_empty(), "staging debris remained: {staging:?}");
@@ -729,10 +749,7 @@ fn gate_decisions_come_from_the_shared_pressure_state() {
     // latch is hysteresis over shared state, not a sticky tombstone.
     store
         .connection()
-        .execute(
-            "UPDATE spool_entries SET state = 'acknowledged'",
-            [],
-        )
+        .execute("UPDATE spool_entries SET state = 'acknowledged'", [])
         .expect("acknowledge");
     let mut gate = PressureGate::new(limits);
     spool
@@ -760,7 +777,13 @@ fn unmeasurable_pressure_holds_materialization() {
     assert_eq!(error.kind(), SpoolErrorKind::Unavailable);
     let written: Vec<_> = std::fs::read_dir(spool_path(&dir))
         .expect("read dir")
-        .map(|entry| entry.expect("entry").file_name().to_string_lossy().into_owned())
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
         .collect();
     assert!(written.is_empty(), "nothing may be written: {written:?}");
 }

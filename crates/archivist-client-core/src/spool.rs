@@ -429,7 +429,8 @@ impl Spool {
     /// [`SpoolErrorKind::MaterializationPaused`]. The gate is the
     /// mutator's, held across its scheduling loop so the pause latches
     /// per the hysteresis rule; its limits come from the `spool.*`
-    /// configuration keys ([`PressureLimits::from_config`], defaults:
+    /// configuration keys ([`pressure::PressureLimits::from_config`],
+    /// defaults:
     /// pause at 2 GiB of live spool or a 5 GiB free-space floor).
     /// Pending retries are outside the policy and unaffected.
     ///

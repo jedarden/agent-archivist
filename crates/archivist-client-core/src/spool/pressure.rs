@@ -48,7 +48,7 @@
 //! puts bytes on disk — [`Spool::materialize`](super::Spool::materialize)
 //! evaluates the gate it is handed before it writes anything, and a
 //! held admission is the distinct
-//! [`SpoolErrorKind::MaterializationPaused`](super::SpoolErrorKind::MaterializationPaused)
+//! [`super::SpoolErrorKind::MaterializationPaused`]
 //! — so there is no ungated materialization path to bypass the policy
 //! with. The `status`/`doctor` renderings of the evaluation are later
 //! Phase 5 deliverables; the renderings are content-free by the same rule as
