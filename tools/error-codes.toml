@@ -173,6 +173,18 @@ http = 403
 message = "The uploader is not authorized for the declared origin client or tenant."
 description = "Cross-tenant, cross-client, or unauthorized-relay rejection (ID-005)."
 
+[codes."auth.epoch_unreached"]
+class = "request_invalid"
+http = 400
+message = "The revocation names an authorization epoch the client has not reached; revoke an epoch the client's standing pointer holds."
+description = "A revocation act names an epoch above the client's standing pointer, or the client has no standing pointer."
+
+[codes."auth.key_id_mismatch"]
+class = "request_invalid"
+http = 400
+message = "The revocation names the client's current epoch with a key the standing pointer does not hold."
+description = "A revocation at the standing pointer's current epoch names a key half the pointer does not hold."
+
 [codes."storage.integrity_conflict"]
 class = "integrity_conflict"
 http = 409

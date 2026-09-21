@@ -18,10 +18,12 @@
 //! published through that store, and emitted as the linked-client record
 //! document its registry entry's `result_schema` names — every refusal a
 //! registered code of `tools/error-codes.toml`, with stdout empty. The
-//! third is the `admin revoke` command's revocation-draft parsing
-//! ([`revoke`]): the operand document read and grammar-checked into the
-//! draft the command's signing and persistence acts consume, refusing on
-//! the same registered-code discipline.
+//! third is the `admin revoke` command ([`revoke`]): the operand document
+//! read and grammar-checked into the draft, and the signing-and-persistence
+//! act that verifies the client's standing pointer, signs the revocation
+//! with the tenant authority, and publishes it through that store — every
+//! refusal a registered code of `tools/error-codes.toml`, with stdout
+//! empty.
 //!
 //! # Dependency boundary
 //!

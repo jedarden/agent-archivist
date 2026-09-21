@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! The `admin revoke` command's revocation-draft parsing (plan Phase 3):
-//! the operand document read, shaped, and grammar-checked into the draft
-//! the command's signing and persistence acts consume.
+//! The `admin revoke` command (plan Phase 3): the operand document read,
+//! shaped, and grammar-checked into the draft ([`parse_draft`],
+//! [`read_draft`]), and the signing-and-persistence act that consumes it
+//! ([`revoke_over`]) — the client's standing pointer verified, the
+//! revocation signed with the tenant authority, and the signed record
+//! published through the offline administration store.
 //!
 //! The wiring follows the registry entry
 //! (`[commands."admin revoke"]` in `tools/cli-commands.toml`) the same way
@@ -32,11 +35,28 @@
 //! deliberately absent from the draft: it is the control plane's verified
 //! state, not the draft author's claim about it, and a draft-carried
 //! pointer would be exactly the unverified stored-state material the
-//! epoch rules exist to check. Where the signing act obtains the verified
-//! view — a read through the control plane, or another composition the
-//! signing deliverable proves — is that deliverable's decision; this
-//! module hands it the draft, and the draft's `client_id` is what the
-//! client's pointer key is derived from.
+//! epoch rules exist to check.
+//!
+//! The signing act's decision, recorded here and on the deliverable's
+//! bead: the act reads the pointer from the control plane through the
+//! administration store's own request seam
+//! ([`ControlAdminBackend::get_control_object`] at the derived
+//! linked-client key), and verifies it from the pinned authority root
+//! before the epoch rules consume it. The seam ride-along is the
+//! discipline `admin approve` established for its authority-chain walk —
+//! the signing act reads the same plane its publication writes through,
+//! so the epoch rules decide against exactly the state the record will
+//! land in and the two transports can never disagree. A dedicated
+//! control-read transport
+//! ([`S3ControlReadStore`](archivist_storage_s3::control_read::S3ControlReadStore))
+//! would observe a second credential and a second configuration the
+//! command's registry entry does not declare, and it deliberately
+//! verifies nothing;
+//! the verification is what makes the view standing state rather than
+//! bytes, so it happens here either way. A client with no stored pointer
+//! has nothing to revoke against: the corpus folds the absent standing
+//! pointer into its `epoch-unreached` class, and the act refuses with the
+//! same registered code.
 //!
 //! # Refusals exit through registered codes
 //!
@@ -48,6 +68,15 @@
 //! |---|---|---|
 //! | The document is not a revocation draft the command could act on | `envelope.malformed` | 65 |
 //! | No operand path, or the path does not read | `cli.usage_error` | 64 |
+//! | The draft names a tenant other than the administration configuration's | `auth.forbidden` | 78 |
+//! | The client has no standing pointer, or the draft names an epoch above it | `auth.epoch_unreached` | 65 |
+//! | The draft names the pointer's current epoch with a half the pointer does not hold | `auth.key_id_mismatch` | 65 |
+//! | The stored pointer does not verify from the pinned root | `storage.integrity_conflict` | 80 |
+//! | The store refuses the write (the epoch's key holds different bytes) | `storage.integrity_conflict` | 80 |
+//! | The administration transport is unreachable | `transport.connection_failed` | 75 |
+//! | A required configuration key resolved from no tier | `cli.decision_missing` | 64 |
+//! | The configuration is unusable, or the credential split is violated | `cli.usage_error` | 64 |
+//! | The seed reference did not resolve to protected material | `client.secret_ref_refused` | 64 |
 //!
 //! The malformed class covers every way a document can fail as a draft:
 //! not JSON, not an object, a member outside the closed set or a missing
@@ -59,10 +88,25 @@
 //! The invocation-shape refusals are the approve command's own convention
 //! for operand paths, kept identical so the two admin commands refuse
 //! alike.
+//!
+//! # Where the binary attaches this
+//!
+//! [`CommandHandler`](archivist_client_core::cli::CommandHandler) is a
+//! plain function pointer, so the handler the binary registers names one
+//! concrete administration backend; [`run`] is the function it wraps, and
+//! the registration and result envelope are the wiring deliverable's to
+//! attach. The behavior itself is complete and proven here over the seam.
 
+use archivist_auth::authority::PinnedAuthorityRoot;
+use archivist_auth::ed25519;
+use archivist_auth::revocation::{LinkedClientPointer, PublicationError, publish_revocation};
 use archivist_client_core::cli::{CliError, Invocation};
+use archivist_client_core::config::{ConfigError, ResolvedConfig};
 use archivist_protocol::json::{self, Object, Value};
-use archivist_protocol::vocabulary::{ClientId, KeyId, TenantId, Timestamp};
+use archivist_protocol::vocabulary::{ClientId, Ed25519PublicKey, KeyId, TenantId, Timestamp};
+use archivist_storage::error::{StorageError, StorageErrorKind};
+use archivist_storage_s3::config::{S3ConfigError, S3ConfigErrorKind};
+use archivist_storage_s3::control_admin::{ControlAdminBackend, ControlObjectKey};
 
 /// The registered code for a presented document that is not a revocation
 /// draft the command could act on (`tools/error-codes.toml`, class
@@ -71,6 +115,44 @@ use archivist_protocol::vocabulary::{ClientId, KeyId, TenantId, Timestamp};
 /// [`PublicationError::MalformedInput`](archivist_auth::revocation::PublicationError::MalformedInput)
 /// surfaces as.
 const MALFORMED_DRAFT: &str = "envelope.malformed";
+
+/// The registered configuration key naming the tenant authority's signing
+/// seed (`tools/config-keys.toml`).
+const AUTHORITY_SEED_KEY: &str = "admin.authority_seed_ref";
+
+/// The registered code for a draft naming a tenant other than the one the
+/// administration configuration pins (`tools/error-codes.toml`, class
+/// `authorization`).
+const CROSS_TENANT: &str = "auth.forbidden";
+
+/// The registered code for a revocation the client's standing pointer
+/// cannot have reached (`tools/error-codes.toml`, class
+/// `request_invalid`) — the corpus's `epoch-unreached` rejection class,
+/// registered here for the administrator act that refuses it.
+const EPOCH_UNREACHED: &str = "auth.epoch_unreached";
+
+/// The registered code for a revocation naming the standing pointer's
+/// current epoch with a half the pointer does not hold
+/// (`tools/error-codes.toml`, class `request_invalid`) — the corpus's
+/// `key-id-mismatch` rejection class, registered here for the
+/// administrator act that refuses it.
+const KEY_ID_MISMATCH: &str = "auth.key_id_mismatch";
+
+/// The registered code for stored control state that contradicts the act
+/// (`tools/error-codes.toml`, class `integrity_conflict`).
+const INTEGRITY_CONFLICT: &str = "storage.integrity_conflict";
+
+/// The registered code for a transport-level failure with no HTTP
+/// response (`tools/error-codes.toml`, class `network`).
+const TRANSPORT_FAILED: &str = "transport.connection_failed";
+
+/// The registered code for a required configuration field that resolved
+/// from no tier (`tools/error-codes.toml`, class `usage`).
+const DECISION_MISSING: &str = "cli.decision_missing";
+
+/// The registered code for a secret reference that did not resolve to
+/// protected material (`tools/error-codes.toml`, class `usage`, CFG-030).
+const SECRET_REF_REFUSED: &str = "client.secret_ref_refused";
 
 /// The draft document's namespace token — the identity member every
 /// parser of the shape checks first.
@@ -219,10 +301,243 @@ fn text_member<'a>(object: &'a Object, name: &str) -> Option<&'a str> {
     }
 }
 
+/// Run one `admin revoke` invocation over the given administration
+/// backend: capture the invocation's environment into the configuration
+/// snapshot, load the fully-resolved configuration, and perform the
+/// command.
+///
+/// This is the composition point a handler function pointer wraps; the
+/// backend is whatever administration transport the composing phase
+/// supplies.
+///
+/// # Errors
+/// The registered refusal of the first failing act: configuration
+/// acquisition, composition, draft parsing, tenant agreement, pointer
+/// verification, signing, or publication.
+pub fn run<B: ControlAdminBackend + Sync>(
+    invocation: &Invocation,
+    backend: B,
+) -> Result<Value, CliError> {
+    let sources = invocation
+        .config_sources()
+        .capture_environment()
+        .map_err(|error| config_fault(&error))?;
+    let resolved = sources.load().map_err(|error| config_fault(&error))?;
+    revoke_over(&resolved, invocation, backend)
+}
+
+/// Perform the command over an already-resolved configuration: read the
+/// operand draft, verify the client's standing pointer, sign the
+/// revocation with the tenant authority, publish it through the offline
+/// store, and return the revocation record document.
+///
+/// `resolved` is the invocation's fully-resolved configuration — the same
+/// value [`run`] loads. Split from it so the behavior is provable over a
+/// synthetic configuration the way the composition helper's own tests
+/// are, without touching the process environment.
+///
+/// The administration plane is composed exactly as every `admin` command
+/// composes it ([`crate::admin::compose_admin_control_plane`]): the store
+/// is assembled from the administration configuration alone, with the
+/// ingest/administration credential split enforced before any store
+/// exists, and the seed is resolved here, at the signing act, under the
+/// protected-material checks (CFG-030, SEC-006) — never at composition.
+///
+/// The pointer view is the act's recorded decision (the module docs carry
+/// it): read through the administration store's own request seam at the
+/// derived linked-client key, then verified from the pinned root. The
+/// epoch rules therefore decide against the same plane the publication
+/// writes through.
+///
+/// # Errors
+/// The registered refusal of the first failing act — composition, draft
+/// parsing, tenant agreement, seed resolution, pointer read or
+/// verification, signing, or publication; each refusal leaves stdout
+/// empty because nothing has been returned to the router.
+pub fn revoke_over<B: ControlAdminBackend + Sync>(
+    resolved: &ResolvedConfig,
+    invocation: &Invocation,
+    backend: B,
+) -> Result<Value, CliError> {
+    // The administration plane: the composition helper enforces the
+    // authority split before any store exists (the composition child's
+    // contract), and carries the seed as the unresolved reference it is.
+    let plane =
+        crate::admin::compose_admin_control_plane(resolved, backend).map_err(composition_fault)?;
+
+    // The draft: the operand path's bytes, parsed into the validated
+    // members. Every document-content refusal is already decided here,
+    // before any control-plane act runs.
+    let draft = read_draft(invocation)?;
+
+    // The draft's tenant must be the tenant this administration plane
+    // acts for: the seed resolves that tenant's authority, and a record
+    // signed across that line would verify for no one. The store's own
+    // scope check would refuse the write; refusing here names the
+    // registered cross-tenant condition before anything is signed.
+    let tenant = plane.store().config().tenant().clone();
+    if draft.tenant_id() != &tenant {
+        return Err(CliError::registered(CROSS_TENANT));
+    }
+
+    // The seed: resolved now, at the signing act, under the protected-
+    // material checks (CFG-030). Exactly the 32 bytes an Ed25519 signing
+    // seed is; anything else is a reference that did not resolve to the
+    // protected material the key declares.
+    let secret = resolved
+        .resolve_secret(AUTHORITY_SEED_KEY)
+        .map_err(|error| config_fault(&error))?;
+    let seed: [u8; 32] = secret
+        .as_bytes()
+        .try_into()
+        .map_err(|_| CliError::registered(SECRET_REF_REFUSED))?;
+
+    // The pinned root: the tenant the administration configuration pins,
+    // and the public half the seed derives — the deployment's own anchor,
+    // the same one `admin approve` signs and every reader verifies from.
+    let root = PinnedAuthorityRoot::new(
+        tenant.clone(),
+        Ed25519PublicKey::from_raw(ed25519::public_key_from_seed(&seed)),
+    );
+
+    // One runtime drives the async acts; the verification fetch runs
+    // while no other block is outstanding, so nesting is impossible.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| CliError::internal())?;
+
+    // The pointer view: read through the same seam the publication will
+    // write through, at the derived linked-client key — then verified
+    // from the pinned root, so the epoch rules decide against verified
+    // standing state and not merely stored bytes. An absent pointer is
+    // the corpus's `epoch-unreached` class (there is no epoch the client
+    // holds, so none the draft could name); a pointer that fails
+    // verification is stored state the act must not build on, the
+    // stop-and-page-operator class.
+    let pointer_key = ControlObjectKey::linked_client(&tenant, draft.client_id());
+    let pointer = match runtime.block_on(plane.store().backend().get_control_object(&pointer_key)) {
+        Ok(Some(bytes)) => {
+            let fetch = |key_id: &KeyId| {
+                let key = ControlObjectKey::authority_rotation(&tenant, key_id);
+                runtime
+                    .block_on(plane.store().backend().get_control_object(&key))
+                    .ok()
+                    .flatten()
+            };
+            LinkedClientPointer::verify(&root, &bytes, fetch, draft.client_id())
+                .map_err(|_| CliError::registered(INTEGRITY_CONFLICT))?
+        }
+        Ok(None) => return Err(CliError::registered(EPOCH_UNREACHED)),
+        Err(error) => return Err(transport_fault(error)),
+    };
+
+    // Sign. The two epoch rules are the publication's own; each surfaces
+    // as its registered code. The publication is deterministic in the
+    // draft's members: the same draft signs the same bytes, which is what
+    // makes the store's identical-bytes replay an idempotent repair.
+    let publication = publish_revocation(
+        &seed,
+        &tenant,
+        draft.client_id(),
+        draft.revoke_epoch(),
+        draft.revoked_key_id(),
+        &pointer,
+        draft.signed_at(),
+    )
+    .map_err(publication_fault)?;
+
+    // Publish through the offline store: the signed immutable record at
+    // its derived revocation key, with the immutable class's write rules
+    // — including the byte-identical replay — the store already enforces.
+    runtime
+        .block_on(plane.store().put_revocation(&publication))
+        .map_err(storage_fault)?;
+
+    // The result document is the record itself, parsed back from its
+    // canonical bytes; the router frames it (bare document, or the output
+    // envelope under `--json`). The registration and framing are the
+    // wiring deliverable's.
+    json::parse(publication.envelope()).map_err(|_| CliError::internal())
+}
+
+/// Map a configuration condition onto its registered CLI code: the code
+/// the loader chose already names the registered condition (CLI-002).
+fn config_fault(error: &ConfigError) -> CliError {
+    CliError::registered(error.code().token())
+}
+
+/// Map a composition refusal onto the usage family, exactly as the
+/// approve command maps it: a configuration that cannot assemble into a
+/// working administration plane is a fix-the-invocation condition (exit
+/// 64) whatever the concrete diagnostic, and a missing setting is its own
+/// registered code.
+fn composition_fault(error: S3ConfigError) -> CliError {
+    match error.kind() {
+        S3ConfigErrorKind::MissingSetting => CliError::registered(DECISION_MISSING),
+        S3ConfigErrorKind::MalformedSetting
+        | S3ConfigErrorKind::TransportMismatch
+        | S3ConfigErrorKind::DuplicateIdentity => CliError::usage(),
+    }
+}
+
+/// Map the publication's own refusals onto their registered codes: the
+/// two epoch rules are the corpus's rejection classes, registered for
+/// this act, and a malformed member is the draft refusal code — the parse
+/// has already refused the two member conditions that reach it, so this
+/// surface is defense in depth.
+fn publication_fault(error: PublicationError) -> CliError {
+    match error {
+        PublicationError::MalformedInput => CliError::registered(MALFORMED_DRAFT),
+        PublicationError::EpochUnreached => CliError::registered(EPOCH_UNREACHED),
+        PublicationError::KeyIdMismatch => CliError::registered(KEY_ID_MISMATCH),
+    }
+}
+
+/// Map a control-plane read or write that failed below the record rules
+/// onto its registered code: an unreachable transport is its own class,
+/// and every other kind is a store invariant this act's construction
+/// already satisfies, refused as internal rather than guessed at.
+fn transport_fault(error: StorageError) -> CliError {
+    match error.kind() {
+        StorageErrorKind::Unavailable | StorageErrorKind::CapabilityUnavailable => {
+            CliError::registered(TRANSPORT_FAILED)
+        }
+        _ => CliError::internal(),
+    }
+}
+
+/// Map the store's write refusal onto its registered code: the one
+/// refusal the immutable class produces beyond a down transport is stored
+/// state the write cannot displace — an occupied epoch key holding
+/// different bytes — which is the integrity class; every other kind is a
+/// store invariant this act's construction already satisfies.
+fn storage_fault(error: StorageError) -> CliError {
+    match error.kind() {
+        StorageErrorKind::StaleEpoch | StorageErrorKind::IntegrityConflict => {
+            CliError::registered(INTEGRITY_CONFLICT)
+        }
+        StorageErrorKind::Unavailable | StorageErrorKind::CapabilityUnavailable => {
+            CliError::registered(TRANSPORT_FAILED)
+        }
+        _ => CliError::internal(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::fs::Permissions;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    use std::sync::{Arc, Mutex};
+
+    use archivist_auth::identity::InstallationIdentity;
+    use archivist_auth::link::{LinkRequest, RequestedScopes, ScopeOperation};
+    use archivist_auth::revocation::RevocationRecord;
     use archivist_client_core::cli::parse::{self, Parsed};
     use archivist_client_core::cli::registry::Registry;
+    use archivist_client_core::config::ConfigSources;
+    use archivist_protocol::vocabulary::{Ed25519PublicKey, HarnessId};
 
     use super::*;
 
@@ -423,6 +738,610 @@ mod tests {
         )))
         .expect_err("an unreadable operand refuses");
         assert_eq!(error.code(), CliError::usage().code());
+        assert_eq!(error.exit_code(), 64);
+    }
+
+    // -------------------------------------------------------------------
+    // The sign-and-persist act ([`revoke_over`]), over the mock
+    // `ControlAdminBackend` seam. The store-level replay idempotence is
+    // the control-admin store's own contract (aa-e3097744) and is only
+    // ridden here, not re-proven.
+    // -------------------------------------------------------------------
+
+    /// The signing authority's seed (synthetic fixture, stable across the
+    /// family's vectors) and the client seed whose public half the linked
+    /// story's standing pointer certifies.
+    const AUTHORITY_SEED: [u8; 32] = [0x17; 32];
+    const CLIENT_SEED: [u8; 32] = [0x2a; 32];
+
+    /// A second valid tenant, for the cross-tenant refusal.
+    const OTHER_TENANT: &str = "00000000-1111-4222-8333-444444444444";
+
+    fn tenant_id() -> TenantId {
+        TENANT.parse().expect("grammar")
+    }
+
+    fn client_id() -> ClientId {
+        CLIENT.parse().expect("grammar")
+    }
+
+    /// The key ID a seed's public half derives — the pinned derivation
+    /// every record's `key_id` member must agree with.
+    fn key_hex_of(seed: &[u8; 32]) -> String {
+        KeyId::from_public_key(&Ed25519PublicKey::from_raw(ed25519::public_key_from_seed(
+            seed,
+        )))
+        .to_hex()
+    }
+
+    /// The standing half the fixture's linked-client pointer certifies:
+    /// the derivation of the client seed's public half.
+    fn standing_half() -> String {
+        key_hex_of(&CLIENT_SEED)
+    }
+
+    /// A canonical draft document with the fixture's tenant, client, and
+    /// instant, and the caller's epoch and revoked key.
+    fn act_draft(epoch: u64, revoked_key_hex: &str) -> Vec<u8> {
+        act_draft_for(TENANT, epoch, revoked_key_hex)
+    }
+
+    /// [`act_draft`] naming an explicit tenant, for the cross-tenant
+    /// refusal.
+    fn act_draft_for(tenant: &str, epoch: u64, revoked_key_hex: &str) -> Vec<u8> {
+        let mut object = Object::new();
+        object.set("schema", text(DRAFT_SCHEMA));
+        object.set("tenant_id", text(tenant));
+        object.set("client_id", text(CLIENT));
+        object.set("revoked_key_id", text(revoked_key_hex));
+        let epoch_member = i64::try_from(epoch).expect("a fixture epoch fits");
+        object.set("authorization_epoch", Value::Int(epoch_member));
+        object.set("signed_at", text(SIGNED_AT));
+        Value::Object(object).canonical_bytes()
+    }
+
+    /// The link-request document the approve command signs to create the
+    /// fixture's standing pointer: the client seed's public identity for
+    /// this tenant, ingest scope.
+    fn link_draft_document() -> Vec<u8> {
+        let identity =
+            InstallationIdentity::from_seed(client_id(), CLIENT_SEED, public_of(&CLIENT_SEED))
+                .expect("derives");
+        let scopes = RequestedScopes::new(
+            vec![HarnessId::parse("claude-code").expect("grammar")],
+            vec![ScopeOperation::Ingest],
+        )
+        .expect("an in-bounds scope");
+        LinkRequest::new(identity.public_identity(), tenant_id(), scopes).canonical_bytes()
+    }
+
+    fn public_of(seed: &[u8; 32]) -> Ed25519PublicKey {
+        Ed25519PublicKey::from_raw(ed25519::public_key_from_seed(seed))
+    }
+
+    /// The backend seam: map-backed, shared with the test through a clone
+    /// so the test seeds the standing pointer and inspects what the act
+    /// wrote.
+    #[derive(Debug, Default, Clone)]
+    struct ActBackend {
+        objects: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+    }
+
+    impl ControlAdminBackend for ActBackend {
+        async fn get_control_object(
+            &self,
+            key: &ControlObjectKey,
+        ) -> Result<Option<Vec<u8>>, StorageError> {
+            Ok(self
+                .objects
+                .lock()
+                .expect("test backend lock")
+                .get(key.as_str())
+                .cloned())
+        }
+
+        async fn put_control_object(
+            &self,
+            key: &ControlObjectKey,
+            envelope: &[u8],
+        ) -> Result<(), StorageError> {
+            self.objects
+                .lock()
+                .expect("test backend lock")
+                .insert(key.as_str().to_owned(), envelope.to_vec());
+            Ok(())
+        }
+    }
+
+    /// A backend whose transport is down, for the transport-fault mapping.
+    #[derive(Debug, Default)]
+    struct DownBackend;
+
+    impl ControlAdminBackend for DownBackend {
+        async fn get_control_object(
+            &self,
+            _key: &ControlObjectKey,
+        ) -> Result<Option<Vec<u8>>, StorageError> {
+            Err(StorageError::of_kind(StorageErrorKind::Unavailable))
+        }
+
+        async fn put_control_object(
+            &self,
+            _key: &ControlObjectKey,
+            _envelope: &[u8],
+        ) -> Result<(), StorageError> {
+            Err(StorageError::of_kind(StorageErrorKind::Unavailable))
+        }
+    }
+
+    /// The synthetic environment of a fully-declared host, mirroring the
+    /// composition fixture: every required key through the snapshot's
+    /// environment tier, the administration credential a never-resolved
+    /// `env:` target, and the authority seed a protected file the fixture
+    /// writes.
+    fn base_sources(seed_ref: &str) -> ConfigSources {
+        ConfigSources::non_interactive()
+            .env("HOME", "/home/operator")
+            .env(
+                "ARCHIVIST_INGEST_ENDPOINT_URL",
+                "https://ingest.example.invalid",
+            )
+            .env(
+                "ARCHIVIST_STORAGE_ENDPOINT_URL",
+                "https://s3.example.invalid",
+            )
+            .env("ARCHIVIST_STORAGE_REGION", "us-east-1")
+            .env("ARCHIVIST_STORAGE_ENCRYPTION", "s3_sse")
+            .env("ARCHIVIST_STORAGE_RAW_BUCKET", "archivist-raw-example")
+            .env(
+                "ARCHIVIST_STORAGE_CONTROL_BUCKET",
+                "archivist-control-example",
+            )
+            .env(
+                "ARCHIVIST_STORAGE_RAW_WRITE_CREDENTIALS_REF",
+                "env:TEST_RAW_CREDENTIAL",
+            )
+            .env(
+                "ARCHIVIST_STORAGE_CONTROL_READ_CREDENTIALS_REF",
+                "env:TEST_CONTROL_CREDENTIAL",
+            )
+            .env("ARCHIVIST_SERVER_LISTEN_ADDRESS", "127.0.0.1:8087")
+            .env(
+                "ARCHIVIST_ADMIN_ENDPOINT_URL",
+                "https://control.example.invalid",
+            )
+            .env("ARCHIVIST_ADMIN_REGION", "us-east-1")
+            .env(
+                "ARCHIVIST_ADMIN_CONTROL_BUCKET",
+                "archivist-control-example",
+            )
+            .env("ARCHIVIST_ADMIN_TENANT", TENANT)
+            .env(
+                "ARCHIVIST_ADMIN_CREDENTIALS_REF",
+                "env:TEST_ADMIN_CREDENTIAL",
+            )
+            .env("ARCHIVIST_ADMIN_AUTHORITY_SEED_REF", seed_ref)
+    }
+
+    /// Write `bytes` to a process-unique scratch path and return the bare
+    /// path — the form an operand or a reference target takes.
+    fn write_scratch(what: &str, bytes: &[u8], mode: u32) -> std::path::PathBuf {
+        let path = scratch_name(what);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(mode)
+            .open(&path)
+            .expect("scratch file creates");
+        std::fs::write(&path, bytes).expect("scratch bytes write");
+        std::fs::set_permissions(&path, Permissions::from_mode(mode))
+            .expect("scratch file tightens");
+        path
+    }
+
+    /// Write a protected authority-seed file (mode 0600) and return the
+    /// canonical `file:` reference text the configuration tier carries.
+    fn protected_seed_ref(bytes: &[u8]) -> String {
+        let path = write_scratch("seed", bytes, 0o600);
+        format!("file:{}", path.display())
+    }
+
+    /// Remove a scratch path a fixture wrote.
+    fn remove_scratch(path: &std::path::Path) {
+        std::fs::remove_file(path).expect("scratch file removes");
+    }
+
+    /// Remove the seed file a `file:` reference names (the reference's
+    /// own target, so the text is safe to parse here).
+    fn remove_seed_ref(seed_ref: &str) {
+        let path = seed_ref.strip_prefix("file:").expect("file reference");
+        remove_scratch(std::path::Path::new(path));
+    }
+
+    /// An invocation of the `admin approve` command over the real
+    /// registry, with the link-request path as its operand — the fixture
+    /// publishes the standing pointer through the approve command's own
+    /// act, so the revocation act decides against a genuinely published
+    /// pointer.
+    fn approve_invocation(draft_path: &str) -> Invocation {
+        let args = [
+            "--non-interactive".to_owned(),
+            "admin".to_owned(),
+            "approve".to_owned(),
+            draft_path.to_owned(),
+        ];
+        let args = args.iter().map(std::ffi::OsString::from).collect::<Vec<_>>();
+        let registry = Registry::pinned();
+        match parse::parse(&args, registry).expect("the invocation parses") {
+            Parsed::Command(invocation) => invocation,
+            other => panic!("the parser returned {other:?} for a command invocation"),
+        }
+    }
+
+    /// The derived key the fixture's standing pointer sits at.
+    fn pointer_key() -> String {
+        ControlObjectKey::linked_client(&tenant_id(), &client_id())
+            .as_str()
+            .to_owned()
+    }
+
+    /// The derived key the fixture's epoch-1 revocation lands at.
+    fn revocation_key() -> String {
+        archivist_auth::revocation::revocation_object_key(&tenant_id(), &client_id(), 1)
+    }
+
+    /// A snapshot of the seam's objects, for unchanged-store assertions.
+    fn snapshot(backend: &ActBackend) -> BTreeMap<String, Vec<u8>> {
+        backend.objects.lock().expect("test backend lock").clone()
+    }
+
+    /// Create the fixture's standing pointer by publishing the approve
+    /// command's own linked-client record: the act under test then
+    /// decides against a pointer that genuinely landed through the same
+    /// plane it writes through.
+    fn publish_standing_pointer(resolved: &ResolvedConfig, backend: &ActBackend) {
+        let link_path = write_scratch("link", &link_draft_document(), 0o600);
+        let link_operand = link_path.to_str().expect("utf-8 scratch path");
+        crate::approve::approve_over(resolved, &approve_invocation(link_operand), backend.clone())
+            .expect("the fixture link publishes");
+        remove_scratch(&link_path);
+    }
+
+    #[test]
+    fn valid_draft_signs_and_persists_the_revocation_end_to_end() {
+        let seed_ref = protected_seed_ref(&AUTHORITY_SEED);
+        let resolved = base_sources(&seed_ref).load().expect("the host loads");
+        let backend = ActBackend::default();
+        publish_standing_pointer(&resolved, &backend);
+        let draft_path = write_scratch("draft", &act_draft(1, &standing_half()), 0o600);
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+
+        let document = revoke_over(&resolved, &invocation(Some(draft_operand)), backend.clone())
+            .expect("the golden draft signs and persists");
+        remove_seed_ref(&seed_ref);
+        remove_scratch(&draft_path);
+
+        // The emitted document is the revocation record: exactly the
+        // members the signing act builds, carrying this draft's act.
+        let Value::Object(ref members) = document else {
+            panic!("the result document is an object");
+        };
+        let required: &[&str] = &[
+            "authority_key_id",
+            "authority_signature",
+            "authorization_epoch",
+            "client_id",
+            "record_kind",
+            "record_type",
+            "revoked_key_id",
+            "schema",
+            "signed_at",
+            "tenant_id",
+        ];
+        assert_eq!(members.len(), required.len(), "the record is closed");
+        for name in required {
+            assert!(members.get(name).is_some(), "the record names {name}");
+        }
+        assert!(
+            matches!(members.get("schema"), Some(Value::Text(token)) if token == "archivist.control/v1")
+        );
+        assert!(
+            matches!(members.get("record_type"), Some(Value::Text(token)) if token == "revocation")
+        );
+        assert!(
+            matches!(members.get("record_kind"), Some(Value::Text(token)) if token == "immutable")
+        );
+        assert!(matches!(
+            members.get("authorization_epoch"),
+            Some(Value::Int(1))
+        ));
+        assert!(
+            matches!(members.get("revoked_key_id"), Some(Value::Text(token)) if *token == standing_half())
+        );
+
+        // The store holds the record at its derived key, and it verifies
+        // from the pinned root the way a reader would.
+        let stored = backend
+            .objects
+            .lock()
+            .expect("test backend lock")
+            .get(&revocation_key())
+            .cloned()
+            .expect("the record published");
+        let root = PinnedAuthorityRoot::new(tenant_id(), public_of(&AUTHORITY_SEED));
+        let no_links = |_: &KeyId| None;
+        RevocationRecord::verify(&root, &stored, no_links, &client_id(), 1)
+            .expect("the stored record verifies from the pinned root");
+    }
+
+    /// The lost-response retry of one administrative revoke: the same
+    /// draft signs the same bytes, and the store's identical-bytes rule
+    /// lands the replay as an idempotent repair — the second act succeeds
+    /// and the seam is byte-for-byte unchanged.
+    #[test]
+    fn replayed_revocation_is_the_idempotent_repair() {
+        let seed_ref = protected_seed_ref(&AUTHORITY_SEED);
+        let resolved = base_sources(&seed_ref).load().expect("the host loads");
+        let backend = ActBackend::default();
+        publish_standing_pointer(&resolved, &backend);
+        let draft_path = write_scratch("draft", &act_draft(1, &standing_half()), 0o600);
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+
+        let first = revoke_over(&resolved, &invocation(Some(draft_operand)), backend.clone())
+            .expect("the first act publishes");
+        let before = snapshot(&backend);
+        let second = revoke_over(&resolved, &invocation(Some(draft_operand)), backend.clone())
+            .expect("the replay repairs idempotently");
+        remove_seed_ref(&seed_ref);
+        remove_scratch(&draft_path);
+
+        // Deterministic signing: the replay's document is byte-identical,
+        // and the store holds exactly what it held.
+        assert_eq!(
+            Value::Object(match first {
+                Value::Object(members) => members,
+                other => panic!("the first document is an object, got {other:?}"),
+            })
+            .canonical_bytes(),
+            Value::Object(match second {
+                Value::Object(members) => members,
+                other => panic!("the replay document is an object, got {other:?}"),
+            })
+            .canonical_bytes(),
+        );
+        assert_eq!(snapshot(&backend), before);
+    }
+
+    /// A draft naming an epoch above the standing pointer refuses through
+    /// the registered unreached code, and nothing is written.
+    #[test]
+    fn an_epoch_above_the_pointer_refuses_with_the_unreached_code() {
+        let seed_ref = protected_seed_ref(&AUTHORITY_SEED);
+        let resolved = base_sources(&seed_ref).load().expect("the host loads");
+        let backend = ActBackend::default();
+        publish_standing_pointer(&resolved, &backend);
+        let draft_path = write_scratch("draft", &act_draft(5, &standing_half()), 0o600);
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+
+        let error = revoke_over(&resolved, &invocation(Some(draft_operand)), backend.clone())
+            .expect_err("a forward-dated revocation refuses");
+        remove_seed_ref(&seed_ref);
+        remove_scratch(&draft_path);
+
+        assert_eq!(error.code(), EPOCH_UNREACHED);
+        assert_eq!(error.exit_code(), 65);
+        // Only the standing pointer is in the seam; no revocation landed.
+        let objects = snapshot(&backend);
+        assert_eq!(objects.len(), 1, "only the pointer is stored");
+        assert!(objects.contains_key(&pointer_key()));
+    }
+
+    /// A draft naming the pointer's current epoch with a half the pointer
+    /// does not hold refuses through the registered mismatch code, and
+    /// nothing is written.
+    #[test]
+    fn a_foreign_half_at_the_current_epoch_refuses_with_the_mismatch_code() {
+        let seed_ref = protected_seed_ref(&AUTHORITY_SEED);
+        let resolved = base_sources(&seed_ref).load().expect("the host loads");
+        let backend = ActBackend::default();
+        publish_standing_pointer(&resolved, &backend);
+        let foreign = key_hex_of(&[0x99; 32]);
+        let draft_path = write_scratch("draft", &act_draft(1, &foreign), 0o600);
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+
+        let error = revoke_over(&resolved, &invocation(Some(draft_operand)), backend.clone())
+            .expect_err("a mismatched half refuses");
+        remove_seed_ref(&seed_ref);
+        remove_scratch(&draft_path);
+
+        assert_eq!(error.code(), KEY_ID_MISMATCH);
+        assert_eq!(error.exit_code(), 65);
+        let objects = snapshot(&backend);
+        assert_eq!(objects.len(), 1, "only the pointer is stored");
+        assert!(objects.contains_key(&pointer_key()));
+    }
+
+    /// A client with no standing pointer has no epoch the draft could
+    /// name: the corpus folds the absent pointer into its
+    /// `epoch-unreached` class, and the act refuses with the same
+    /// registered code.
+    #[test]
+    fn a_revocation_without_a_standing_pointer_refuses_as_unreached() {
+        let seed_ref = protected_seed_ref(&AUTHORITY_SEED);
+        let resolved = base_sources(&seed_ref).load().expect("the host loads");
+        let backend = ActBackend::default();
+        let draft_path = write_scratch("draft", &act_draft(1, &standing_half()), 0o600);
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+
+        let error = revoke_over(&resolved, &invocation(Some(draft_operand)), backend.clone())
+            .expect_err("an unlinked client refuses");
+        remove_seed_ref(&seed_ref);
+        remove_scratch(&draft_path);
+
+        assert_eq!(error.code(), EPOCH_UNREACHED);
+        assert_eq!(error.exit_code(), 65);
+        assert!(snapshot(&backend).is_empty());
+    }
+
+    /// A draft naming a tenant other than the administration
+    /// configuration's refuses through the registered cross-tenant code
+    /// before anything is signed.
+    #[test]
+    fn a_cross_tenant_draft_refuses_with_the_forbidden_code() {
+        let seed_ref = protected_seed_ref(&AUTHORITY_SEED);
+        let resolved = base_sources(&seed_ref).load().expect("the host loads");
+        let backend = ActBackend::default();
+        let draft_path = write_scratch(
+            "draft",
+            &act_draft_for(OTHER_TENANT, 1, &standing_half()),
+            0o600,
+        );
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+
+        let error = revoke_over(&resolved, &invocation(Some(draft_operand)), backend.clone())
+            .expect_err("a cross-tenant draft refuses");
+        remove_seed_ref(&seed_ref);
+        remove_scratch(&draft_path);
+
+        assert_eq!(error.code(), CROSS_TENANT);
+        assert_eq!(error.exit_code(), 78);
+        assert!(snapshot(&backend).is_empty());
+    }
+
+    /// An unreachable administration transport refuses through the
+    /// registered transport code at the pointer read, before anything is
+    /// signed.
+    #[test]
+    fn a_transport_that_cannot_read_refuses_with_the_transport_code() {
+        let seed_ref = protected_seed_ref(&AUTHORITY_SEED);
+        let resolved = base_sources(&seed_ref).load().expect("the host loads");
+        let draft_path = write_scratch("draft", &act_draft(1, &standing_half()), 0o600);
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+
+        let error = revoke_over(&resolved, &invocation(Some(draft_operand)), DownBackend)
+            .expect_err("a down transport refuses");
+        remove_seed_ref(&seed_ref);
+        remove_scratch(&draft_path);
+
+        assert_eq!(error.code(), TRANSPORT_FAILED);
+        assert_eq!(error.exit_code(), 75);
+    }
+
+    /// A stored pointer that fails verification from the pinned root is
+    /// stored state the act must not build on: the integrity class, with
+    /// nothing signed and nothing written.
+    #[test]
+    fn a_pointer_that_fails_verification_refuses_with_the_integrity_code() {
+        let seed_ref = protected_seed_ref(&AUTHORITY_SEED);
+        let resolved = base_sources(&seed_ref).load().expect("the host loads");
+        let backend = ActBackend::default();
+        publish_standing_pointer(&resolved, &backend);
+        // Corrupt the standing pointer in place: shape-plausible bytes
+        // that are not a linked-client record the root stands behind.
+        backend.objects.lock().expect("test backend lock").insert(
+            pointer_key(),
+            b"{\"schema\":\"archivist.control/v1\"}".to_vec(),
+        );
+        let draft_path = write_scratch("draft", &act_draft(1, &standing_half()), 0o600);
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+
+        let error = revoke_over(&resolved, &invocation(Some(draft_operand)), backend.clone())
+            .expect_err("a corrupt pointer refuses");
+        remove_seed_ref(&seed_ref);
+        remove_scratch(&draft_path);
+
+        assert_eq!(error.code(), INTEGRITY_CONFLICT);
+        assert_eq!(error.exit_code(), 80);
+        // The corrupted pointer is the only object; nothing was written.
+        assert_eq!(snapshot(&backend).len(), 1);
+    }
+
+    /// A malformed draft refuses through the registered document code
+    /// before any control-plane act runs — no pointer read, no signing,
+    /// nothing written.
+    #[test]
+    fn a_malformed_draft_refuses_before_any_control_plane_act() {
+        let seed_ref = protected_seed_ref(&AUTHORITY_SEED);
+        let resolved = base_sources(&seed_ref).load().expect("the host loads");
+        let backend = ActBackend::default();
+        let draft_path = write_scratch("draft", b"not json", 0o600);
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+
+        let error = revoke_over(&resolved, &invocation(Some(draft_operand)), backend.clone())
+            .expect_err("a malformed draft refuses");
+        remove_seed_ref(&seed_ref);
+        remove_scratch(&draft_path);
+
+        assert_eq!(error.code(), MALFORMED_DRAFT);
+        assert_eq!(error.exit_code(), 65);
+        assert!(snapshot(&backend).is_empty());
+    }
+
+    /// A seed reference whose target is not the protected material the
+    /// key declares refuses through the registered secret-reference code
+    /// before the pointer is read.
+    #[test]
+    fn a_wrong_length_seed_refuses_with_the_secret_reference_code() {
+        let seed_ref = protected_seed_ref(&AUTHORITY_SEED[..31]);
+        let resolved = base_sources(&seed_ref).load().expect("the host loads");
+        let backend = ActBackend::default();
+        let draft_path = write_scratch("draft", &act_draft(1, &standing_half()), 0o600);
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+
+        let error = revoke_over(&resolved, &invocation(Some(draft_operand)), backend.clone())
+            .expect_err("a wrong-length seed refuses");
+        remove_seed_ref(&seed_ref);
+        remove_scratch(&draft_path);
+
+        assert_eq!(error.code(), SECRET_REF_REFUSED);
+        assert_eq!(error.exit_code(), 64);
+        assert!(snapshot(&backend).is_empty());
+    }
+
+    #[test]
+    fn publication_refusals_map_onto_their_registered_codes() {
+        let malformed = publication_fault(PublicationError::MalformedInput);
+        assert_eq!(malformed.code(), MALFORMED_DRAFT);
+        assert_eq!(malformed.exit_code(), 65);
+        let unreached = publication_fault(PublicationError::EpochUnreached);
+        assert_eq!(unreached.code(), EPOCH_UNREACHED);
+        assert_eq!(unreached.exit_code(), 65);
+        let mismatch = publication_fault(PublicationError::KeyIdMismatch);
+        assert_eq!(mismatch.code(), KEY_ID_MISMATCH);
+        assert_eq!(mismatch.exit_code(), 65);
+    }
+
+    #[test]
+    fn storage_and_transport_refusals_map_onto_their_registered_codes() {
+        let conflict = storage_fault(StorageError::new(
+            StorageErrorKind::IntegrityConflict,
+            "the epoch key holds other bytes",
+        ));
+        assert_eq!(conflict.code(), INTEGRITY_CONFLICT);
+        assert_eq!(conflict.exit_code(), 80);
+        let stale = storage_fault(StorageError::of_kind(StorageErrorKind::StaleEpoch));
+        assert_eq!(stale.code(), INTEGRITY_CONFLICT);
+        assert_eq!(stale.exit_code(), 80);
+        let down = transport_fault(StorageError::of_kind(StorageErrorKind::Unavailable));
+        assert_eq!(down.code(), TRANSPORT_FAILED);
+        assert_eq!(down.exit_code(), 75);
+        let internal = storage_fault(StorageError::of_kind(StorageErrorKind::MalformedInput));
+        assert_eq!(internal.code(), CliError::internal().code());
+        assert_eq!(internal.exit_code(), 70);
+    }
+
+    /// The production entry loads the resolved configuration from the
+    /// invocation's sources: an undeclared host refuses at the load with
+    /// the decision-missing code, exactly as the approve entry does.
+    #[test]
+    fn run_loads_the_invocation_configuration_and_drives_the_command() {
+        let draft_path = write_scratch("draft", &act_draft(1, &standing_half()), 0o600);
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+        let error = run(&invocation(Some(draft_operand)), ActBackend::default())
+            .expect_err("an undeclared host refuses at the load");
+        remove_scratch(&draft_path);
+
+        assert_eq!(error.code(), DECISION_MISSING);
         assert_eq!(error.exit_code(), 64);
     }
 }
