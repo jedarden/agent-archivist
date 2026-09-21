@@ -11,6 +11,12 @@ repository.workspace = true
 
 [dependencies]
 archivist-adapter-sdk = { path = "../archivist-adapter-sdk" }
+# The OpenCode source is a SQLite database (plan Phase 6B): the reader
+# opens it with the same pinned, bundled driver the client state uses, so
+# one SQLite build serves both and the adapter never inherits the host's
+# library version (docs/notes/crate-ownership.md rule 3 keeps the
+# dependency inside this crate).
+rusqlite.workspace = true
 
 [lints]
 workspace = true

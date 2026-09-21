@@ -40,7 +40,9 @@ broken_intra_doc_links = "deny"
 # Backs the client state database (plan Section 7.9): WAL mode, explicit
 # migrations, one mutator. `bundled` compiles a pinned SQLite so client state
 # never depends on the host's library version; `default-features = false`
-# keeps the prepared-statement cache and wasm paths out of the build.
+# keeps the prepared-statement cache and wasm paths out of the build. The
+# OpenCode reader (plan Phase 6B) shares the pin for its read-only store
+# connection.
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 # Probes the filesystem free space behind the spool directory (plan Section
 # 7.9's free-space floor): `statvfs` is the one measurement the standard

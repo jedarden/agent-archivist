@@ -21,6 +21,7 @@ name = "archivist-adapter-opencode"
 version = "0.1.0"
 dependencies = [
  "archivist-adapter-sdk",
+ "rusqlite",
 ]
 
 [[package]]
@@ -59,6 +60,7 @@ dependencies = [
  "archivist-server",
  "archivist-storage",
  "archivist-storage-s3",
+ "tokio",
 ]
 
 [[package]]
