@@ -194,6 +194,10 @@ keys = [
   "admin.credentials_ref",
   "admin.authority_seed_ref",
 ]
+# The emitted document is the revocation record the command signs and
+# publishes (CLI-015): the tenant-authority-signed epoch boundary
+# `schemas/v1/control-revocation.json` pins.
+result_schema = "schemas/v1/control-revocation.json"
 
 [commands."admin rotate"]
 summary = "Record a client key rotation with overlapping verification and a monotonic authorization epoch from the supplied draft."

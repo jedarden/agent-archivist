@@ -1347,4 +1347,107 @@ mod tests {
         assert_eq!(error.code(), DECISION_MISSING);
         assert_eq!(error.exit_code(), 64);
     }
+
+    /// The const a result-schema member pins, as its text: the identity
+    /// tokens the registered schema closes the record's type and kind
+    /// with.
+    fn schema_const(properties: &Object, member: &str) -> String {
+        let Value::Object(contract) = properties.get(member).expect("member contract") else {
+            panic!("the {member} contract is an object");
+        };
+        match contract.get("const") {
+            Some(Value::Text(token)) => token.clone(),
+            other => panic!("the {member} const is text, not {other:?}"),
+        }
+    }
+
+    /// The emitted document conforms to the registered result schema
+    /// (CLI-015): the schema file the registry entry names is read from
+    /// the tree it is committed to, and the record the command emits is
+    /// checked against that file's own closed member set and pinned
+    /// identity tokens — the registered contract and the emitted
+    /// document cannot drift apart unnoticed, and this test keeps no
+    /// second copy of either.
+    #[test]
+    fn the_emitted_document_conforms_to_the_registered_result_schema() {
+        let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schemas/v1/control-revocation.json");
+        let schema_bytes = std::fs::read(schema_path).expect("the schema is committed");
+        let Value::Object(schema) = json::parse(&schema_bytes).expect("the schema parses") else {
+            panic!("the schema is an object");
+        };
+        let Value::Array(required) = schema.get("required").expect("the closed member set") else {
+            panic!("the member set is an array of names");
+        };
+        let Value::Object(properties) = schema.get("properties").expect("the member contracts")
+        else {
+            panic!("the member contracts are an object");
+        };
+
+        let seed_ref = protected_seed_ref(&AUTHORITY_SEED);
+        let resolved = base_sources(&seed_ref).load().expect("the host loads");
+        let backend = ActBackend::default();
+        publish_standing_pointer(&resolved, &backend);
+        let draft_path = write_scratch("draft", &act_draft(1, &standing_half()), 0o600);
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+
+        let document = revoke_over(&resolved, &invocation(Some(draft_operand)), backend)
+            .expect("the golden draft signs and persists");
+        remove_seed_ref(&seed_ref);
+        remove_scratch(&draft_path);
+
+        let Value::Object(record) = document else {
+            panic!("the result document is an object");
+        };
+        // The closed member set: the record carries exactly the members
+        // the registered schema requires and pins, counted against the
+        // file itself rather than a restated list.
+        assert_eq!(
+            record.len(),
+            required.len(),
+            "the record carries the registered member count"
+        );
+        for name in required {
+            let Value::Text(name) = name else {
+                panic!("a member name is text");
+            };
+            assert!(record.get(name).is_some(), "the record carries {name}");
+            assert!(properties.get(name).is_some(), "the schema pins {name}");
+        }
+        // The identity tokens the schema pins as consts: the file is a
+        // revocation record's contract, immutable in the record's own
+        // class, and the emitted record is exactly that.
+        let recorded_type = match record.get("record_type") {
+            Some(Value::Text(token)) => token.clone(),
+            other => panic!("the record's record_type is text, not {other:?}"),
+        };
+        assert_eq!(recorded_type, schema_const(properties, "record_type"));
+        let recorded_kind = match record.get("record_kind") {
+            Some(Value::Text(token)) => token.clone(),
+            other => panic!("the record's record_kind is text, not {other:?}"),
+        };
+        assert_eq!(recorded_kind, schema_const(properties, "record_kind"));
+    }
+
+    /// The shape the router accepts for one command: the reachability
+    /// proof's handler, refusing at the usage family should a
+    /// composition ever reach it.
+    fn composition_proof_handler(_invocation: &Invocation) -> Result<Value, CliError> {
+        Err(CliError::usage())
+    }
+
+    /// The command is attachable from the binary's composition point:
+    /// the registry entry now carries its result schema (CLI-015), so
+    /// `register_handler` accepts the command where an entry without one
+    /// refuses it as not shipped. The production registration itself
+    /// names the concrete administration transport — the module's
+    /// attachment note carries that boundary — so the handler here is
+    /// the proof's shape, not the composition's.
+    #[test]
+    fn the_command_is_attachable_from_the_binary_composition() {
+        let mut router = archivist_client_core::cli::Router::new();
+        router
+            .register_handler("admin revoke", composition_proof_handler)
+            .expect("the registered entry carries its result schema");
+    }
 }
