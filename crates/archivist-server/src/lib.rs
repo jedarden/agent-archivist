@@ -77,6 +77,12 @@
 //! pipeline slices consume it when they land, still replacing the
 //! fail-closed ingest stub.
 //!
+//! The **parser's public error surface** is implemented: [`parse::ingest`]
+//! hands the extracted part-one bytes to `archivist-protocol`'s envelope
+//! parser and maps every rejection — media, part order, identifier,
+//! coordinate, encoding, size, schema — onto a frozen registry code with
+//! the pinned message template rendered content-free, before any commit.
+//!
 //! The Phase 4 bootstrap surface is complete: configuration, trust
 //! anchors, replica state, metrics, the routes, the serve lifecycle, and
 //! the request resource guards. The ingestion pipeline (bounded parsing,

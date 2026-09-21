@@ -38,13 +38,14 @@
 //!    body closes exactly — the closing delimiter and nothing after it; a
 //!    third part or trailing bytes is a part-order violation.
 //!
-//! Part-order violations (a payload part first, a body with no payload
-//! part, a third part), cap overruns, and every underlying framing failure
-//! are closed, content-free [`TwoPartError`] variants:
-//! [`TwoPartError::code`] maps part order and framing shape to the
-//! registry's `request.framing_invalid` and the cap overrun to
-//! `envelope.size_exceeded`, and no variant can carry a byte of the request
-//! (SEC-004; ERR-003).
+//! Part-order violations (a body with no payload part, a third part), cap
+//! overruns, and every underlying framing failure are closed, content-free
+//! [`TwoPartError`] variants: [`TwoPartError::code`] maps part order and
+//! framing shape to the registry's `request.framing_invalid`, the cap
+//! overrun to `envelope.size_exceeded`, and a first part declaring any
+//! media type but the pinned envelope type — the content-negotiation
+//! failure on the ingestion media type — to `envelope.media_type_unsupported`;
+//! no variant can carry a byte of the request (SEC-004; ERR-003).
 
 use std::fmt;
 use std::io;
@@ -70,7 +71,9 @@ pub const ENVELOPE_PART_MEDIA_TYPE: &str =
 pub enum TwoPartError {
     /// The body's first part declares a media type other than the pinned
     /// envelope type ([`ENVELOPE_PART_MEDIA_TYPE`]): it is not the envelope
-    /// part, so the pinned part order is already violated.
+    /// part — the content-negotiation failure the registry's
+    /// `envelope.media_type_unsupported` code names, detected before any
+    /// part byte is kept.
     EnvelopeNotFirst,
     /// The envelope part crossed the configured canonical-envelope cap.
     /// `limit_bytes` is the server's configured cap — a configuration
@@ -99,22 +102,24 @@ impl From<FramingError> for TwoPartError {
 
 impl TwoPartError {
     /// The stable wire code for this failure: the cap overrun is
-    /// `envelope.size_exceeded`, every part-order and framing shape
-    /// failure `request.framing_invalid`; the typed variant distinguishes
-    /// stages for logs and tests, never the wire body.
+    /// `envelope.size_exceeded`, a first part that is not the pinned
+    /// envelope media type `envelope.media_type_unsupported`, and every
+    /// other part-order and framing shape failure
+    /// `request.framing_invalid`; the typed variant distinguishes stages
+    /// for logs and tests, never the wire body.
     ///
     /// # Panics
-    /// Never in practice: both literals below match the registry grammar
+    /// Never in practice: every literal below matches the registry grammar
     /// pinned by `tools/check-error-codes.py`, so a panic is a programming
     /// error introduced alongside this match, not a wire condition.
     #[must_use]
     pub fn code(self) -> ErrorCode {
         match self {
             Self::EnvelopeExceedsCap { .. } => ErrorCode::parse("envelope.size_exceeded"),
-            Self::EnvelopeNotFirst
-            | Self::PayloadPartMissing
-            | Self::TrailingPart
-            | Self::Framing(_) => ErrorCode::parse("request.framing_invalid"),
+            Self::EnvelopeNotFirst => ErrorCode::parse("envelope.media_type_unsupported"),
+            Self::PayloadPartMissing | Self::TrailingPart | Self::Framing(_) => {
+                ErrorCode::parse("request.framing_invalid")
+            }
         }
         .expect("the two-part error codes match the registry grammar")
     }
@@ -1046,6 +1051,7 @@ mod tests {
             }
             let expected = match error {
                 TwoPartError::EnvelopeExceedsCap { .. } => "envelope.size_exceeded",
+                TwoPartError::EnvelopeNotFirst => "envelope.media_type_unsupported",
                 _ => "request.framing_invalid",
             };
             assert_eq!(error.code().as_str(), expected, "{error:?}");

@@ -22,6 +22,17 @@
 //! whose buffering stays within the framing window regardless of body
 //! size. Every rejection is a content-free typed error; the later envelope
 //! and payload pipeline slices consume it when they land.
+//!
+//! The **parser's public error surface** is implemented: [`ingest`]
+//! composes the split with `archivist-protocol`'s envelope parser — the
+//! extracted part-one bytes are validated in full, so identifier,
+//! coordinate, encoding, and schema field violations surface the
+//! field-level `envelope.schema_invalid` codes, a non-JSON part one
+//! `envelope.malformed`, and the framing-layer violations the frozen
+//! registry codes [`parts`] maps — each as an
+//! [`ingest::IngestParseError`] carrying the registry code and the
+//! pinned message template rendered content-free (ERR-011–ERR-013).
 
 pub mod framing;
+pub mod ingest;
 pub mod parts;
