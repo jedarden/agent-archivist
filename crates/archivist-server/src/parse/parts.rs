@@ -321,13 +321,13 @@ impl<S: ByteSource> PayloadStream<S> {
             Some(FramingEvent::EndOfParts) => {}
             // A third part began where only the closing delimiter may
             // follow: a part-order violation.
-            Some(FramingEvent::PartStarted) | Some(FramingEvent::PartContentType(_)) => {
+            Some(FramingEvent::PartStarted | FramingEvent::PartContentType(_)) => {
                 return Err(TwoPartError::TrailingPart);
             }
             // The tokenizer cannot yield a payload run or a second part end
             // past the one that closed part two; treat it as the delimiter
             // stage failing.
-            Some(FramingEvent::Payload(_)) | Some(FramingEvent::PartEnded) | None => {
+            Some(FramingEvent::Payload(_) | FramingEvent::PartEnded) | None => {
                 return Err(TwoPartError::Framing(FramingError::MalformedDelimiter));
             }
         }
@@ -385,7 +385,7 @@ impl<S: ByteSource> io::Read for PayloadStream<S> {
                 }
                 // No other event exists between a part's header and its
                 // end; skip defensively rather than panic on a stream.
-                Ok(Some(_)) => continue,
+                Ok(Some(_)) => {}
                 Ok(None) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
                 Err(FramingError::SourceRead(kind)) => return Err(io::Error::from(kind)),
                 Err(FramingError::UnexpectedEndOfStream) => {
