@@ -216,7 +216,7 @@ fn render_field(field: &str) -> String {
 /// values; the bracket degradation keeps an out-of-domain value off the
 /// wire.
 fn render_bytes(limit: u64) -> String {
-    if limit <= i64::MAX as u64 {
+    if i64::try_from(limit).is_ok() {
         limit.to_string()
     } else {
         "[limit_bytes]".to_owned()
@@ -551,7 +551,7 @@ mod tests {
         // Part one crossing the cap is rejected at the cap, with the
         // registry template carrying the configured limit.
         let cap = 16u64;
-        let oversized = vec![b'e'; cap as usize + 1];
+        let oversized = vec![b'e'; usize::try_from(cap).expect("cap fits usize") + 1];
         let body = framed_body(
             BOUNDARY,
             &[
@@ -676,7 +676,7 @@ mod tests {
         };
         let valid_envelope = corpus_file("valid-direct-baseline", "envelope");
         let broken_json: &[u8] = b"{\"leaked\": \"CANARY-JSON-BYTES-5r\"";
-        let cap = CANONICAL_MAX_BYTES as u64;
+        let cap = u64::try_from(CANONICAL_MAX_BYTES).expect("the cap fits u64");
 
         // Every rejection path, each built over a body carrying canaries
         // in the position that path touches: the boundary (all cases, via
