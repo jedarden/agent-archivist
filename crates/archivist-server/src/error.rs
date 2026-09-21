@@ -74,10 +74,12 @@ use std::sync::OnceLock;
 use archivist_protocol::correlation::mint_correlation_id;
 use archivist_protocol::json::{Object, Value};
 use archivist_protocol::vocabulary::{ErrorCode, RequestId, SafeMessage};
+use archivist_storage::error::StorageErrorKind;
 use axum::http::StatusCode;
 use axum::http::header::{CONTENT_TYPE, HeaderName};
 use axum::response::Response;
 
+use crate::metrics::IngestOutcome;
 use crate::parse::ingest::IngestParseError;
 
 /// The embedded machine-readable registry: the same committed bytes
@@ -311,6 +313,69 @@ impl ServerFailure {
         // bounded above it, so in practice this is a no-op belt.
         let truncated: String = rendered.chars().take(200).collect();
         SafeMessage::parse(&truncated).expect("rendered registry templates are safe messages")
+    }
+
+    /// The failure a storage-backend error becomes on the ingest wire —
+    /// the total mapping plan Section 7.8 makes the server's job: the
+    /// storage layer classifies by the decision its caller must make next
+    /// and explicitly leaves the HTTP classes to the server. Over the
+    /// closed kind set:
+    ///
+    /// - [`StorageErrorKind::IntegrityConflict`] stays its own path — the
+    ///   non-retryable 409 whose client action stops the affected source
+    ///   and pages an operator; rendering it into a retryable class would
+    ///   invite the overwrite loop the kind exists to prevent.
+    /// - [`StorageErrorKind::Unavailable`] (the backend or network is
+    ///   down) and [`StorageErrorKind::CapabilityUnavailable`] (the
+    ///   backend refused a primitive the replica asked for) are the
+    ///   retryable storage-failure 502: the backend rejected or failed
+    ///   the operation, the request was not committed, and the identical
+    ///   retry is honest.
+    /// - Every other kind — a scope violation of server-derived keys, a
+    ///   store request the pipeline itself malformed, and the
+    ///   control-plane pointer-epoch and inventory-freeze contracts the
+    ///   ingest-time primitives cannot reach — is a defect, never a wire
+    ///   condition, and renders the internal-failure 500: committed
+    ///   nothing, issued no receipt.
+    #[must_use]
+    pub fn from_storage_kind(kind: StorageErrorKind) -> Self {
+        match kind {
+            StorageErrorKind::IntegrityConflict => Self::IntegrityConflict,
+            StorageErrorKind::Unavailable | StorageErrorKind::CapabilityUnavailable => {
+                Self::StorageFailure
+            }
+            StorageErrorKind::ScopeViolation
+            | StorageErrorKind::MalformedInput
+            | StorageErrorKind::StaleEpoch
+            | StorageErrorKind::InventoryFault => Self::Internal,
+        }
+    }
+
+    /// The ingest outcome this failure records in the registered
+    /// `archivist.server.ingest` family — the one classification every
+    /// rendering site shares, so a failure can never land in two outcomes
+    /// at once. The axis is the registry's own: the non-retryable classes
+    /// (parse, authorization, integrity, size) are rejections the client
+    /// answers by changing its submission, the retryable throttle class
+    /// is a guard refusal, and the retryable server-failure class is an
+    /// attempt that did not produce its receipt — the family's committed
+    /// value means committed and receipted, so even a partial commit
+    /// counts here as the failure it reported.
+    #[must_use]
+    pub const fn outcome(self) -> IngestOutcome {
+        match self {
+            Self::Parse(_)
+            | Self::Authorization(_)
+            | Self::IntegrityConflict
+            | Self::PayloadLimit(_) => IngestOutcome::Rejected,
+            Self::RateLimited | Self::DeadlineElapsed | Self::TooEarly => IngestOutcome::Throttled,
+            Self::RegistryUnavailable
+            | Self::StorageFailure
+            | Self::UpstreamTimeout
+            | Self::PartialCommit
+            | Self::Internal
+            | Self::Unavailable => IngestOutcome::Failed,
+        }
     }
 }
 
@@ -758,6 +823,8 @@ mod tests {
     use archivist_protocol::vocabulary::RequestId;
     use axum::http::header::CONTENT_TYPE;
 
+    use crate::metrics::IngestOutcome;
+
     const TEST_REQUEST_ID: &str = "1a07b201-7000-7000-8000-000000000001";
     const TEST_CORRELATION_ID: &str = "1a07c201-7000-7000-8000-000000000001";
 
@@ -935,6 +1002,30 @@ mod tests {
             assert!(
                 text.contains(&format!("\"correlation_id\":\"{TEST_CORRELATION_ID}\"")),
                 "{failure:?}: body carries the correlation id"
+            );
+        }
+    }
+
+    #[test]
+    fn the_outcome_classification_follows_the_registry_classes() {
+        // The ingest outcome axis is the registry's own: a non-retryable
+        // refusal is a rejection, a retryable 4xx is a guard refusal, and
+        // a retryable 5xx is a failed attempt — pinned here against the
+        // same class table every wire assertion uses, so a variant can
+        // never drift out of its outcome without the class drifting too.
+        for failure in every_failure() {
+            let (expected_code, expected_status, expected_retryable) = expected_wire(&failure);
+            let expected_outcome = if !expected_retryable {
+                IngestOutcome::Rejected
+            } else if expected_status < 500 {
+                IngestOutcome::Throttled
+            } else {
+                IngestOutcome::Failed
+            };
+            assert_eq!(
+                failure.outcome(),
+                expected_outcome,
+                "{failure:?} ({expected_code}): the outcome follows the registry class"
             );
         }
     }

@@ -139,10 +139,10 @@ async fn metrics<W, C>(State(state): State<Arc<ServerState<W, C>>>) -> Response 
 async fn ingest<W, C>(State(state): State<Arc<ServerState<W, C>>>, request: Request) -> Response {
     let attempt = within_deadline(state.config().request_deadline(), async {
         match state.gate().try_admit_process() {
-            Err(_rejection) => (
-                IngestOutcome::Throttled,
-                ErrorResponse::for_failure(ServerFailure::RateLimited).into_response(),
-            ),
+            Err(_rejection) => {
+                let failure = ServerFailure::RateLimited;
+                (failure.outcome(), failure_response(failure, None))
+            }
             // The admission is held across the whole parse attempt —
             // that is the concurrency bound doing its job — and released
             // when the outcome is rendered.
@@ -158,8 +158,9 @@ async fn ingest<W, C>(State(state): State<Arc<ServerState<W, C>>>, request: Requ
         // The deadline is a real bound on the attempt, so its elapse is
         // the deadline guard's refusal — throttle class, retryable.
         Err(DeadlineElapsed) => {
-            state.metrics().record_ingest(IngestOutcome::Throttled);
-            ErrorResponse::for_failure(ServerFailure::DeadlineElapsed).into_response()
+            let failure = ServerFailure::DeadlineElapsed;
+            state.metrics().record_ingest(failure.outcome());
+            failure_response(failure, None)
         }
         Ok((outcome, response)) => {
             state.metrics().record_ingest(outcome);
@@ -180,11 +181,12 @@ fn failure_response(failure: ServerFailure, request_id: Option<RequestId>) -> Re
 
 /// The parse phase of an admitted attempt: framing from the header, then
 /// the bounded two-part parse over the streamed body. Every outcome is a
-/// rendered response paired with the metric outcome the attempt earned:
-/// request-shape violations are rejections (the `request_invalid` and
-/// `payload_limit_*` classes committed nothing and admitted nothing),
-/// while a well-formed attempt under the fail-closed bootstrap and a
-/// parse-phase fault are failures.
+/// rendered response paired with the metric outcome the attempt earned,
+/// classified by [`ServerFailure::outcome`] so the recorded outcome and
+/// the wire class can never disagree: request-shape violations are
+/// rejections (the `request_invalid` and `payload_limit_*` classes
+/// committed nothing and admitted nothing), while a well-formed attempt
+/// under the fail-closed bootstrap and a parse-phase fault are failures.
 async fn attempt_parse<W, C>(
     state: &ServerState<W, C>,
     request: Request,
@@ -199,13 +201,9 @@ async fn attempt_parse<W, C>(
     let framing = match RequestFraming::validate_content_type(content_type) {
         Ok(framing) => framing,
         Err(error) => {
-            return (
-                IngestOutcome::Rejected,
-                failure_response(
-                    ServerFailure::Parse(IngestParseError::Framing(TwoPartError::from(error))),
-                    None,
-                ),
-            );
+            let failure =
+                ServerFailure::Parse(IngestParseError::Framing(TwoPartError::from(error)));
+            return (failure.outcome(), failure_response(failure, None));
         }
     };
 
@@ -245,26 +243,19 @@ async fn attempt_parse<W, C>(
             envelope_cap,
         )
     });
-    match parse.await {
+    let (failure, request_id) = match parse.await {
         // A panicked parse committed nothing and is a defect, not a wire
         // condition: the internal-failure class, never a 200-shaped lie.
-        Err(_join) => (
-            IngestOutcome::Failed,
-            failure_response(ServerFailure::Internal, None),
-        ),
-        Ok(Err(rejection)) => (
-            IngestOutcome::Rejected,
-            failure_response(ServerFailure::Parse(rejection.error), rejection.request_id),
-        ),
+        Err(_join) => (ServerFailure::Internal, None),
+        Ok(Err(rejection)) => (ServerFailure::Parse(rejection.error), rejection.request_id),
         // Well-formed: the commit pipeline lands later. The parsed
         // envelope's identifier is known, so the refusal carries it
         // (ERR-025) — a client correlating its attempt sees the server
         // that read it.
-        Ok(Ok((envelope, _stream))) => (
-            IngestOutcome::Failed,
-            failure_response(ServerFailure::Unavailable, Some(envelope.request_id)),
-        ),
-    }
+        Ok(Ok((envelope, _stream))) => (ServerFailure::Unavailable, Some(envelope.request_id)),
+    };
+    let outcome = failure.outcome();
+    (outcome, failure_response(failure, request_id))
 }
 
 /// Buffering budget of the async-to-blocking body bridge: a fixed
@@ -345,7 +336,8 @@ fn ready_body(snapshot: ReadinessSnapshot) -> Vec<u8> {
 mod tests {
     use super::{HEALTH_MEDIA_TYPE, LIVE_BODY, METRICS_MEDIA_TYPE, failure_response, ready_body};
     use crate::error::{
-        CORRELATION_ID_HEADER, ERROR_MEDIA_TYPE, PayloadLimit, REQUEST_ID_HEADER, ServerFailure,
+        AuthRejection, CORRELATION_ID_HEADER, ERROR_MEDIA_TYPE, PayloadLimit, REQUEST_ID_HEADER,
+        ServerFailure,
     };
     use crate::guard::ProcessAdmission;
     use crate::parse::parts::ENVELOPE_PART_MEDIA_TYPE;
@@ -1405,5 +1397,362 @@ mod tests {
         let address = serve(test_state()).await;
         let response = exchange(address, &get_request("/health")).await;
         assert_eq!(response.status, 404);
+    }
+
+    // ------------------------------------------------------------------
+    // The authorization, integrity, throttle, and storage failure paths:
+    // every remaining Section 7.8 path renders through the route's one
+    // rendering site, pinned per class exactly as the payload-limit
+    // mapping above — the authorization and commit slices raise these
+    // triggers live behind the same site, and the mapping they call is
+    // already the contract.
+    // ------------------------------------------------------------------
+
+    /// One rendering-site exchange for a failure with no envelope
+    /// identifier: the status, media type, and correlation headers are
+    /// asserted here and the six-member body is returned as text for the
+    /// caller's code/message assertions.
+    async fn render_without_envelope(
+        failure: ServerFailure,
+        expected_status: u16,
+        expected_code: &str,
+        expected_retryable: bool,
+    ) -> String {
+        let response = failure_response(failure, None);
+        assert_eq!(
+            response.status().as_u16(),
+            expected_status,
+            "{expected_code}"
+        );
+        assert_eq!(
+            response.headers().get(axum::http::header::CONTENT_TYPE),
+            Some(&ERROR_MEDIA_TYPE.parse().expect("media type header")),
+            "{expected_code}: the error media type"
+        );
+        // The refusal precedes the envelope: the schema's null renders and
+        // the request id header is absent, while the correlation header is
+        // always present (ERR-026).
+        assert!(
+            response.headers().get(REQUEST_ID_HEADER).is_none(),
+            "{expected_code}: no identifier, no request id header"
+        );
+        let correlation = response
+            .headers()
+            .get(CORRELATION_ID_HEADER)
+            .expect("correlation header present")
+            .to_str()
+            .expect("the minted id is ASCII")
+            .to_owned();
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .expect("body reads");
+        let text = assert_pinned_error_shape(&body, expected_code, expected_retryable, None);
+        assert!(
+            text.contains(&format!("\"correlation_id\":\"{correlation}\"")),
+            "{expected_code}: the header id matches the body: {text}"
+        );
+        text
+    }
+
+    #[tokio::test]
+    async fn the_authorization_refusals_render_their_registry_paths_through_the_route() {
+        for (rejection, expected_status, expected_code, expected_message) in [
+            (
+                AuthRejection::Unlinked,
+                401u16,
+                "auth.unlinked",
+                "The client is not linked to a tenant; complete linking before uploading.",
+            ),
+            (
+                AuthRejection::Revoked,
+                401,
+                "auth.revoked",
+                "The client authorization has been revoked; a new authorization is \
+                 required.",
+            ),
+            (
+                AuthRejection::ProofRejected,
+                401,
+                "auth.authorization_rejected",
+                "The authorization proof is stale, altered, or replayed; obtain fresh \
+                 authorization.",
+            ),
+            (
+                AuthRejection::Forbidden,
+                403,
+                "auth.forbidden",
+                "The uploader is not authorized for the declared origin client or tenant.",
+            ),
+        ] {
+            let text = render_without_envelope(
+                ServerFailure::Authorization(rejection),
+                expected_status,
+                expected_code,
+                false,
+            )
+            .await;
+            assert!(
+                text.contains(&format!("\"message\":\"{expected_message}\"")),
+                "{expected_code}: the pinned template, verbatim: {text}"
+            );
+            // A strand that parsed the envelope before the authorization
+            // path refused it passes the identifier in, exactly as every
+            // other path does.
+            let carried = failure_response(
+                ServerFailure::Authorization(rejection),
+                Some(request_id_fixture()),
+            );
+            assert_eq!(
+                carried.status().as_u16(),
+                expected_status,
+                "{expected_code}"
+            );
+            let body = axum::body::to_bytes(carried.into_body(), 4096)
+                .await
+                .expect("body reads");
+            assert_pinned_error_shape(&body, expected_code, false, Some(REQUEST_ID));
+        }
+    }
+
+    #[tokio::test]
+    async fn the_integrity_and_transient_server_paths_render_through_the_route() {
+        for (failure, expected_status, expected_code, expected_retryable, expected_message) in [
+            (
+                ServerFailure::IntegrityConflict,
+                409u16,
+                "storage.integrity_conflict",
+                false,
+                "An existing object is incompatible with this submission; the affected \
+                 source requires operator review.",
+            ),
+            (
+                ServerFailure::TooEarly,
+                425,
+                "request.too_early",
+                true,
+                "The server is not ready to accept this request yet; retry after the \
+                 indicated interval.",
+            ),
+            (
+                ServerFailure::RegistryUnavailable,
+                503,
+                "server.unavailable",
+                true,
+                "The service is temporarily unable to handle the request; retry the \
+                 identical envelope.",
+            ),
+            (
+                ServerFailure::StorageFailure,
+                502,
+                "server.storage_failure",
+                true,
+                "The storage backend rejected or failed the operation; the request was \
+                 not committed.",
+            ),
+            (
+                ServerFailure::UpstreamTimeout,
+                504,
+                "server.upstream_timeout",
+                true,
+                "The storage backend timed out; the commit result is unknown; retry the \
+                 identical envelope.",
+            ),
+            (
+                ServerFailure::PartialCommit,
+                503,
+                "server.partial_commit",
+                true,
+                "The request committed partially and no receipt was issued; retry the \
+                 identical envelope to repair it.",
+            ),
+            (
+                ServerFailure::Internal,
+                500,
+                "server.internal",
+                true,
+                "An internal server error occurred; the request was not committed.",
+            ),
+        ] {
+            let text = render_without_envelope(
+                failure,
+                expected_status,
+                expected_code,
+                expected_retryable,
+            )
+            .await;
+            assert!(
+                text.contains(&format!("\"message\":\"{expected_message}\"")),
+                "{expected_code}: the pinned template, verbatim: {text}"
+            );
+        }
+
+        // An integrity conflict raised after the envelope parsed carries
+        // its identifier in body and header, as every carried path does.
+        let carried =
+            failure_response(ServerFailure::IntegrityConflict, Some(request_id_fixture()));
+        assert_eq!(carried.status().as_u16(), 409);
+        let header = carried
+            .headers()
+            .get(REQUEST_ID_HEADER)
+            .expect("carried id travels as a header");
+        assert_eq!(header.to_str().expect("header is text"), REQUEST_ID);
+        let body = axum::body::to_bytes(carried.into_body(), 4096)
+            .await
+            .expect("body reads");
+        assert_pinned_error_shape(&body, "storage.integrity_conflict", false, Some(REQUEST_ID));
+    }
+
+    #[tokio::test]
+    async fn the_partial_commit_503_carries_no_receipt_fields() {
+        let text = render_without_envelope(
+            ServerFailure::PartialCommit,
+            503,
+            "server.partial_commit",
+            true,
+        )
+        .await;
+        // The partial-commit answer is a failure body, never a truncated
+        // receipt: none of the identities and outcomes a receipt binds —
+        // tenant, request, occurrence, upload attestation, blob, object
+        // keys, per-object storage outcomes, authorization key/epoch,
+        // commit time (plan Section 7.8) — appears as a body member. The
+        // exact-six-members assertion above is the hard bound; this is the
+        // named-member belt.
+        for receipt_member in [
+            "attestation",
+            "authorization",
+            "blob",
+            "committed_at",
+            "epoch",
+            "occurrence",
+            "object_key",
+            "receipt",
+            "storage_outcome",
+            "tenant",
+        ] {
+            assert!(
+                !text.contains(&format!("\"{receipt_member}")),
+                "server.partial_commit: no receipt member {receipt_member} rides the body: {text}"
+            );
+        }
+
+        // The carried variant is equally receiptless: only the six
+        // contract members, with the identifier in its own member.
+        let carried = failure_response(ServerFailure::PartialCommit, Some(request_id_fixture()));
+        let body = axum::body::to_bytes(carried.into_body(), 4096)
+            .await
+            .expect("body reads");
+        assert_pinned_error_shape(&body, "server.partial_commit", true, Some(REQUEST_ID));
+    }
+
+    #[test]
+    fn every_storage_error_kind_maps_to_one_registered_contract_path() {
+        // The storage layer classifies by caller decision and leaves the
+        // HTTP classes to the server; the total mapping is pinned here per
+        // kind — the integrity conflict stays the non-retryable 409, the
+        // backend refusals are the retryable storage-failure 502, and the
+        // kinds the ingest-time primitives cannot honestly produce render
+        // the internal-failure 500.
+        for (kind, expected_code, expected_status, expected_retryable) in [
+            (
+                StorageErrorKind::IntegrityConflict,
+                "storage.integrity_conflict",
+                409u16,
+                false,
+            ),
+            (
+                StorageErrorKind::Unavailable,
+                "server.storage_failure",
+                502,
+                true,
+            ),
+            (
+                StorageErrorKind::CapabilityUnavailable,
+                "server.storage_failure",
+                502,
+                true,
+            ),
+            (
+                StorageErrorKind::ScopeViolation,
+                "server.internal",
+                500,
+                true,
+            ),
+            (
+                StorageErrorKind::MalformedInput,
+                "server.internal",
+                500,
+                true,
+            ),
+            (StorageErrorKind::StaleEpoch, "server.internal", 500, true),
+            (
+                StorageErrorKind::InventoryFault,
+                "server.internal",
+                500,
+                true,
+            ),
+        ] {
+            let failure = ServerFailure::from_storage_kind(kind);
+            let response = crate::error::ErrorResponse::for_failure(failure);
+            assert_eq!(response.status(), expected_status, "{expected_code}");
+            assert_eq!(response.code(), expected_code, "{kind:?}");
+            assert_eq!(response.retryable(), expected_retryable, "{expected_code}");
+            // The registry resolved the code, so the message is the pinned
+            // template — never empty, never derived from the error's
+            // detail text.
+            assert!(
+                !response.message().is_empty(),
+                "{expected_code}: the registered template renders"
+            );
+        }
+
+        // The integrity conflict end to end: a storage-layer conflict
+        // through the mapping and the route's rendering site is the
+        // non-retryable 409 contract, with the schema's null before the
+        // envelope exists.
+        let response = failure_response(
+            ServerFailure::from_storage_kind(StorageErrorKind::IntegrityConflict),
+            None,
+        );
+        assert_eq!(response.status().as_u16(), 409);
+        assert!(
+            response.headers().get(REQUEST_ID_HEADER).is_none(),
+            "no identifier, no request id header"
+        );
+    }
+
+    #[test]
+    fn every_failure_classifies_into_one_registered_ingest_outcome() {
+        use crate::metrics::IngestOutcome;
+        // The route records one outcome per attempt, now classified
+        // through [`ServerFailure::outcome`] at every rendering site: the
+        // guard refusals stay throttled, the shape and authorization
+        // refusals stay rejections, and every retryable server failure —
+        // the fail-closed bootstrap included — stays a failure. The
+        // full-matrix pin lives beside the classification in
+        // `crate::error`; this pins the outcomes the route's own sites
+        // render.
+        for (failure, expected_outcome) in [
+            (ServerFailure::RateLimited, IngestOutcome::Throttled),
+            (ServerFailure::DeadlineElapsed, IngestOutcome::Throttled),
+            (ServerFailure::TooEarly, IngestOutcome::Throttled),
+            (
+                ServerFailure::Authorization(AuthRejection::Unlinked),
+                IngestOutcome::Rejected,
+            ),
+            (
+                ServerFailure::Authorization(AuthRejection::Forbidden),
+                IngestOutcome::Rejected,
+            ),
+            (ServerFailure::IntegrityConflict, IngestOutcome::Rejected),
+            (ServerFailure::RegistryUnavailable, IngestOutcome::Failed),
+            (ServerFailure::StorageFailure, IngestOutcome::Failed),
+            (ServerFailure::UpstreamTimeout, IngestOutcome::Failed),
+            (ServerFailure::PartialCommit, IngestOutcome::Failed),
+            (ServerFailure::Internal, IngestOutcome::Failed),
+            (ServerFailure::Unavailable, IngestOutcome::Failed),
+        ] {
+            assert_eq!(failure.outcome(), expected_outcome, "{failure:?}");
+        }
     }
 }
