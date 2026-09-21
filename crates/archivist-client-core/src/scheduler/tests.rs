@@ -275,7 +275,12 @@ fn quantum_caps_each_source_per_round() {
 
     // A whole backlog smaller than one chunk grants its remainder only.
     let small = vec![history(2, 16), history(3, 1)];
-    let small_round = plan(&small, DrainLoad::default(), GIB, SchedulerLimits::default());
+    let small_round = plan(
+        &small,
+        DrainLoad::default(),
+        GIB,
+        SchedulerLimits::default(),
+    );
     assert_eq!(
         shape(&small_round.backfill),
         vec![(sid(2), 16 * MIB, 1), (sid(3), MIB, 1)],
@@ -346,7 +351,12 @@ fn short_reservation_freezes_backfill() {
     assert_eq!(partial.totals.planned_bytes, 16 * MIB);
 
     // Nothing fits: the round spends nothing and says why.
-    let starved = plan(&sources, DrainLoad::default(), 8 * MIB, SchedulerLimits::default());
+    let starved = plan(
+        &sources,
+        DrainLoad::default(),
+        8 * MIB,
+        SchedulerLimits::default(),
+    );
     assert!(starved.reservations.is_empty());
     assert_eq!(starved.totals.short_reservations, 2);
     assert!(starved.backfill.is_empty());
@@ -365,7 +375,10 @@ fn drain_is_planned_in_full_before_any_discovery() {
     let sources = vec![active(1, 16)];
 
     let starved_round = plan(&sources, pending, 0, SchedulerLimits::default());
-    assert_eq!(starved_round.drain, pending, "a zero-capacity round still drains");
+    assert_eq!(
+        starved_round.drain, pending,
+        "a zero-capacity round still drains"
+    );
     assert_eq!(starved_round.totals.drain_entries, 3);
     assert_eq!(starved_round.totals.drain_bytes, 48 * MIB);
     assert_eq!(
@@ -456,7 +469,12 @@ fn events_only_backlog_gets_one_byteless_chunk() {
         source(1, FreshnessLane::Freshness, 0, 5),
         source(2, FreshnessLane::Backfill, 0, 7),
     ];
-    let free_round = plan(&sources, DrainLoad::default(), 0, SchedulerLimits::default());
+    let free_round = plan(
+        &sources,
+        DrainLoad::default(),
+        0,
+        SchedulerLimits::default(),
+    );
 
     assert_eq!(
         free_round.reservations.len(),
