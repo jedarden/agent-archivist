@@ -970,7 +970,10 @@ mod tests {
             "approve".to_owned(),
             draft_path.to_owned(),
         ];
-        let args = args.iter().map(std::ffi::OsString::from).collect::<Vec<_>>();
+        let args = args
+            .iter()
+            .map(std::ffi::OsString::from)
+            .collect::<Vec<_>>();
         let registry = Registry::pinned();
         match parse::parse(&args, registry).expect("the invocation parses") {
             Parsed::Command(invocation) => invocation,
