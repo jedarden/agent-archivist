@@ -32,6 +32,9 @@
 //!   (plan `EC-08`).
 //! - [`expected_inference`]: the expected-inference ledger adapters
 //!   publish so capture completeness is measurable.
+//! - [`file_capture`]: the file-source capture core's complete-JSONL
+//!   boundary selection (CAP-003, plan `EC-01`): the torn tail is
+//!   measured, never captured, and re-measured on the next pass (AC-02).
 //!
 //! The synthetic adapter example and the conformance suite that hold
 //! community adapters to these contracts are the Phase 6D work that
@@ -49,6 +52,7 @@ pub mod capability;
 pub mod descriptor;
 pub mod discovery;
 pub mod expected_inference;
+pub mod file_capture;
 pub mod fingerprint;
 pub mod lifecycle;
 pub mod status;
@@ -63,6 +67,7 @@ pub use expected_inference::{
     ExpectedInference, ExpectedInferenceLedger, ExpectedInferenceRecord, InferenceArtifactKind,
     InferenceIdentity, IntegrationFailure, LedgerError, ObservedArtifact, RoutePolicy,
 };
+pub use file_capture::{CaptureCursor, CaptureCursorError, PassOutcome, RecordBoundary};
 pub use fingerprint::{
     FingerprintAllowlist, FingerprintError, MAX_FINGERPRINTS, SourceFingerprint,
     UnsupportedFingerprint, unsupported_report,
