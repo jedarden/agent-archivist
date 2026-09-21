@@ -297,7 +297,9 @@ impl ByteSource for BodyChannel {
                 return Ok(copied);
             }
             match self.receiver.blocking_recv() {
-                Some(chunk) if chunk.is_empty() => continue,
+                // An empty chunk carries nothing: the next iteration
+                // drains the next one.
+                Some(chunk) if chunk.is_empty() => {}
                 Some(chunk) => {
                     self.chunk = chunk;
                     self.cursor = 0;
