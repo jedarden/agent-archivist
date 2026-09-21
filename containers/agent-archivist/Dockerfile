@@ -34,6 +34,7 @@ ARG SOURCE_DATE_EPOCH
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY tools ./tools
 COPY .cargo/config.toml .cargo/config.toml
 COPY vendor ./vendor
 RUN cargo build --release --frozen --offline --bin archivist \
