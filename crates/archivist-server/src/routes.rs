@@ -9,68 +9,47 @@
 //! | `/health/live` | GET | Process-only liveness: answered from the process, never from storage or configuration. |
 //! | `/health/ready` | GET | The readiness snapshot: valid configuration plus fresh trust evidence for every configured tenant. |
 //! | `/metrics` | GET | The registered server families in Prometheus text exposition. |
-//! | `/v1/ingest` | POST | Admission-guarded, then fail-closed: the request deadline bounds the attempt, the process-wide in-flight cap admits before anything request-derived is read, and an overloaded replica refuses with the retryable `request.rate_limited` body; admitted attempts are refused with the stable `server.unavailable` body until the pipeline slice lands. |
+//! | `/v1/ingest` | POST | Admission-guarded, then bounded-parse: the request deadline bounds the whole attempt, the process-wide in-flight cap admits before anything request-derived is read, and an overloaded replica refuses with the retryable `request.rate_limited` body; admitted attempts validate the pinned framing and parse the envelope, every request-shape violation rendering its registry code through [`crate::error`] (`request.framing_invalid`/`envelope.*` 400s, the `envelope.media_type_unsupported` 415, and the payload-limit 413s as the pipeline grows their triggers), and a well-formed attempt is still refused with the stable `server.unavailable` body until the commit slice lands. |
 //!
 //! Fail-closed is the operative rule for every body: responses render
 //! canonical bytes through `archivist-protocol`'s RFC 8785 writer, carry
 //! counts and closed-vocabulary tokens only, and never echo request
 //! content, identifiers, or paths (SEC-004, SEC-005). Error bodies are
 //! the `archivist.error/v1` shape pinned by `schemas/v1/ingest-error.json`
-//! — six members, both request identifiers null exactly because no
-//! envelope was parsed (ERR-027) — carrying the registry's pinned code,
+//! — exactly six members, `request_id` carrying the parsed envelope's
+//! identifier when one yielded (ERR-025) and null before that (ERR-027),
+//! and a fresh per-attempt `correlation_id` always present (ERR-026) —
+//! serialized by [`crate::error`] from the registry's pinned code,
 //! retryability, and message.
 
+use std::io;
 use std::sync::Arc;
 
 use archivist_protocol::json::{Object, Value};
+use archivist_protocol::vocabulary::RequestId;
 use archivist_storage::control::ControlReadStore;
 use archivist_storage::raw_write::RawWriteStore;
 use axum::Router;
-use axum::extract::State;
+use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::http::header::CONTENT_TYPE;
 use axum::response::Response;
 use axum::routing::{get, post};
+use tokio::sync::mpsc;
 
+use crate::error::{ErrorResponse, ServerFailure};
 use crate::guard::{DeadlineElapsed, within_deadline};
 use crate::metrics::IngestOutcome;
+use crate::parse::framing::{ByteSource, RequestFraming};
+use crate::parse::ingest::{IngestParseError, parse_ingest_with_cap};
+use crate::parse::parts::TwoPartError;
 use crate::state::{ReadinessSnapshot, ServerState};
-
-/// Media type of the stable error body (`schemas/v1/ingest-error.json`).
-pub const ERROR_MEDIA_TYPE: &str = "application/vnd.agent-archivist.error+json";
 
 /// Media type of the content-free health bodies.
 pub const HEALTH_MEDIA_TYPE: &str = "application/json";
 
 /// Media type of the Prometheus text exposition served at `/metrics`.
 pub const METRICS_MEDIA_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
-
-/// The `server.unavailable` code as registered in
-/// `tools/error-codes.toml`.
-const CODE_SERVER_UNAVAILABLE: &str = "server.unavailable";
-
-/// The `server.unavailable` pinned message, verbatim from the registry.
-const MESSAGE_SERVER_UNAVAILABLE: &str =
-    "The service is temporarily unable to handle the request; retry the identical envelope.";
-
-/// The `request.rate_limited` code as registered in
-/// `tools/error-codes.toml`: the one retryable 429 code for admission
-/// overload, shared by every resource-guard refusal.
-const CODE_REQUEST_RATE_LIMITED: &str = "request.rate_limited";
-
-/// The `request.rate_limited` pinned message, verbatim from the registry.
-const MESSAGE_REQUEST_RATE_LIMITED: &str =
-    "The per-client request rate was exceeded; retry after the indicated interval.";
-
-/// The `request.deadline_exceeded` code as registered in
-/// `tools/error-codes.toml`: the retryable 408 the deadline wrapper
-/// renders when a bounded attempt outlives the configured deadline.
-const CODE_REQUEST_DEADLINE_EXCEEDED: &str = "request.deadline_exceeded";
-
-/// The `request.deadline_exceeded` pinned message, verbatim from the
-/// registry.
-const MESSAGE_REQUEST_DEADLINE_EXCEEDED: &str =
-    "The request exceeded the request deadline; retry the identical envelope.";
 
 /// The liveness body: process-only by design. A const so the handler
 /// cannot grow fields it does not have; a unit test pins it against the
@@ -130,10 +109,10 @@ async fn metrics<W, C>(State(state): State<Arc<ServerState<W, C>>>) -> Response 
     response(StatusCode::OK, METRICS_MEDIA_TYPE, text.into_bytes())
 }
 
-/// `POST /v1/ingest` — admission-guarded, then fail-closed.
+/// `POST /v1/ingest` — admission-guarded, then bounded-parse.
 ///
 /// The guards run in the plan's order, ahead of everything
-/// request-derived: the configured 15-minute deadline bounds the whole
+/// request-derived: the configured deadline bounds the whole
 /// attempt (admission included), and the process-wide in-flight cap
 /// admits or refuses before a single request byte is read or a
 /// payload-scale buffer allocated — an overloaded replica's refusal is
@@ -142,53 +121,192 @@ async fn metrics<W, C>(State(state): State<Arc<ServerState<W, C>>>) -> Response 
 /// land in the `throttled` outcome, carrying no client, tenant, or
 /// request identifier.
 ///
-/// The bootstrap surface still refuses every admitted attempt with the
-/// stable retryable body: no pipeline exists yet, so nothing can be
-/// committed and no receipt can be issued, and saying so through
-/// `server.unavailable` is the honest response (plan Section 7.8:
-/// server-failure class, retryable, no receipt). The pipeline slice
-/// replaces the admitted branch's stub — holding the admission across
-/// its streaming attempt — behind the same route.
-async fn ingest<W, C>(State(state): State<Arc<ServerState<W, C>>>) -> Response {
-    // The bounded attempt is everything the handler will ever do with
-    // the request: today that is admission; the pipeline slice grows it
-    // to the streaming parse-commit-receipt work under the same bound.
-    let admitted = within_deadline(state.config().request_deadline(), async {
-        state.gate().try_admit_process()
+/// An admitted attempt then validates the pinned two-part framing from
+/// the `Content-Type` header alone and parses part one under the
+/// configured envelope cap, the body streaming into the parse through a
+/// bounded channel so no attempt ever buffers payload scale (VAL-008).
+/// Every request-shape violation — framing, part-one media type,
+/// envelope malformed/version/schema/size — renders its registry code
+/// and pinned message through [`failure_response`] with the envelope's
+/// request identifier carried once one has parsed (ERR-025, ERR-027).
+/// A well-formed attempt is still refused with the stable retryable
+/// body: no commit pipeline exists yet, so nothing can be committed and
+/// no receipt can be issued, and saying so through `server.unavailable`
+/// is the honest response (plan Section 7.8: server-failure class,
+/// retryable, no receipt). The commit slice replaces that refusal —
+/// holding the admission across its streaming attempt — behind the same
+/// route.
+async fn ingest<W, C>(State(state): State<Arc<ServerState<W, C>>>, request: Request) -> Response {
+    let attempt = within_deadline(state.config().request_deadline(), async {
+        match state.gate().try_admit_process() {
+            Err(_rejection) => (
+                IngestOutcome::Throttled,
+                ErrorResponse::for_failure(ServerFailure::RateLimited).into_response(),
+            ),
+            // The admission is held across the whole parse attempt —
+            // that is the concurrency bound doing its job — and released
+            // when the outcome is rendered.
+            Ok(admission) => {
+                let (outcome, response) = attempt_parse(&state, request).await;
+                drop(admission);
+                (outcome, response)
+            }
+        }
     })
     .await;
-    match admitted {
+    match attempt {
         // The deadline is a real bound on the attempt, so its elapse is
         // the deadline guard's refusal — throttle class, retryable.
         Err(DeadlineElapsed) => {
             state.metrics().record_ingest(IngestOutcome::Throttled);
-            response(
-                StatusCode::REQUEST_TIMEOUT,
-                ERROR_MEDIA_TYPE,
-                deadline_error_body(),
-            )
+            ErrorResponse::for_failure(ServerFailure::DeadlineElapsed).into_response()
         }
-        Ok(Err(_rejection)) => {
-            state.metrics().record_ingest(IngestOutcome::Throttled);
-            response(
-                StatusCode::TOO_MANY_REQUESTS,
-                ERROR_MEDIA_TYPE,
-                rate_limited_error_body(),
-            )
+        Ok((outcome, response)) => {
+            state.metrics().record_ingest(outcome);
+            response
         }
-        Ok(Ok(admission)) => {
-            // The pipeline slice holds the admission across its whole
-            // streaming attempt — that is the concurrency bound doing
-            // its job. The fail-closed stub attempts nothing, so it
-            // releases the slot before rendering the stable refusal
-            // rather than pretending to hold work it does not have.
-            drop(admission);
-            state.metrics().record_ingest(IngestOutcome::Failed);
-            response(
-                StatusCode::SERVICE_UNAVAILABLE,
-                ERROR_MEDIA_TYPE,
-                unavailable_error_body(),
-            )
+    }
+}
+
+/// The one rendering site for every Section 7.8 failure this route maps:
+/// [`crate::error`] builds the exact six-member canonical body at the
+/// registry's status with the class retryable, the error media type, and
+/// the correlation headers; the parsed envelope's request identifier
+/// travels when the attempt holds one and the schema's null renders
+/// before that.
+fn failure_response(failure: ServerFailure, request_id: Option<RequestId>) -> Response {
+    ErrorResponse::for_failure_with(failure, request_id).into_response()
+}
+
+/// The parse phase of an admitted attempt: framing from the header, then
+/// the bounded two-part parse over the streamed body. Every outcome is a
+/// rendered response paired with the metric outcome the attempt earned:
+/// request-shape violations are rejections (the `request_invalid` and
+/// `payload_limit_*` classes committed nothing and admitted nothing),
+/// while a well-formed attempt under the fail-closed bootstrap and a
+/// parse-phase fault are failures.
+async fn attempt_parse<W, C>(
+    state: &ServerState<W, C>,
+    request: Request,
+) -> (IngestOutcome, Response) {
+    // The framing is validated from the header alone, before any body
+    // byte is read: a wrong Content-Type never opens the body.
+    let content_type = request
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    let framing = match RequestFraming::validate_content_type(content_type) {
+        Ok(framing) => framing,
+        Err(error) => {
+            return (
+                IngestOutcome::Rejected,
+                failure_response(
+                    ServerFailure::Parse(IngestParseError::Framing(TwoPartError::from(error))),
+                    None,
+                ),
+            );
+        }
+    };
+
+    // The body streams into the blocking parse through a bounded
+    // channel: the async feeder task never buffers beyond one chunk, the
+    // channel holds a fixed handful, and the parse side consumes through
+    // the framing tokenizer's small window — buffered request bytes stay
+    // bounded for any body size (VAL-008). When the parse outcome is
+    // known the stream is dropped, the feeder's sends fail, and the
+    // (possibly huge) unread tail of the body is simply abandoned; the
+    // connection layer owns that path.
+    let (sender, receiver) = mpsc::channel(PARSE_BRIDGE_CHUNKS);
+    let mut body = request.into_body();
+    tokio::spawn(async move {
+        while let Some(frame) = http_body_util::BodyExt::frame(&mut body).await {
+            let Ok(frame) = frame else {
+                break; // a failed stream is a truncated body to the parse
+            };
+            let Some(data) = frame.data_ref() else {
+                continue;
+            };
+            if sender.send(data.to_vec()).await.is_err() {
+                break; // the parse finished; the unread tail is abandoned
+            }
+        }
+    });
+
+    let envelope_cap = state.config().envelope_max_bytes();
+    let parse = tokio::task::spawn_blocking(move || {
+        parse_ingest_with_cap(
+            &framing,
+            BodyChannel {
+                receiver,
+                chunk: Vec::new(),
+                cursor: 0,
+            },
+            envelope_cap,
+        )
+    });
+    match parse.await {
+        // A panicked parse committed nothing and is a defect, not a wire
+        // condition: the internal-failure class, never a 200-shaped lie.
+        Err(_join) => (
+            IngestOutcome::Failed,
+            failure_response(ServerFailure::Internal, None),
+        ),
+        Ok(Err(rejection)) => (
+            IngestOutcome::Rejected,
+            failure_response(ServerFailure::Parse(rejection.error), rejection.request_id),
+        ),
+        // Well-formed: the commit pipeline lands later. The parsed
+        // envelope's identifier is known, so the refusal carries it
+        // (ERR-025) — a client correlating its attempt sees the server
+        // that read it.
+        Ok(Ok((envelope, _stream))) => (
+            IngestOutcome::Failed,
+            failure_response(ServerFailure::Unavailable, Some(envelope.request_id)),
+        ),
+    }
+}
+
+/// Buffering budget of the async-to-blocking body bridge: a fixed
+/// handful of fed chunks, each at most one HTTP frame, so the attempt's
+/// buffered request bytes stay bounded for any body size (VAL-008).
+const PARSE_BRIDGE_CHUNKS: usize = 4;
+
+/// The blocking side of the body bridge: a [`ByteSource`] fed by the
+/// async feeder task through the bounded channel. [`Self::pull`] blocks
+/// on the channel, which is legal only off the async runtime — exactly
+/// where the parse runs, inside [`tokio::task::spawn_blocking`].
+struct BodyChannel {
+    /// The fed chunks; `None`-equivalent (all senders dropped) is the
+    /// body's end.
+    receiver: mpsc::Receiver<Vec<u8>>,
+    /// The chunk currently being drained.
+    chunk: Vec<u8>,
+    /// The read offset into [`Self::chunk`].
+    cursor: usize,
+}
+
+impl ByteSource for BodyChannel {
+    fn pull(&mut self, window: &mut [u8]) -> Result<usize, io::ErrorKind> {
+        loop {
+            if self.cursor < self.chunk.len() {
+                let buffered = &self.chunk[self.cursor..];
+                let copied = buffered.len().min(window.len());
+                window[..copied].copy_from_slice(&buffered[..copied]);
+                self.cursor += copied;
+                return Ok(copied);
+            }
+            match self.receiver.blocking_recv() {
+                Some(chunk) if chunk.is_empty() => continue,
+                Some(chunk) => {
+                    self.chunk = chunk;
+                    self.cursor = 0;
+                }
+                // The feeders are gone: the body ended (or the parse
+                // outcome ended the attempt). Either way the tokenizer
+                // reads a closed stream.
+                None => return Ok(0),
+            }
         }
     }
 }
@@ -221,56 +339,19 @@ fn ready_body(snapshot: ReadinessSnapshot) -> Vec<u8> {
     Value::Object(object).canonical_bytes()
 }
 
-/// The canonical `archivist.error/v1` body for a registry-pinned code:
-/// both request identifiers are null because no envelope was parsed
-/// (ERR-027), and the code, retryability, and message are the registry's
-/// pinned values.
-fn registry_error_body(code: &str, message: &str) -> Vec<u8> {
-    let mut object = Object::new();
-    let _ = object.insert("code", Value::Text(code.to_owned()));
-    let _ = object.insert("correlation_id", Value::Null);
-    let _ = object.insert("message", Value::Text(message.to_owned()));
-    let _ = object.insert("request_id", Value::Null);
-    let _ = object.insert("retryable", Value::Bool(true));
-    let _ = object.insert("schema", Value::Text("archivist.error/v1".to_owned()));
-    Value::Object(object).canonical_bytes()
-}
-
-/// The canonical `archivist.error/v1` body for `server.unavailable`.
-fn unavailable_error_body() -> Vec<u8> {
-    registry_error_body(CODE_SERVER_UNAVAILABLE, MESSAGE_SERVER_UNAVAILABLE)
-}
-
-/// The canonical `archivist.error/v1` body for `request.rate_limited`:
-/// the one content-free refusal every resource guard renders. The body
-/// names no guard, no client, and no count — the registered
-/// `archivist.server.ingest` family is the only place overload is
-/// visible, and only as an outcome total (SEC-004).
-fn rate_limited_error_body() -> Vec<u8> {
-    registry_error_body(CODE_REQUEST_RATE_LIMITED, MESSAGE_REQUEST_RATE_LIMITED)
-}
-
-/// The canonical `archivist.error/v1` body for
-/// `request.deadline_exceeded`: the deadline guard's retryable refusal.
-fn deadline_error_body() -> Vec<u8> {
-    registry_error_body(
-        CODE_REQUEST_DEADLINE_EXCEEDED,
-        MESSAGE_REQUEST_DEADLINE_EXCEEDED,
-    )
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        ERROR_MEDIA_TYPE, HEALTH_MEDIA_TYPE, LIVE_BODY, METRICS_MEDIA_TYPE, deadline_error_body,
-        rate_limited_error_body, ready_body, unavailable_error_body,
+    use super::{HEALTH_MEDIA_TYPE, LIVE_BODY, METRICS_MEDIA_TYPE, failure_response, ready_body};
+    use crate::error::{
+        CORRELATION_ID_HEADER, ERROR_MEDIA_TYPE, PayloadLimit, REQUEST_ID_HEADER, ServerFailure,
     };
     use crate::guard::ProcessAdmission;
+    use crate::parse::parts::ENVELOPE_PART_MEDIA_TYPE;
     use crate::state::{NotReadyReason, ReadinessSnapshot, ServerState};
     use crate::trust::{TenantTrustRoot, TrustConfig};
     use archivist_protocol::json;
     use archivist_protocol::object_key::BlobObjectKey;
-    use archivist_protocol::vocabulary::{ClientId, KeyId, StorageOutcome, TenantId};
+    use archivist_protocol::vocabulary::{ClientId, KeyId, RequestId, StorageOutcome, TenantId};
     use archivist_storage::capability::StoreCapabilities;
     use archivist_storage::control::{AuthorizationEpoch, ControlReadStore, ControlRecord};
     use archivist_storage::error::{StorageError, StorageErrorKind};
@@ -278,10 +359,211 @@ mod tests {
     use archivist_storage::raw_write::{
         ManifestKey, MultipartUploadId, PartCommitment, PartNumber, RawWriteStore,
     };
+    use std::fs;
     use std::net::SocketAddr;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
+
+    /// The boundary the conformance corpus pins for the valid-direct
+    /// baseline scenario.
+    const BOUNDARY: &str = "archivist-conformance-01";
+    /// Part two's media type under the identity transport the v1 vectors pin.
+    const IDENTITY_MEDIA_TYPE: &str = "application/octet-stream";
+    /// A fixed canonical request identifier the direct mapping tests
+    /// carry; grammar-clean so `RequestId::parse` accepts it.
+    const REQUEST_ID: &str = "1a07b201-7000-7000-8000-000000000001";
+
+    /// The parsed [`REQUEST_ID`].
+    fn request_id_fixture() -> RequestId {
+        RequestId::parse(REQUEST_ID).expect("the fixture identifier is canonical")
+    }
+
+    /// Assert an error body is the exact six-member `archivist.error/v1`
+    /// contract for `expected_code`, with the class retryable, the
+    /// expected `request_id` (null or a carried canonical identifier),
+    /// and a correlation id that parses as a canonical `UUIDv7`. Returns
+    /// the body text for the caller's extra assertions.
+    fn assert_pinned_error_shape(
+        body: &[u8],
+        expected_code: &str,
+        expected_retryable: bool,
+        expected_request_id: Option<&str>,
+    ) -> String {
+        let value = json::parse(body).expect("every error body is canonical-domain JSON");
+        let json::Value::Object(ref object) = value else {
+            panic!("every error body is an object");
+        };
+        let fields: Vec<&str> = object.iter().map(|(name, _)| name).collect();
+        assert_eq!(
+            fields,
+            [
+                "code",
+                "correlation_id",
+                "message",
+                "request_id",
+                "retryable",
+                "schema"
+            ],
+            "{expected_code}: exactly the six schema members, canonically sorted"
+        );
+        let text = String::from_utf8(body.to_vec()).expect("error body is text");
+        assert!(
+            text.contains(&format!("\"code\":\"{expected_code}\"")),
+            "{expected_code}: body carries the registry code: {text}"
+        );
+        assert!(
+            text.contains(&format!("\"retryable\":{expected_retryable}")),
+            "{expected_code}: body carries the class retryable"
+        );
+        assert!(
+            text.contains("\"schema\":\"archivist.error/v1\""),
+            "{expected_code}: body carries the versioned namespace"
+        );
+        match expected_request_id {
+            None => assert!(
+                text.contains("\"request_id\":null"),
+                "{expected_code}: no envelope identifier, so the schema's null: {text}"
+            ),
+            Some(request_id) => {
+                let json::Value::Text(carried) = object
+                    .iter()
+                    .find_map(|(name, value)| (name.eq("request_id")).then_some(value))
+                    .expect("request_id is one of the six members")
+                else {
+                    panic!("{expected_code}: request_id is text");
+                };
+                assert_eq!(
+                    carried, request_id,
+                    "{expected_code}: the envelope's identifier travels verbatim"
+                );
+                RequestId::parse(carried).expect("a carried request id is itself canonical");
+                assert!(
+                    text.contains(&format!("\"request_id\":\"{request_id}\"")),
+                    "{expected_code}: the carried identifier is in the body: {text}"
+                );
+            }
+        }
+        let correlation_text = object
+            .iter()
+            .find_map(|(name, value)| (name.eq("correlation_id")).then_some(value))
+            .expect("correlation_id is one of the six members");
+        let json::Value::Text(correlation_text) = correlation_text else {
+            panic!("correlation_id is text");
+        };
+        RequestId::parse(correlation_text)
+            .expect("every minted correlation id is a canonical UUIDv7");
+        text
+    }
+
+    /// The conformance corpus directory, reached the way every corpus test
+    /// reaches it: relative to this crate's manifest.
+    fn corpus_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/v1/examples/conformance")
+    }
+
+    /// One scenario's pinned file bytes, walked from the manifest the
+    /// generator writes.
+    fn corpus_file(id: &str, name: &str) -> Vec<u8> {
+        let dir = corpus_dir();
+        let manifest_bytes = fs::read(dir.join("manifest.json")).expect("manifest.json reads");
+        let manifest = json::parse(&manifest_bytes).expect("manifest.json parses");
+        let json::Value::Object(manifest_object) = &manifest else {
+            panic!("manifest.json is an object");
+        };
+        let Some(json::Value::Array(scenarios)) = manifest_object.get("scenarios") else {
+            panic!("manifest.json scenarios is an array");
+        };
+        let Some(scenario) = scenarios.iter().find(|scenario| {
+            matches!(
+                scenario,
+                json::Value::Object(object)
+                    if object.get("id") == Some(&json::Value::Text(id.to_owned()))
+            )
+        }) else {
+            panic!("{id} is in the corpus manifest");
+        };
+        let json::Value::Object(scenario) = scenario else {
+            panic!("{id} is an object");
+        };
+        let Some(json::Value::Object(files)) = scenario.get("files") else {
+            panic!("{id}: files");
+        };
+        let Some(json::Value::Text(relative)) = files.get(name) else {
+            panic!("{id}: files.{name} is a path");
+        };
+        fs::read(dir.join(relative)).unwrap_or_else(|error| panic!("{id}: {relative}: {error}"))
+    }
+
+    /// One scenario's pinned Content-Type header, as transmitted.
+    fn corpus_content_type(id: &str) -> String {
+        let attempt_bytes = corpus_file(id, "attempt");
+        let attempt = json::parse(&attempt_bytes).expect("attempt parses");
+        let json::Value::Object(object) = &attempt else {
+            panic!("{id}: attempt.json is an object");
+        };
+        match object.get("content_type") {
+            Some(json::Value::Text(text)) => text.clone(),
+            other => panic!("{id}: attempt.json content_type is text, found {other:?}"),
+        }
+    }
+
+    /// One scenario's pinned error message, from its `error.json`.
+    fn corpus_error_message(id: &str) -> String {
+        let bytes = corpus_file(id, "error");
+        let error = json::parse(&bytes).unwrap_or_else(|error| panic!("{id}: {error}"));
+        let json::Value::Object(object) = &error else {
+            panic!("{id}: error.json is an object");
+        };
+        match object.get("message") {
+            Some(json::Value::Text(message)) => message.clone(),
+            other => panic!("{id}: error.json message is text, found {other:?}"),
+        }
+    }
+
+    /// One scenario's pinned request identifier, from its envelope
+    /// fixture.
+    fn corpus_request_id(id: &str) -> String {
+        let bytes = corpus_file(id, "envelope");
+        let envelope = json::parse(&bytes).expect("the envelope fixture parses");
+        let json::Value::Object(object) = &envelope else {
+            panic!("{id}: the envelope fixture is an object");
+        };
+        match object.get("request_id") {
+            Some(json::Value::Text(text)) => text.clone(),
+            other => panic!("{id}: request_id is text, found {other:?}"),
+        }
+    }
+
+    /// A body framed exactly as the conformance corpus transmits one.
+    fn framed_body(boundary: &str, parts: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut body = Vec::new();
+        for (media_type, bytes) in parts {
+            body.extend_from_slice(
+                format!("--{boundary}\r\ncontent-type: {media_type}\r\n\r\n").as_bytes(),
+            );
+            body.extend_from_slice(bytes);
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+        body
+    }
+
+    /// A full raw POST of `body` under `content_type`, the request the
+    /// route tests drive — built as bytes, so corpus bodies that carry
+    /// non-UTF-8 payload bytes transmit verbatim.
+    fn ingest_request(content_type: &str, body: &[u8]) -> Vec<u8> {
+        let mut request = format!(
+            "POST /v1/ingest HTTP/1.1\r\nHost: test\r\n\
+             Content-Type: {content_type}\r\nContent-Length: {}\r\n\
+             Connection: close\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        request.extend_from_slice(body);
+        request
+    }
 
     fn ready_snapshot(ready: bool, up: usize, total: usize) -> ReadinessSnapshot {
         ReadinessSnapshot {
@@ -324,45 +606,20 @@ mod tests {
     }
 
     #[test]
-    fn the_unavailable_body_is_the_registry_pinned_error_shape() {
-        let body = unavailable_error_body();
-        // Canonical bytes: the golden error bodies are produced by the
-        // same writer, so this is byte-comparable with the corpus.
-        let value = json::parse(&body).unwrap();
-        let json::Value::Object(ref object) = value else {
-            panic!("error body is an object");
-        };
-        assert_eq!(object.len(), 6);
-        let fields: Vec<&str> = object.iter().map(|(name, _)| name).collect();
+    fn the_fail_closed_refusal_carries_the_registry_pinned_message() {
+        // The full wire shape is pinned module-for-module in
+        // `crate::error`'s own tests against a fixed correlation id; here
+        // the fail-closed refusal's exact template and class are what the
+        // route pins.
+        let refusal =
+            crate::error::ErrorResponse::for_failure(crate::error::ServerFailure::Unavailable);
+        assert_eq!(refusal.code(), "server.unavailable");
+        assert!(refusal.retryable());
+        assert_eq!(refusal.status(), 503);
         assert_eq!(
-            fields,
-            [
-                "code",
-                "correlation_id",
-                "message",
-                "request_id",
-                "retryable",
-                "schema"
-            ]
-        );
-        let text = String::from_utf8(body).unwrap();
-        assert!(text.contains("\"code\":\"server.unavailable\""));
-        assert!(text.contains("\"retryable\":true"));
-        assert!(text.contains("\"schema\":\"archivist.error/v1\""));
-        assert!(text.contains("\"request_id\":null"));
-        assert!(text.contains("\"correlation_id\":null"));
-        assert!(text.contains(
-            "\"message\":\"The service is temporarily unable to handle the request; \
-             retry the identical envelope.\""
-        ));
-        // The pinned message survives its own charset rules: printable
-        // ASCII, no braces, one line, at most 200 characters.
-        let message = "The service is temporarily unable to handle the request; retry the identical envelope.";
-        assert!(message.len() <= 200);
-        assert!(
-            message
-                .bytes()
-                .all(|b| (0x20..=0x7a).contains(&b) || b == 0x7c || b == 0x7e)
+            refusal.message(),
+            "The service is temporarily unable to handle the request; \
+             retry the identical envelope."
         );
     }
 
@@ -507,8 +764,20 @@ mod tests {
 
     struct Exchanged {
         status: u16,
+        headers: Vec<(String, String)>,
         content_type: Option<String>,
         body: Vec<u8>,
+    }
+
+    impl Exchanged {
+        /// The last value of a named response header, case-insensitively.
+        fn header(&self, name: &str) -> Option<&str> {
+            self.headers
+                .iter()
+                .rev()
+                .find(|(header, _)| header.eq_ignore_ascii_case(name))
+                .map(|(_, value)| value.as_str())
+        }
     }
 
     /// One raw HTTP/1.1 exchange against the running router: the request
@@ -516,13 +785,16 @@ mod tests {
     /// close` makes the server close first — a client half-close here
     /// would kill the exchange instead of ending the request).
     async fn exchange(address: SocketAddr, request: &str) -> Exchanged {
+        exchange_bytes(address, request.as_bytes()).await
+    }
+
+    /// [`exchange`] over raw bytes, for corpus bodies that carry
+    /// non-UTF-8 payload bytes.
+    async fn exchange_bytes(address: SocketAddr, request: &[u8]) -> Exchanged {
         let mut stream = TcpStream::connect(address)
             .await
             .expect("test client connects");
-        stream
-            .write_all(request.as_bytes())
-            .await
-            .expect("request writes");
+        stream.write_all(request).await.expect("request writes");
         let mut raw = Vec::new();
         stream.read_to_end(&mut raw).await.expect("response reads");
         let split = raw
@@ -536,13 +808,21 @@ mod tests {
             .and_then(|line| line.split_whitespace().nth(1))
             .and_then(|code| code.parse().ok())
             .expect("response has a status code");
-        let content_type = head.lines().skip(1).find_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            name.eq_ignore_ascii_case("content-type")
-                .then(|| value.trim().to_owned())
-        });
+        let mut headers = Vec::new();
+        let mut content_type = None;
+        for line in head.lines().skip(1) {
+            let Some((name, value)) = line.split_once(':') else {
+                continue;
+            };
+            let value = value.trim().to_owned();
+            if name.eq_ignore_ascii_case("content-type") {
+                content_type = Some(value.clone());
+            }
+            headers.push((name.to_ascii_lowercase(), value));
+        }
         Exchanged {
             status,
+            headers,
             content_type,
             body: raw[split + 4..].to_vec(),
         }
@@ -611,42 +891,368 @@ mod tests {
         assert!(!text.contains("trust_age"));
     }
 
+    /// Assert the full wire contract of a rendered failure — the exact
+    /// six-member body, the registered status, the error media type, and
+    /// the correlation headers — over a live exchange.
+    fn assert_exchange_contract(
+        response: &Exchanged,
+        expected_status: u16,
+        expected_code: &str,
+        expected_retryable: bool,
+        expected_request_id: Option<&str>,
+    ) -> String {
+        assert_eq!(response.status, expected_status, "{expected_code}");
+        assert_eq!(
+            response.content_type.as_deref(),
+            Some(ERROR_MEDIA_TYPE),
+            "{expected_code}: the error media type"
+        );
+        let text = assert_pinned_error_shape(
+            &response.body,
+            expected_code,
+            expected_retryable,
+            expected_request_id,
+        );
+        // The correlation id travels as a header too, and matches the
+        // body (ERR-026); the request id header travels exactly when the
+        // body carries the identifier (ERR-025).
+        let correlation = response
+            .header(CORRELATION_ID_HEADER.as_str())
+            .expect("correlation header present");
+        assert!(
+            text.contains(&format!("\"correlation_id\":\"{correlation}\"")),
+            "{expected_code}: the header id matches the body"
+        );
+        match expected_request_id {
+            None => assert!(
+                response.header(REQUEST_ID_HEADER.as_str()).is_none(),
+                "{expected_code}: no identifier, no request id header"
+            ),
+            Some(request_id) => assert_eq!(
+                response.header(REQUEST_ID_HEADER.as_str()),
+                Some(request_id),
+                "{expected_code}: the request id header carries the identifier"
+            ),
+        }
+        text
+    }
+
     #[tokio::test]
-    async fn ingest_refuses_every_attempt_with_the_stable_retryable_error() {
+    async fn a_request_without_the_pinned_content_type_is_a_framing_rejection() {
         let address = serve(test_state()).await;
-        let payload = "envelope-zq9-marker-never-echoed";
+        // Bytes with no Content-Type at all: the framing is validated
+        // from the header alone, before any body byte is read, and the
+        // canary riding the body can never reach the wire.
+        let payload = b"envelope-zq9-marker-never-echoed";
         let request = format!(
             "POST /v1/ingest HTTP/1.1\r\nHost: test\r\nContent-Length: {}\r\n\
-             Connection: close\r\n\r\n{payload}",
+             Connection: close\r\n\r\n",
             payload.len()
         );
         let response = exchange(address, &request).await;
-        assert_eq!(response.status, 503);
-        assert_eq!(response.content_type.as_deref(), Some(ERROR_MEDIA_TYPE));
-        // The body is byte-identical to the pinned canonical refusal and
-        // never carries the request's own bytes.
-        assert_eq!(response.body, unavailable_error_body());
-        let text = String::from_utf8(response.body).expect("error body is text");
-        assert!(text.contains("\"code\":\"server.unavailable\""));
-        assert!(text.contains("\"retryable\":true"));
+        let text = assert_exchange_contract(&response, 400, "request.framing_invalid", false, None);
         assert!(!text.contains("zq9-marker"));
+        // The pinned framing message, verbatim from the registry.
+        assert!(
+            text.contains(
+                "\"message\":\"The request is not the pinned two-part \
+                 multipart/related framing; send the identical bytes the signature \
+                 covered.\""
+            ),
+            "{text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_well_formed_attempt_is_refused_unavailable_until_the_commit_slice_lands() {
+        let address = serve(test_state()).await;
+        let id = "valid-direct-baseline";
+        let body = corpus_file(id, "request_body");
+        let response =
+            exchange_bytes(address, &ingest_request(&corpus_content_type(id), &body)).await;
+        // The envelope parsed, so the stable retryable refusal carries
+        // its identifier (ERR-025) in body and header alike.
+        let request_id = corpus_request_id(id);
+        let text = assert_exchange_contract(
+            &response,
+            503,
+            "server.unavailable",
+            true,
+            Some(&request_id),
+        );
+        assert!(response.header(REQUEST_ID_HEADER.as_str()).is_some());
+        // The pinned unavailable message, verbatim from the registry.
+        assert!(
+            text.contains(
+                "\"message\":\"The service is temporarily unable to handle the \
+                 request; retry the identical envelope.\""
+            ),
+            "{text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_non_envelope_first_part_is_the_media_type_rejection() {
+        let address = serve(test_state()).await;
+        let body = framed_body(
+            BOUNDARY,
+            &[
+                ("text/x-CANARY-MEDIA-TYPE-9q", b"not the envelope"),
+                (IDENTITY_MEDIA_TYPE, b"x"),
+            ],
+        );
+        let response = exchange_bytes(
+            address,
+            &ingest_request(
+                "multipart/related; boundary=archivist-conformance-01",
+                &body,
+            ),
+        )
+        .await;
+        // Part one is not the pinned envelope media type: the
+        // content-negotiation 415, and neither placeholder — the observed
+        // type least of all — is echoable (ERR-013's degradation).
+        let text = assert_exchange_contract(
+            &response,
+            415,
+            "envelope.media_type_unsupported",
+            false,
+            None,
+        );
+        assert!(
+            text.contains(
+                "\"message\":\"Media type [media_type] is not accepted; this path \
+                 accepts [expected_media_type].\""
+            ),
+            "{text}"
+        );
+        assert!(!text.contains("CANARY-MEDIA-TYPE-9q"));
+    }
+
+    #[tokio::test]
+    async fn a_malformed_envelope_part_is_the_malformed_rejection() {
+        let address = serve(test_state()).await;
+        let body = framed_body(
+            BOUNDARY,
+            &[
+                (
+                    ENVELOPE_PART_MEDIA_TYPE,
+                    b"{\"leaked\": \"CANARY-JSON-BYTES-5r\"",
+                ),
+                (IDENTITY_MEDIA_TYPE, b"CANARY-PAYLOAD-BYTES-7w"),
+            ],
+        );
+        let response = exchange_bytes(
+            address,
+            &ingest_request(
+                "multipart/related; boundary=archivist-conformance-01",
+                &body,
+            ),
+        )
+        .await;
+        let text = assert_exchange_contract(&response, 400, "envelope.malformed", false, None);
+        // Not canonical-domain JSON, so no identifier and none of the
+        // canary bytes: the pinned message, verbatim.
+        assert!(
+            text.contains(
+                "\"message\":\"The request envelope is not valid canonical JSON for \
+                 the declared schema version.\""
+            ),
+            "{text}"
+        );
+        assert!(!text.contains("CANARY-JSON-BYTES-5r"));
+        assert!(!text.contains("CANARY-PAYLOAD-BYTES-7w"));
+    }
+
+    #[tokio::test]
+    async fn an_unsupported_envelope_version_is_the_version_rejection() {
+        let address = serve(test_state()).await;
+        // The baseline envelope with its protocol major bumped: refused
+        // at the version axis, with the envelope's own identifier
+        // carried (ERR-025).
+        let envelope_bytes = corpus_file("valid-direct-baseline", "envelope");
+        let mut envelope = match json::parse(&envelope_bytes).expect("fixture parses") {
+            json::Value::Object(object) => object,
+            other => panic!("the envelope fixture is an object, found {other:?}"),
+        };
+        envelope.set("protocol_version", json::Value::Int(2));
+        let body = framed_body(
+            BOUNDARY,
+            &[
+                (
+                    ENVELOPE_PART_MEDIA_TYPE,
+                    json::Value::Object(envelope).canonical_bytes().as_slice(),
+                ),
+                (IDENTITY_MEDIA_TYPE, b"x"),
+            ],
+        );
+        let response = exchange_bytes(
+            address,
+            &ingest_request(
+                "multipart/related; boundary=archivist-conformance-01",
+                &body,
+            ),
+        )
+        .await;
+        let request_id = corpus_request_id("valid-direct-baseline");
+        let text = assert_exchange_contract(
+            &response,
+            400,
+            "envelope.version_unsupported",
+            false,
+            Some(&request_id),
+        );
+        assert!(
+            text.contains(
+                "\"message\":\"Envelope schema version 2 is not supported by this \
+                 server.\""
+            ),
+            "{text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_corpus_field_violations_render_their_pinned_bodies_through_the_route() {
+        let address = serve(test_state()).await;
+        for id in [
+            "invalid-occurrence-id-mismatch",
+            "invalid-unknown-enum-value",
+            "invalid-reserved-field",
+        ] {
+            let body = corpus_file(id, "request_body");
+            let response =
+                exchange_bytes(address, &ingest_request(&corpus_content_type(id), &body)).await;
+            // The pinned registry code and message travel verbatim from
+            // the parser through the contract, and the envelope's own
+            // identifier is carried in body and header (ERR-025).
+            let request_id = corpus_request_id(id);
+            let text = assert_exchange_contract(
+                &response,
+                400,
+                "envelope.schema_invalid",
+                false,
+                Some(&request_id),
+            );
+            let pinned_message = corpus_error_message(id);
+            assert!(
+                text.contains(&format!("\"message\":\"{pinned_message}\"")),
+                "{id}: the pinned message is rendered verbatim: {text}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn both_payload_limit_classes_render_their_registry_413_through_the_route_mapping() {
+        // The payload-limit triggers are the streaming pipeline's to
+        // raise; the route's rendering of both classes is this surface's
+        // contract, so the mapping is pinned directly per class — the
+        // same single rendering site every live path above exercises.
+        let splittable = ServerFailure::PayloadLimit(PayloadLimit::SplittableBytes {
+            actual_bytes: 5_000_000,
+            limit_bytes: 4_194_304,
+        });
+        let unsplittable = ServerFailure::PayloadLimit(PayloadLimit::UnsplittableRecord {
+            actual_bytes: 300_000_000,
+            limit_bytes: 268_435_456,
+        });
+        let ratio = ServerFailure::PayloadLimit(PayloadLimit::SplittableRatio { max_ratio: 100 });
+        for (failure, code, message) in [
+            (
+                splittable,
+                "request.payload_too_large",
+                "The payload of 5000000 bytes exceeds the 4194304 byte limit; \
+                 rechunk at a record boundary and resubmit.",
+            ),
+            (
+                unsplittable,
+                "request.record_too_large",
+                "One record of 300000000 bytes exceeds the 268435456 byte \
+                 unsplittable limit; the coverage gap is reported.",
+            ),
+            (
+                ratio,
+                "request.expansion_ratio_exceeded",
+                "The decompression expansion ratio exceeds 100 to 1; rechunk and \
+                 resubmit.",
+            ),
+        ] {
+            // No envelope parsed on a size refusal before an envelope
+            // exists: the schema's null, no request id header, and the
+            // same correlation headers every contract response carries.
+            let response = failure_response(failure, None);
+            assert_eq!(response.status().as_u16(), 413, "{code}");
+            assert_eq!(
+                response.headers().get(axum::http::header::CONTENT_TYPE),
+                Some(&ERROR_MEDIA_TYPE.parse().expect("media type header")),
+                "{code}"
+            );
+            assert!(
+                response.headers().get(REQUEST_ID_HEADER).is_none(),
+                "{code}: no identifier, no request id header"
+            );
+            let correlation = response
+                .headers()
+                .get(CORRELATION_ID_HEADER)
+                .expect("correlation header present")
+                .to_str()
+                .expect("the minted id is ASCII")
+                .to_owned();
+            let body = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .expect("body reads");
+            let text = assert_pinned_error_shape(&body, code, false, None);
+            assert!(
+                text.contains(&format!("\"message\":\"{message}\"")),
+                "{code}: the rendered integers, verbatim: {text}"
+            );
+            assert!(
+                text.contains(&format!("\"correlation_id\":\"{correlation}\"")),
+                "{code}: the header id matches the body: {text}"
+            );
+        }
+
+        // A size refusal raised after an envelope parsed carries its
+        // identifier exactly as any other path does.
+        let carried = failure_response(splittable, Some(request_id_fixture()));
+        assert_eq!(carried.status().as_u16(), 413);
+        let header = carried
+            .headers()
+            .get(REQUEST_ID_HEADER)
+            .expect("carried id travels as a header");
+        assert_eq!(header.to_str().expect("header is text"), REQUEST_ID);
+        let body = axum::body::to_bytes(carried.into_body(), 4096)
+            .await
+            .expect("body reads");
+        assert_pinned_error_shape(&body, "request.payload_too_large", false, Some(REQUEST_ID));
     }
 
     #[tokio::test]
     async fn the_fail_closed_refusals_land_in_the_failed_outcome() {
         let address = serve(test_state()).await;
-        let refused = exchange(
+        let id = "valid-direct-baseline";
+        let refused = exchange_bytes(
+            address,
+            &ingest_request(&corpus_content_type(id), &corpus_file(id, "request_body")),
+        )
+        .await;
+        assert_eq!(refused.status, 503);
+        // A shape violation on the same replica is a rejection, never a
+        // failure: the two outcomes never blur.
+        let rejected = exchange(
             address,
             "POST /v1/ingest HTTP/1.1\r\nHost: test\r\nContent-Length: 0\r\n\
              Connection: close\r\n\r\n",
         )
         .await;
-        assert_eq!(refused.status, 503);
+        assert_eq!(rejected.status, 400);
         let rendered = exchange(address, &get_request("/metrics")).await;
         assert_eq!(rendered.status, 200);
         let text = String::from_utf8(rendered.body).expect("exposition is text");
         assert!(text.contains(
             "archivist_server_ingest_requests_total{archivist_ingest_outcome=\"failed\"} 1\n"
+        ));
+        assert!(text.contains(
+            "archivist_server_ingest_requests_total{archivist_ingest_outcome=\"rejected\"} 1\n"
         ));
         assert!(text.contains(
             "archivist_server_ingest_requests_total{archivist_ingest_outcome=\"committed\"} 0\n"
@@ -676,55 +1282,26 @@ mod tests {
     }
 
     #[test]
-    fn the_rate_limited_body_is_the_registry_pinned_error_shape() {
-        let body = rate_limited_error_body();
-        let value = json::parse(&body).unwrap();
-        let json::Value::Object(ref object) = value else {
-            panic!("error body is an object");
-        };
-        assert_eq!(object.len(), 6);
-        let fields: Vec<&str> = object.iter().map(|(name, _)| name).collect();
+    fn the_rate_limited_refusal_carries_the_registry_pinned_message() {
+        let refusal =
+            crate::error::ErrorResponse::for_failure(crate::error::ServerFailure::RateLimited);
+        assert_eq!(refusal.code(), "request.rate_limited");
+        assert!(refusal.retryable());
+        assert_eq!(refusal.status(), 429);
         assert_eq!(
-            fields,
-            [
-                "code",
-                "correlation_id",
-                "message",
-                "request_id",
-                "retryable",
-                "schema"
-            ]
+            refusal.message(),
+            "The per-client request rate was exceeded; \
+             retry after the indicated interval."
         );
-        let text = String::from_utf8(body).expect("error body is text");
-        assert!(text.contains("\"code\":\"request.rate_limited\""));
-        assert!(text.contains("\"retryable\":true"));
-        assert!(text.contains("\"schema\":\"archivist.error/v1\""));
-        assert!(text.contains("\"request_id\":null"));
-        assert!(text.contains("\"correlation_id\":null"));
-        assert!(text.contains(
-            "\"message\":\"The per-client request rate was exceeded; \
-             retry after the indicated interval.\""
-        ));
-    }
-
-    #[test]
-    fn the_deadline_body_is_the_registry_pinned_error_shape() {
-        let body = deadline_error_body();
-        let value = json::parse(&body).unwrap();
-        let json::Value::Object(ref object) = value else {
-            panic!("error body is an object");
-        };
-        assert_eq!(object.len(), 6);
-        let text = String::from_utf8(body).expect("error body is text");
-        assert!(text.contains("\"code\":\"request.deadline_exceeded\""));
-        assert!(text.contains("\"retryable\":true"));
-        assert!(text.contains("\"schema\":\"archivist.error/v1\""));
-        assert!(text.contains("\"request_id\":null"));
-        assert!(text.contains("\"correlation_id\":null"));
-        assert!(text.contains(
-            "\"message\":\"The request exceeded the request deadline; \
-             retry the identical envelope.\""
-        ));
+        let deadline =
+            crate::error::ErrorResponse::for_failure(crate::error::ServerFailure::DeadlineElapsed);
+        assert_eq!(deadline.code(), "request.deadline_exceeded");
+        assert!(deadline.retryable());
+        assert_eq!(deadline.status(), 408);
+        assert_eq!(
+            deadline.message(),
+            "The request exceeded the request deadline; retry the identical envelope."
+        );
     }
 
     #[tokio::test]
@@ -741,20 +1318,32 @@ mod tests {
         let response = exchange(address, &request).await;
         assert_eq!(response.status, 429);
         assert_eq!(response.content_type.as_deref(), Some(ERROR_MEDIA_TYPE));
-        // Byte-identical to the pinned canonical refusal: no guard name,
-        // no client, no count, and none of the request's own bytes.
-        assert_eq!(response.body, rate_limited_error_body());
-        assert!(
-            !String::from_utf8(response.body)
-                .expect("error body is text")
-                .contains("zq9-marker")
-        );
+        // The exact six-member contract: no guard name, no client, no
+        // count, and none of the request's own bytes. The guard refusal
+        // precedes any parse, so the request id is the schema's null.
+        let text = assert_pinned_error_shape(&response.body, "request.rate_limited", true, None);
+        assert!(!text.contains("zq9-marker"));
+        assert!(response.header(CORRELATION_ID_HEADER.as_str()).is_some());
         // Retryable is real: releasing one slot admits the very next
-        // attempt, which reaches the fail-closed stub's stable answer.
+        // attempt, which parses a well-formed body and reaches the
+        // fail-closed stable answer with the envelope's identifier
+        // carried.
         drop(admissions);
-        let retried = exchange(address, &request).await;
+        let retried = exchange_bytes(
+            address,
+            &ingest_request(
+                &corpus_content_type("valid-direct-baseline"),
+                &corpus_file("valid-direct-baseline", "request_body"),
+            ),
+        )
+        .await;
         assert_eq!(retried.status, 503);
-        assert_eq!(retried.body, unavailable_error_body());
+        assert_pinned_error_shape(
+            &retried.body,
+            "server.unavailable",
+            true,
+            Some(&corpus_request_id("valid-direct-baseline")),
+        );
     }
 
     #[tokio::test]
@@ -806,7 +1395,7 @@ mod tests {
              Connection: close\r\n\r\n";
         let response = exchange(address, head_only).await;
         assert_eq!(response.status, 429);
-        assert_eq!(response.body, rate_limited_error_body());
+        assert_pinned_error_shape(&response.body, "request.rate_limited", true, None);
     }
 
     #[tokio::test]

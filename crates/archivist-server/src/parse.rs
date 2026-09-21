@@ -59,9 +59,11 @@
 //!   pin the authorization middleware's window and tenant checks (strand
 //!   `aa-834ca705`); `invalid-integrity-conflict` pins the storage commit
 //!   layer, which alone can see an existing stored object.
-//! - HTTP serialization of every rejection, the parser's codes included,
-//!   is the route layer's strand (`aa-aebd9a6e`); this chain produces the
-//!   code and the pinned message only.
+//! - HTTP serialization of every rejection — the parser's codes
+//!   included — flows through the error contract ([`crate::error`],
+//!   rendered by the route layer): this chain produces the code, the
+//!   pinned message, and the parsed envelope's request identifier, and
+//!   [`crate::error`] renders them onto the wire.
 
 pub mod framing;
 pub mod ingest;

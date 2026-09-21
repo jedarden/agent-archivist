@@ -85,6 +85,7 @@ dependencies = [
  "archivist-protocol",
  "archivist-storage",
  "axum",
+ "http-body-util",
  "tokio",
 ]
 

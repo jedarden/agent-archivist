@@ -12,9 +12,13 @@
 //! version axes, member grammars, calendar and consistency checks,
 //! identity re-derivation, the canonical size cap — and only then expose
 //! part two as the streaming payload handle. Every violation in that
-//! sequence is rejected with an [`IngestParseError`] before any commit
+//! sequence is rejected with an [`IngestRejection`] — the typed
+//! [`IngestParseError`] plus the envelope's request identifier when the
+//! envelope bytes yielded one (ERR-025) — before any commit
 //! exists to undo: this layer touches no store, so a rejected request
-//! commits nothing by construction.
+//! commits nothing by construction. The HTTP rendering of every
+//! rejection is the error contract's ([`crate::error`], rendered by the
+//! route layer).
 //!
 //! # The seven acceptance classes
 //!
@@ -54,7 +58,8 @@
 //! hold every path to that under adversarial canary bodies.
 
 use archivist_protocol::envelope::{Envelope, EnvelopeError};
-use archivist_protocol::vocabulary::{ErrorCode, SafeMessage};
+use archivist_protocol::json;
+use archivist_protocol::vocabulary::{ErrorCode, RequestId, SafeMessage};
 
 use super::framing::{ByteSource, RequestFraming};
 use super::parts::{PayloadStream, TwoPartError, TwoPartRequest};
@@ -176,6 +181,40 @@ impl IngestParseError {
     }
 }
 
+/// A rejected ingest parse: the typed, content-free failure plus the
+/// request identifier the envelope bytes yielded, when one parsed before
+/// (or despite) the violation (ERR-025). The route layer renders this
+/// through [`crate::error`], which carries the identifier as the body's
+/// `request_id` member and header; framing-stage rejections — everything
+/// before the envelope was JSON-parsed — always carry `None` (ERR-027's
+/// null).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IngestRejection {
+    /// The typed parse failure: one registry code and its pinned message.
+    pub error: IngestParseError,
+    /// The parsed envelope's request identifier, when the envelope part
+    /// yielded one.
+    pub request_id: Option<RequestId>,
+}
+
+/// Recover the request identifier the envelope bytes carried, when they
+/// yielded one: the bytes parsed as a JSON object whose `request_id`
+/// member parses as a canonical identifier. A bounded peek over the
+/// already-capped part one — nothing beyond the identifier's own grammar
+/// is read, and any peek failure is simply the schema's null. The
+/// identifier is the one envelope value the error contract may echo
+/// (ERR-025): its grammar is what makes it content-free.
+fn envelope_request_id(part_one: &[u8]) -> Option<RequestId> {
+    let value = json::parse(part_one).ok()?;
+    let json::Value::Object(ref object) = value else {
+        return None;
+    };
+    match object.get("request_id") {
+        Some(json::Value::Text(text)) => RequestId::parse(text).ok(),
+        _ => None,
+    }
+}
+
 /// Render a `{version}` placeholder (ERR-012: token, `[0-9A-Za-z._+-]{1,
 /// 32}`): the declared major as plain decimal. An `i64` always renders —
 /// at worst 20 characters of digits and a sign — and the bracket
@@ -229,9 +268,10 @@ fn render_bytes(limit: u64) -> String {
 ///
 /// The registry default envelope cap ([`DEFAULT_ENVELOPE_MAX_BYTES`])
 /// bounds part one; the configured cap travels through
-/// [`parse_ingest_with_cap`]. Every rejection is an [`IngestParseError`]
-/// carrying its registry code and pinned message, raised before anything
-/// is committed — this layer holds no store.
+/// [`parse_ingest_with_cap`]. Every rejection is an [`IngestRejection`]
+/// carrying its registry code, pinned message, and — when the envelope
+/// bytes yielded one — the request identifier, raised before anything is
+/// committed: this layer holds no store.
 ///
 /// # Errors
 /// The first violation in the pinned order: request framing, the
@@ -240,7 +280,7 @@ fn render_bytes(limit: u64) -> String {
 pub fn parse_ingest<S: ByteSource>(
     framing: &RequestFraming,
     source: S,
-) -> Result<(Envelope, PayloadStream<S>), IngestParseError> {
+) -> Result<(Envelope, PayloadStream<S>), IngestRejection> {
     parse_ingest_with_cap(framing, source, DEFAULT_ENVELOPE_MAX_BYTES)
 }
 
@@ -253,11 +293,25 @@ pub fn parse_ingest_with_cap<S: ByteSource>(
     framing: &RequestFraming,
     source: S,
     envelope_cap: u64,
-) -> Result<(Envelope, PayloadStream<S>), IngestParseError> {
+) -> Result<(Envelope, PayloadStream<S>), IngestRejection> {
     let mut request = TwoPartRequest::with_envelope_cap(framing, source, envelope_cap);
-    let part_one = request.envelope().map_err(IngestParseError::Framing)?;
-    let envelope = Envelope::parse(&part_one).map_err(IngestParseError::Envelope)?;
-    let stream = request.payload().map_err(IngestParseError::Framing)?;
+    let part_one = request.envelope().map_err(|error| IngestRejection {
+        error: IngestParseError::Framing(error),
+        request_id: None,
+    })?;
+    let envelope = match Envelope::parse(&part_one) {
+        Ok(envelope) => envelope,
+        Err(error) => {
+            return Err(IngestRejection {
+                error: IngestParseError::Envelope(error),
+                request_id: envelope_request_id(&part_one),
+            });
+        }
+    };
+    let stream = request.payload().map_err(|error| IngestRejection {
+        error: IngestParseError::Framing(error),
+        request_id: None,
+    })?;
     Ok((envelope, stream))
 }
 
@@ -369,6 +423,25 @@ mod tests {
         }
     }
 
+    /// One scenario's pinned request identifier, from its envelope
+    /// fixture.
+    fn corpus_request_id(id: &str) -> String {
+        let envelope = valid_envelope_object_for(id);
+        match envelope.get("request_id") {
+            Some(json::Value::Text(text)) => text.clone(),
+            other => panic!("{id}: request_id is text, found {other:?}"),
+        }
+    }
+
+    /// One scenario's envelope fixture, parsed for mutation.
+    fn valid_envelope_object_for(id: &str) -> Object {
+        let bytes = corpus_file(id, "envelope");
+        match json::parse(&bytes).expect("the envelope fixture parses") {
+            Value::Object(object) => object,
+            other => panic!("{id}: the envelope fixture is an object, found {other:?}"),
+        }
+    }
+
     /// One text member of a parsed JSON object.
     fn text_member<'a>(object: &'a Object, name: &str) -> &'a str {
         match object.get(name) {
@@ -379,11 +452,7 @@ mod tests {
 
     /// The valid baseline envelope, parsed for mutation.
     fn valid_envelope_object() -> Object {
-        let bytes = corpus_file("valid-direct-baseline", "envelope");
-        match json::parse(&bytes).expect("the baseline envelope parses") {
-            Value::Object(object) => object,
-            other => panic!("the baseline envelope is an object, found {other:?}"),
-        }
+        valid_envelope_object_for("valid-direct-baseline")
     }
 
     /// A scenario's Content-Type, validated.
@@ -421,20 +490,26 @@ mod tests {
             ],
         );
         let framing = request_framing();
-        let error = parse_ingest(&framing, &body[..]).expect_err("the media type is not accepted");
+        let rejection =
+            parse_ingest(&framing, &body[..]).expect_err("the media type is not accepted");
         assert_eq!(
-            error,
+            rejection.error,
             IngestParseError::Framing(TwoPartError::EnvelopeNotFirst)
         );
-        assert_eq!(error.code().as_str(), "envelope.media_type_unsupported");
+        assert_eq!(
+            rejection.error.code().as_str(),
+            "envelope.media_type_unsupported"
+        );
         // The pinned template with both placeholders in the ERR-013
         // bracket degradation: neither value is echoable.
         assert_eq!(
-            error.message().as_str(),
+            rejection.error.message().as_str(),
             TEMPLATE_ENVELOPE_MEDIA_TYPE_UNSUPPORTED
                 .replace("{media_type}", "[media_type]")
                 .replace("{expected_media_type}", "[expected_media_type]")
         );
+        // The media rejection precedes the envelope: the schema's null.
+        assert_eq!(rejection.request_id, None);
     }
 
     #[test]
@@ -446,13 +521,19 @@ mod tests {
         // part-order failure surfaces only after part one validates, so
         // part one here is a valid envelope.
         let body = framed_body(BOUNDARY, &[(ENVELOPE_PART_MEDIA_TYPE, &envelope_bytes)]);
-        let error = parse_ingest(&framing, &body[..]).expect_err("no payload part");
+        let rejection = parse_ingest(&framing, &body[..]).expect_err("no payload part");
         assert_eq!(
-            error,
+            rejection.error,
             IngestParseError::Framing(TwoPartError::PayloadPartMissing)
         );
-        assert_eq!(error.code().as_str(), "request.framing_invalid");
-        assert_eq!(error.message().as_str(), MESSAGE_REQUEST_FRAMING_INVALID);
+        assert_eq!(rejection.error.code().as_str(), "request.framing_invalid");
+        assert_eq!(
+            rejection.error.message().as_str(),
+            MESSAGE_REQUEST_FRAMING_INVALID
+        );
+        // A framing rejection precedes the envelope, even when the body
+        // carried a well-formed one: the schema's null.
+        assert_eq!(rejection.request_id, None);
 
         // The remaining part-order stages map through the same code and
         // the same pinned message: a third part (rejected at the caller's
@@ -475,24 +556,34 @@ mod tests {
         // template with that field name, byte-for-byte the corpus's
         // pinned error body message.
         let id = "invalid-occurrence-id-mismatch";
-        let error = parse_ingest(&corpus_framing(id), &corpus_file(id, "request_body")[..])
+        let rejection = parse_ingest(&corpus_framing(id), &corpus_file(id, "request_body")[..])
             .expect_err("the declared identity is refused");
         assert_eq!(
-            error,
+            rejection.error,
             IngestParseError::Envelope(EnvelopeError::SchemaInvalid {
                 field: "occurrence_id",
                 reason: "declared identity does not match the re-derived one",
             })
         );
-        assert_eq!(error.code().as_str(), "envelope.schema_invalid");
+        assert_eq!(rejection.error.code().as_str(), "envelope.schema_invalid");
         assert_eq!(
-            error.message().as_str(),
+            rejection.error.message().as_str(),
             TEMPLATE_ENVELOPE_SCHEMA_INVALID.replace("{field}", "occurrence_id")
         );
-        assert_eq!(error.message().as_str(), corpus_error_message(id));
+        assert_eq!(rejection.error.message().as_str(), corpus_error_message(id));
+        // The envelope bytes yielded a well-formed request identifier
+        // before the field check refused the envelope: the contract
+        // carries it (ERR-025).
+        assert_eq!(
+            rejection.request_id.map(|id| id.as_str().to_owned()),
+            Some(corpus_request_id(id))
+        );
         // The direct envelope parse of the pinned part-one bytes agrees
         // with the composed pipeline.
-        assert_eq!(envelope_parse_error(&corpus_file(id, "envelope")), error);
+        assert_eq!(
+            envelope_parse_error(&corpus_file(id, "envelope")),
+            rejection.error
+        );
     }
 
     #[test]
@@ -529,21 +620,26 @@ mod tests {
         // the parser fails closed at that field with the registry
         // template, matching the corpus's pinned error body message.
         let id = "invalid-unknown-enum-value";
-        let error = parse_ingest(&corpus_framing(id), &corpus_file(id, "request_body")[..])
+        let rejection = parse_ingest(&corpus_framing(id), &corpus_file(id, "request_body")[..])
             .expect_err("the unknown enum token fails closed");
         assert_eq!(
-            error,
+            rejection.error,
             IngestParseError::Envelope(EnvelopeError::SchemaInvalid {
                 field: "transport_encoding",
                 reason: "value does not match the canonical grammar",
             })
         );
-        assert_eq!(error.code().as_str(), "envelope.schema_invalid");
+        assert_eq!(rejection.error.code().as_str(), "envelope.schema_invalid");
         assert_eq!(
-            error.message().as_str(),
+            rejection.error.message().as_str(),
             TEMPLATE_ENVELOPE_SCHEMA_INVALID.replace("{field}", "transport_encoding")
         );
-        assert_eq!(error.message().as_str(), corpus_error_message(id));
+        assert_eq!(rejection.error.message().as_str(), corpus_error_message(id));
+        // The identifier survived the violation: carried (ERR-025).
+        assert_eq!(
+            rejection.request_id.map(|id| id.as_str().to_owned()),
+            Some(corpus_request_id(id))
+        );
     }
 
     #[test]
@@ -560,17 +656,19 @@ mod tests {
             ],
         );
         let framing = request_framing();
-        let error =
+        let rejection =
             parse_ingest_with_cap(&framing, &body[..], cap).expect_err("the part crosses the cap");
         assert_eq!(
-            error,
+            rejection.error,
             IngestParseError::Framing(TwoPartError::EnvelopeExceedsCap { limit_bytes: cap })
         );
-        assert_eq!(error.code().as_str(), "envelope.size_exceeded");
+        assert_eq!(rejection.error.code().as_str(), "envelope.size_exceeded");
         assert_eq!(
-            error.message().as_str(),
+            rejection.error.message().as_str(),
             TEMPLATE_ENVELOPE_SIZE_EXCEEDED.replace("{limit_bytes}", "16")
         );
+        // The capped bytes were never JSON-parsed: the schema's null.
+        assert_eq!(rejection.request_id, None);
 
         // The protocol-level cap: a canonical serialization over
         // CANONICAL_MAX_BYTES is the same code at the envelope layer. An
@@ -611,24 +709,38 @@ mod tests {
             ],
         );
         let framing = request_framing();
-        let error = parse_ingest(&framing, &body[..]).expect_err("not JSON");
-        assert_eq!(error.code().as_str(), "envelope.malformed", "{error:?}");
-        assert_eq!(error.message().as_str(), MESSAGE_ENVELOPE_MALFORMED);
+        let rejection = parse_ingest(&framing, &body[..]).expect_err("not JSON");
+        assert_eq!(
+            rejection.error.code().as_str(),
+            "envelope.malformed",
+            "{rejection:?}"
+        );
+        assert_eq!(
+            rejection.error.message().as_str(),
+            MESSAGE_ENVELOPE_MALFORMED
+        );
+        // No JSON, no identifier: the schema's null.
+        assert_eq!(rejection.request_id, None);
 
         // A reserved per-attempt/server member is the corpus's pinned
         // schema-invalid case, rejected before any field is read.
         let id = "invalid-reserved-field";
-        let error = parse_ingest(&corpus_framing(id), &corpus_file(id, "request_body")[..])
+        let rejection = parse_ingest(&corpus_framing(id), &corpus_file(id, "request_body")[..])
             .expect_err("the reserved member is refused");
         assert_eq!(
-            error,
+            rejection.error,
             IngestParseError::Envelope(EnvelopeError::SchemaInvalid {
                 field: "commit_time",
                 reason: "reserved per-attempt or server member",
             })
         );
-        assert_eq!(error.code().as_str(), "envelope.schema_invalid");
-        assert_eq!(error.message().as_str(), corpus_error_message(id));
+        assert_eq!(rejection.error.code().as_str(), "envelope.schema_invalid");
+        assert_eq!(rejection.error.message().as_str(), corpus_error_message(id));
+        // The identifier is carried despite the violation (ERR-025).
+        assert_eq!(
+            rejection.request_id.map(|id| id.as_str().to_owned()),
+            Some(corpus_request_id(id))
+        );
     }
 
     // -- the happy path ---------------------------------------------------
@@ -733,9 +845,10 @@ mod tests {
         ];
 
         for (label, body) in cases {
-            let error = parse_ingest_with_cap(&canary_framing(), &body[..], cap).expect_err(label);
-            let message = error.message();
-            let debug = format!("{error:?}");
+            let rejection =
+                parse_ingest_with_cap(&canary_framing(), &body[..], cap).expect_err(label);
+            let message = rejection.error.message();
+            let debug = format!("{rejection:?}");
             for canary in canaries {
                 assert!(
                     !debug.contains(canary),
@@ -812,5 +925,70 @@ mod tests {
             error.message().as_str(),
             TEMPLATE_ENVELOPE_VERSION_UNSUPPORTED.replace("{version}", "-1")
         );
+    }
+
+    #[test]
+    fn the_envelope_request_id_is_carried_only_when_canonical() {
+        let baseline_id = corpus_request_id("valid-direct-baseline");
+
+        // A version violation on an otherwise well-formed envelope still
+        // carries the identifier the envelope bytes declared (ERR-025).
+        let mut envelope = valid_envelope_object();
+        envelope.set("protocol_version", Value::Int(2));
+        let bytes = Value::Object(envelope).canonical_bytes();
+        let rejection = envelope_parse_error(&bytes);
+        assert_eq!(
+            rejection,
+            IngestParseError::Envelope(EnvelopeError::VersionUnsupported {
+                field: "protocol_version",
+                found: 2,
+            })
+        );
+        let rejection = {
+            let framing = request_framing();
+            let body = framed_body(
+                BOUNDARY,
+                &[
+                    (ENVELOPE_PART_MEDIA_TYPE, &bytes),
+                    (IDENTITY_MEDIA_TYPE, b"x"),
+                ],
+            );
+            parse_ingest(&framing, &body[..]).expect_err("the major is unsupported")
+        };
+        assert_eq!(
+            rejection.error.code().as_str(),
+            "envelope.version_unsupported"
+        );
+        assert_eq!(
+            rejection.request_id.map(|id| id.as_str().to_owned()),
+            Some(baseline_id.clone())
+        );
+
+        // An identifier outside its grammar is refused by the envelope
+        // validation, and the peek refuses it too: the schema's null —
+        // never a value that failed the canonical grammar.
+        let mut envelope = valid_envelope_object();
+        envelope.set("request_id", Value::Text("not-a-canonical-id".to_owned()));
+        let bytes = Value::Object(envelope).canonical_bytes();
+        let rejection = envelope_parse_error(&bytes);
+        assert_eq!(
+            rejection,
+            IngestParseError::Envelope(EnvelopeError::SchemaInvalid {
+                field: "request_id",
+                reason: "value does not match the canonical grammar",
+            })
+        );
+        let rejection = {
+            let framing = request_framing();
+            let body = framed_body(
+                BOUNDARY,
+                &[
+                    (ENVELOPE_PART_MEDIA_TYPE, &bytes),
+                    (IDENTITY_MEDIA_TYPE, b"x"),
+                ],
+            );
+            parse_ingest(&framing, &body[..]).expect_err("the identifier is ungrammatical")
+        };
+        assert_eq!(rejection.request_id, None);
     }
 }

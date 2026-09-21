@@ -14,6 +14,10 @@ archivist-auth = { path = "../archivist-auth" }
 archivist-protocol = { path = "../archivist-protocol" }
 archivist-storage = { path = "../archivist-storage" }
 axum = { workspace = true }
+# The ingest handler streams the request body into the blocking parse
+# through a bounded channel (crate::routes): `BodyExt::frame` is the chunk
+# iterator that bridge's async feeder task pulls.
+http-body-util = { workspace = true }
 # The serve lifecycle (crate::serve) is cancellation-aware: the shutdown
 # channel is a tokio watch channel, `serve` bounds its drain with
 # tokio::time, and the listener socket is handed to the runtime as a

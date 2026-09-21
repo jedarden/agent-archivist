@@ -57,6 +57,9 @@ rustix = { version = "1.1.4", features = ["fs"] }
 # canonical bytes through `archivist-protocol` and accepts none from the
 # framework — leaving only the HTTP/1 listener and the tokio integration.
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"] }
+# Bridges the async request body into the blocking parse: `BodyExt::frame`
+# is the chunk iterator the bounded async-to-blocking channel feeder pulls.
+http-body-util = { version = "0.1.5", default-features = false }
 # Drives the axum listener: the multi-threaded runtime, async TCP, the
 # shutdown-drain timer, the signal watcher behind graceful shutdown, and the
 # watch primitive the cancellation token is built on.

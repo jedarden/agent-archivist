@@ -31,14 +31,19 @@
 //! | `invalid-integrity-conflict` | `storage.integrity_conflict` | The storage commit layer: the conflict is with an *existing* stored object, so it can only surface at commit time, after parsing succeeded. |
 //!
 //! HTTP serialization of every rejection — including the parser's own
-//! codes — is the route layer's strand (bead `aa-aebd9a6e`); this file
-//! asserts the parser's code and pinned message, never a wire body.
+//! codes — is the route layer's error contract
+//! ([`archivist_server::error`], rendered by the `/v1/ingest` route);
+//! this file asserts the parser's code and pinned message and — for the
+//! field violations — that the same rejection renders through the
+//! contract with the pinned code and message verbatim.
 
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use archivist_protocol::json::{self, Value};
+use archivist_protocol::vocabulary::RequestId;
+use archivist_server::error::{ErrorResponse, ServerFailure};
 use archivist_server::parse::framing::RequestFraming;
 use archivist_server::parse::ingest::{IngestParseError, parse_ingest};
 
@@ -252,7 +257,7 @@ fn every_valid_scenario_parses_to_its_pinned_envelope_and_streaming_payload() {
         let framing = corpus_framing(&root, id);
         let body = corpus_file(&root, id, "request_body");
         let (envelope, mut stream) = parse_ingest(&framing, &body[..])
-            .unwrap_or_else(|e| panic!("{id}: the valid scenario was rejected as {e:?}"));
+            .unwrap_or_else(|e| panic!("{id}: the valid scenario was rejected as {:?}", e.error));
 
         // Part one parsed to the protocol type and re-serializes to the
         // canonical form of the pinned envelope — the identity inputs
@@ -311,9 +316,10 @@ fn every_field_violation_rejects_with_its_pinned_code_and_message() {
     for id in FIELD_VIOLATION_SCENARIOS {
         let framing = corpus_framing(&root, id);
         let body = corpus_file(&root, id, "request_body");
-        let error = parse_ingest(&framing, &body[..])
+        let rejection = parse_ingest(&framing, &body[..])
             .err()
             .unwrap_or_else(|| panic!("{id}: the violating scenario parsed"));
+        let error = rejection.error;
 
         // The parser's code is exactly the corpus's pinned code — the
         // registry entry the scenario's error record carries.
@@ -345,6 +351,55 @@ fn every_field_violation_rejects_with_its_pinned_code_and_message() {
         } else {
             panic!("{id}: a field violation surfaced as {error:?}");
         }
+
+        // The same rejection rendered through the route layer's error
+        // contract: the pinned code and message travel verbatim into the
+        // six-member canonical body, and the envelope's own request
+        // identifier — parsed by the rejection, since the envelope bytes
+        // yielded one before the field check refused — is carried
+        // (ERR-025). A fixed correlation id keeps the canonical bytes
+        // byte-comparable.
+        let fixture_rel = format!("scenarios/{id}/envelope.json");
+        let envelope_fixture = load_json(&root, &fixture_rel);
+        let carried = text(&envelope_fixture, &fixture_rel, "request_id");
+        assert_eq!(
+            rejection
+                .request_id
+                .as_ref()
+                .map(|id| id.as_str().to_owned()),
+            Some(carried.to_owned()),
+            "{id}: the rejection carries the envelope's identifier"
+        );
+        let correlation =
+            RequestId::parse("1a07b201-7000-7000-8000-00000000000a").expect("fixed id");
+        let response = ErrorResponse::with_correlation(
+            ServerFailure::Parse(error),
+            rejection.request_id,
+            correlation,
+        );
+        assert_eq!(response.code(), pinned_code, "{id}: contract code");
+        assert_eq!(
+            response.message(),
+            text(&pinned, &error_rel, "message"),
+            "{id}: contract message verbatim"
+        );
+        assert_eq!(response.status(), 400, "{id}: the registry status");
+        let body = String::from_utf8(response.canonical_bytes()).expect("canonical bytes are text");
+        assert!(
+            body.contains(&format!("\"code\":\"{pinned_code}\"")),
+            "{id}: {body}"
+        );
+        assert!(
+            body.contains(&format!(
+                "\"message\":\"{}\"",
+                text(&pinned, &error_rel, "message")
+            )),
+            "{id}: {body}"
+        );
+        assert!(
+            body.contains(&format!("\"request_id\":\"{carried}\"")),
+            "{id}: the carried identifier is in the body: {body}"
+        );
     }
 }
 

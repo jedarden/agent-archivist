@@ -556,9 +556,12 @@ mod tests {
     #[tokio::test]
     async fn the_ingest_route_refuses_with_the_stable_retryable_body() {
         let (address, _trigger, _handle) = serving(5).await;
+        // No Content-Type: the framing rejection precedes everything
+        // request-derived, rendered through the error contract with a
+        // freshly minted correlation id.
         let response = request(address, "POST /v1/ingest").await;
         assert!(
-            response.starts_with("HTTP/1.1 503 Service Unavailable\r\n"),
+            response.starts_with("HTTP/1.1 400 Bad Request\r\n"),
             "{response}"
         );
         assert!(
@@ -566,12 +569,23 @@ mod tests {
             "{response}"
         );
         let body = response.rsplit("\r\n\r\n").next().unwrap();
-        assert_eq!(
-            body,
-            "{\"code\":\"server.unavailable\",\"correlation_id\":null,\
-             \"message\":\"The service is temporarily unable to handle the request; retry the \
-             identical envelope.\",\"request_id\":null,\"retryable\":true,\
-             \"schema\":\"archivist.error/v1\"}"
+        assert!(
+            body.starts_with("{\"code\":\"request.framing_invalid\",\"correlation_id\":\""),
+            "{body}"
+        );
+        assert!(
+            body.contains(
+                "\"message\":\"The request is not the pinned two-part multipart/related \
+                 framing; send the identical bytes the signature covered.\""
+            ),
+            "{body}"
+        );
+        assert!(
+            body.contains(
+                ",\"request_id\":null,\"retryable\":false,\
+                 \"schema\":\"archivist.error/v1\"}"
+            ),
+            "{body}"
         );
         // A GET on the ingest route is a method mismatch, not a route
         // miss: the router knows the path and refuses the method.
@@ -585,7 +599,8 @@ mod tests {
     #[tokio::test]
     async fn metrics_expose_the_registered_bootstrap_families() {
         let (address, _trigger, _handle) = serving(5).await;
-        // One ingest attempt happened below; the failed counter counts it.
+        // One ingest attempt happened below; the rejected counter counts
+        // the Content-Type-less framing refusal.
         let _ = request(address, "POST /v1/ingest").await;
         let response = request(address, "GET /metrics").await;
         assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
@@ -596,7 +611,7 @@ mod tests {
         let body = response.rsplit("\r\n\r\n").next().unwrap();
         assert!(
             body.contains(
-                "archivist_server_ingest_requests_total{archivist_ingest_outcome=\"failed\"} 1\n"
+                "archivist_server_ingest_requests_total{archivist_ingest_outcome=\"rejected\"} 1\n"
             ),
             "{body}"
         );
@@ -780,10 +795,13 @@ mod tests {
                 .await
                 .starts_with("HTTP/1.1 200")
         );
+        // The Content-Type-less POST draws the framing rejection: the
+        // refusal precedes everything request-derived, so it is the
+        // contract's request_invalid 400, not the old fail-closed 503.
         assert!(
             request(address, "POST /v1/ingest")
                 .await
-                .starts_with("HTTP/1.1 503")
+                .starts_with("HTTP/1.1 400")
         );
 
         trigger.trigger();
