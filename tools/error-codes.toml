@@ -215,6 +215,12 @@ http = 425
 message = "The server is not ready to accept this request yet; retry after the indicated interval."
 description = "Reusable early-rejection status reserved for ordered-arrival guards."
 
+[codes."request.framing_invalid"]
+class = "request_invalid"
+http = 400
+message = "The request is not the pinned two-part multipart/related framing; send the identical bytes the signature covered."
+description = "Content-Type, boundary, or body framing deviates from the layout protocol Section 1.2 pins; the typed error names the stage, echoes no request bytes, and fires before any body byte is read."
+
 [codes."server.internal"]
 class = "server_failure"
 http = 500

@@ -66,6 +66,17 @@
 //! through `AdmissionGate::admit_client` at the point the pipeline's
 //! authorization middleware knows the uploader identity.
 //!
+//! The **multipart/related framing layer** is implemented: [`parse`] holds
+//! [`parse::framing`], which validates the request Content-Type against
+//! the pinned `multipart/related; boundary=<token>` grammar before any
+//! body byte is read and then tokenizes the body into part boundaries,
+//! part headers, and payload runs while buffering no more than a fixed
+//! small window — bounded memory for any body size (protocol Section 1.2;
+//! VAL-008). Every framing rejection is the registry's
+//! `request.framing_invalid`, typed by stage and content-free. The
+//! pipeline slices consume it when they land, still replacing the
+//! fail-closed ingest stub.
+//!
 //! The Phase 4 bootstrap surface is complete: configuration, trust
 //! anchors, replica state, metrics, the routes, the serve lifecycle, and
 //! the request resource guards. The ingestion pipeline (bounded parsing,
@@ -84,6 +95,7 @@
 pub mod config;
 pub mod guard;
 pub mod metrics;
+pub mod parse;
 pub mod routes;
 pub mod serve;
 pub mod state;

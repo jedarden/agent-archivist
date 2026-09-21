@@ -214,6 +214,21 @@ text_newtype!(
     ContentType,
     |t: &str| content_type_grammar(t)
 );
+
+impl ContentType {
+    /// The boundary parameter of the validated header value.
+    ///
+    /// [`content_type_grammar`] pins the literal `multipart/related;
+    /// boundary=` (28 bytes) immediately before a 1-70 character boundary
+    /// and nothing after it, so the slice cannot go out of bounds and the
+    /// result is always the boundary exactly as the signer covered it.
+    #[must_use]
+    pub fn boundary(&self) -> &str {
+        const PREFIX_LEN: usize = "multipart/related; boundary=".len();
+        &self.0[PREFIX_LEN..]
+    }
+}
+
 text_newtype!(
     /// A stable two-segment error code (`domain.condition`,
     /// `^[a-z][a-z0-9_]{0,23}\.[a-z][a-z0-9_]{0,23}$`; ERR-007). Bounded by
@@ -825,6 +840,25 @@ mod tests {
         // Legal boundary charset members from the schema class.
         assert!(ContentType::parse("multipart/related; boundary=a'B+c_(d),.:=?-E").is_ok());
         assert!(ContentType::parse("multipart/related; boundary=a/b").is_err());
+    }
+
+    #[test]
+    fn content_type_boundary_extraction() {
+        let content_type =
+            ContentType::parse("multipart/related; boundary=archivist-conformance-01")
+                .expect("valid");
+        assert_eq!(content_type.boundary(), "archivist-conformance-01");
+        // Every legal charset member survives extraction verbatim.
+        let content_type =
+            ContentType::parse("multipart/related; boundary=a'B+c_(d),.:=?-E").expect("valid");
+        assert_eq!(content_type.boundary(), "a'B+c_(d),.:=?-E");
+        // A one-character boundary is still only the boundary.
+        let content_type = ContentType::parse("multipart/related; boundary=a").expect("valid");
+        assert_eq!(content_type.boundary(), "a");
+        // Uppercase letters are in the pinned charset and survive verbatim.
+        let content_type =
+            ContentType::parse("multipart/related; boundary=BOUNDARY").expect("valid");
+        assert_eq!(content_type.boundary(), "BOUNDARY");
     }
 
     #[test]
