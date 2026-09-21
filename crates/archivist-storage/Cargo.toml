@@ -11,6 +11,10 @@ repository.workspace = true
 
 [dependencies]
 archivist-protocol = { path = "../archivist-protocol" }
+# The `zstd-v1` codec primitive (`crate::zstd_v1`) behind the blob commit
+# path's `BlobEncoder` seam. The workspace pin carries the feature rationale
+# and the profile-lifetime version rule.
+zstd-safe = { workspace = true }
 
 [lints]
 workspace = true

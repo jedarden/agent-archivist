@@ -124,8 +124,9 @@ impl BlobExpectation {
 /// The pinned storage transform the caller supplies: canonical bytes in,
 /// stored-form bytes out (protocol Section 3.2).
 ///
-/// The `zstd-v1` implementation arrives with the streaming-pipeline
-/// deliverable; this trait is the seam the commit path drives. The two
+/// The `zstd-v1` implementation is [`crate::zstd_v1::ZstdV1Encoder`]; this
+/// trait is the seam the commit path drives, so the pipeline stays codec-
+/// agnostic at the type level. The two
 /// calls compose one stream: `update` per canonical chunk, then `finish`
 /// exactly once to emit the frame epilogue. Implementations must produce
 /// the deterministic canonical form VAL-006 pins — identical canonical

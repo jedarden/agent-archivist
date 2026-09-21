@@ -60,6 +60,10 @@
 //!   path: the two durable raw-provenance documents built from a validated
 //!   envelope and committed at their derived keys with server-side
 //!   identity re-derivation and dedupe-not-conflict semantics.
+//! - [`zstd_v1`] — the pinned `zstd-v1` storage codec: the deterministic
+//!   Zstandard encoder behind the blob commit path's
+//!   [`blob::BlobEncoder`] seam and the matching window-capped decoder,
+//!   the exact parameter set plan Section 7.6 freezes for the profile.
 //! - [`control`] — the control-plane boundary: the read-only replica view,
 //!   the offline administrator store, and the record-kind vocabulary their
 //!   keys are derived from.
@@ -89,8 +93,9 @@
 //! payload through encoder and session, completing only on verified
 //! identity, and the manifest commit path ([`manifests`]) lands the
 //! occurrence manifest and upload attestation at their derived keys with
-//! server-side identity re-derivation and dedupe-not-conflict semantics.
-//! The raw catalog source reader ([`catalog_source`]) reads that committed
+//! server-side identity re-derivation and dedupe-not-conflict semantics,
+//! and the pinned `zstd-v1` codec ([`zstd_v1`]) is the storage transform
+//! that path drives. The raw catalog source reader ([`catalog_source`]) reads that committed
 //! raw provenance back — validating, deterministic iteration over a frozen
 //! tenant raw prefix for offline catalog rebuild and reference scans
 //! (plan Section 8, Phase 10).
@@ -117,3 +122,4 @@ pub mod multipart;
 pub mod probe;
 pub mod raw_write;
 pub mod scoped_write;
+pub mod zstd_v1;

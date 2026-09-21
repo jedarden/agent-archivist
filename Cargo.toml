@@ -64,3 +64,22 @@ http-body-util = { version = "0.1.5", default-features = false }
 # shutdown-drain timer, the signal watcher behind graceful shutdown, and the
 # watch primitive the cancellation token is built on.
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "time", "signal", "sync"] }
+# The `zstd-v1` storage profile's pinned encoder and decoder (plan Section
+# 7.6): Zstandard level 3, single-threaded, no dictionary, content size and
+# checksum enabled. `zstd-safe` is the reviewed safe-binding layer over the
+# libzstd copy bundled in `zstd-sys`; the codec drives it directly rather
+# than through the higher-level `zstd` wrapper because the profile is an
+# exact parameter set — pledged content size, checksum flag, single-threaded
+# emission, and a decoder window cap — that the wrapper does not surface.
+# Every default feature stays off: `legacy` and `zdict_builder` are
+# decode/training surface the profile never uses, and leaving `zstdmt` off
+# builds the C library without multithreading, which is one half of what
+# keeps stored bytes deterministic (the other is the single-threaded
+# parameter set itself). `std` is the one feature kept on: in `zstd-sys` it
+# is an empty marker, and in `zstd-safe` it gates only the Rust-side
+# `Vec`-backed output-buffer bridge the codec appends through — it changes
+# nothing in the C library's build, so stored bytes are unaffected. The
+# version is pinned for the lifetime of the
+# `zstd-v1` profile — a bump changes stored bytes and requires a new named
+# profile, never a silent rewrite of `zstd-v1` (plan Section 7.5).
+zstd-safe = { version = "7.3.0", default-features = false, features = ["std"] }
