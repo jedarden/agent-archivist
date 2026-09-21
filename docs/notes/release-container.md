@@ -122,10 +122,14 @@ digest comparison in Section 6 is its demonstration, pinned as RC-019.
 - **RC-014** — The image build invokes
   `cargo build --release --frozen --offline --bin archivist` and nothing
   else that compiles. `--frozen` is lockfile discipline; `--offline`
-  proves the build performs zero crate-network access. The workspace is
-  dependency-free today, which is what makes `--offline` honest; the first
-  external dependency **MUST** land with vendored sources and a
-  same-commit update to this rule's realization in the Dockerfile.
+  proves the build performs zero crate-network access. External
+  dependencies are resolved exclusively from the vendored `vendor/` tree
+  via the `.cargo/config.toml` source replacement — both `COPY`ied into
+  the build stage — which is what makes `--offline` honest now that the
+  workspace carries crates; any newly adopted dependency **MUST** land
+  with its vendored sources (`cargo vendor`) and `Cargo.lock` in the same
+  commit, and an offline build from a cold `CARGO_HOME` is the test that
+  the vendoring is complete.
   `cargo install` and `rustup` invocations **MUST NOT** appear in any
   stage.
 - **RC-015** — `COPY` is the only directive that moves build-context

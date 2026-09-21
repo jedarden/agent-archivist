@@ -9,7 +9,11 @@
 # never published: version-control internals (their content is scanned properly
 # by the history mode), build output, and the machine-local bead runtime state
 # (`.beads/beads.db`, `.beads/traces/` — the committed checkpoint under
-# `.beads/checkpoint/` stays in scope). Everything git-tracked is scanned.
+# `.beads/checkpoint/` stays in scope) — plus `vendor/`, which is not
+# first-party content at all: it is third-party crate source pinned by
+# Cargo.lock checksums (RC-014 vendoring, docs/notes/release-container.md),
+# whose upstream test fixtures (embedded SQL, certificate and key corpora)
+# are not secrets of this repository. Everything else git-tracked is scanned.
 #
 # Output safety: every invocation passes `--redact`, so a finding names the
 # rule, file, and line but never reproduces the matched value.
@@ -24,4 +28,5 @@ paths = [
     '''^target/''',
     '''(^|/)\.beads/beads\.db$''',
     '''(^|/)\.beads/traces/''',
+    '''^vendor/''',
 ]

@@ -22,10 +22,11 @@
 # Build stage. The tag pins the exact toolchain channel of
 # rust-toolchain.toml (1.97.1): inside the container the image, not a
 # rustup download, is the toolchain — which is why rust-toolchain.toml is
-# deliberately not COPYied into the stage. The workspace is dependency-free,
-# so --offline also means the build performs no crate-network access; the
-# first external dependency lands with vendored sources and a same-commit
-# update to this stage (RC-012, RC-014). The binary's mode and mtime are
+# deliberately not COPYied into the stage. The workspace's external
+# dependencies are vendored (RC-014): the `vendor/` tree and the
+# `.cargo/config.toml` source replacement enter the stage by COPY, so
+# --offline resolves every crate from the context and the build performs
+# no crate-network access. The binary's mode and mtime are
 # pinned (RC-018) so the runtime layer that consumes it is a function of
 # its content, not of when the build ran.
 FROM rust:1.97.1-slim-bookworm@sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3 AS builder
@@ -33,6 +34,8 @@ ARG SOURCE_DATE_EPOCH
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY .cargo/config.toml .cargo/config.toml
+COPY vendor ./vendor
 RUN cargo build --release --frozen --offline --bin archivist \
  && chmod 0555 target/release/archivist \
  && touch --date="@${SOURCE_DATE_EPOCH:?SOURCE_DATE_EPOCH must be set}" \
