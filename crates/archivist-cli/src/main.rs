@@ -16,6 +16,13 @@
 //! command without a result schema or handler is rejected as not shipped,
 //! rather than being represented by placeholder behavior.
 //!
+//! The composition surfaces those handlers share live in this crate's
+//! library target (`archivist_cli::admin` carries the offline
+//! administration control plane: the store assembled from the registered
+//! `admin.*` configuration keys, with the ingest-credential boundary
+//! enforced at composition), so each surface is reachable and unit-tested
+//! in the window before the handler that calls it attaches.
+//!
 //! # Dependency boundary
 //!
 //! May depend on every workspace crate: it exists to compose them. Business
