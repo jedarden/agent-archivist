@@ -99,6 +99,7 @@
 //! client engine or any source adapter.
 
 pub mod config;
+pub mod error;
 pub mod guard;
 pub mod metrics;
 pub mod parse;

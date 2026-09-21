@@ -23,7 +23,7 @@ use std::io::Read;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::vocabulary::{InferenceRequestId, ProviderAttemptId, TraceId};
+use crate::vocabulary::{InferenceRequestId, ProviderAttemptId, RequestId, TraceId};
 
 /// The largest attempt ordinal representable by the protocol's `u63` wire
 /// shape.
@@ -197,6 +197,23 @@ pub fn mint_provider_attempt_id() -> ProviderAttemptId {
     parse_minted("provider_attempt_id", &text, ProviderAttemptId::parse)
 }
 
+/// Mint one correlation identifier (`UUIDv7`, the ERR-026 shape): the fresh
+/// per-attempt handle an ingest server attempt or a client-local diagnostic
+/// carries alongside a request's stable identifier. Like every identifier
+/// here it is a correlation handle only and never an input to a content or
+/// provenance identity derivation.
+///
+/// # Panics
+/// Never in practice: the minted text is constructed in canonical form and
+/// re-validated through the protocol's own grammar as a belt-and-braces
+/// check.
+#[must_use]
+pub fn mint_correlation_id() -> RequestId {
+    let text = mint_uuid_v7_text();
+    RequestId::parse(&text)
+        .unwrap_or_else(|_| panic!("minted correlation id is not canonical UUIDv7"))
+}
+
 fn parse_minted<T>(
     name: &str,
     text: &str,
@@ -280,7 +297,13 @@ mod tests {
         let trace = mint_trace_id();
         let request = mint_inference_request_id();
         let attempt = mint_provider_attempt_id();
-        for text in [trace.as_str(), request.as_str(), attempt.as_str()] {
+        let correlation = mint_correlation_id();
+        for text in [
+            trace.as_str(),
+            request.as_str(),
+            attempt.as_str(),
+            correlation.as_str(),
+        ] {
             assert_eq!(text.len(), 36);
             assert_eq!(text.as_bytes()[14], b'7');
             assert!(matches!(text.as_bytes()[19], b'8' | b'9' | b'a' | b'b'));
@@ -292,6 +315,8 @@ mod tests {
         assert_ne!(trace.as_str(), request.as_str());
         assert_ne!(request.as_str(), attempt.as_str());
         assert_ne!(trace.as_str(), attempt.as_str());
+        // Each minted correlation id is fresh: two calls never share one.
+        assert_ne!(correlation.as_str(), mint_correlation_id().as_str());
     }
 
     #[test]
