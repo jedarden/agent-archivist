@@ -579,7 +579,7 @@ mod tests {
         let draft_path = write_scratch("draft", &link_draft(&tenant()), 0o600);
         let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
 
-        let document = approve_over(&resolved, &invocation(&draft_operand), backend.clone())
+        let document = approve_over(&resolved, &invocation(draft_operand), backend.clone())
             .expect("the golden draft approves and publishes");
         remove_seed_ref(&seed_ref);
         remove_scratch(&draft_path);
@@ -648,7 +648,7 @@ mod tests {
         let draft_path = write_scratch("draft", b"{not a link request", 0o600);
         let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
 
-        let error = approve_over(&resolved, &invocation(&draft_operand), backend.clone())
+        let error = approve_over(&resolved, &invocation(draft_operand), backend.clone())
             .expect_err("a malformed draft refuses");
         remove_seed_ref(&seed_ref);
         remove_scratch(&draft_path);
@@ -676,9 +676,9 @@ mod tests {
         let draft_path = write_scratch("draft", &link_draft(&tenant()), 0o600);
         let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
 
-        approve_over(&resolved, &invocation(&draft_operand), backend.clone())
+        approve_over(&resolved, &invocation(draft_operand), backend.clone())
             .expect("the first approval publishes");
-        let error = approve_over(&resolved, &invocation(&draft_operand), backend.clone())
+        let error = approve_over(&resolved, &invocation(draft_operand), backend.clone())
             .expect_err("the replayed approval is stale");
         remove_seed_ref(&seed_ref);
         remove_scratch(&draft_path);
@@ -713,7 +713,7 @@ mod tests {
         let draft_path = write_scratch("draft", &link_draft(&tenant()), 0o600);
         let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
 
-        let error = approve_over(&resolved, &invocation(&draft_operand), backend)
+        let error = approve_over(&resolved, &invocation(draft_operand), backend)
             .expect_err("an unresolved seed reference refuses");
         remove_scratch(&draft_path);
 
@@ -731,7 +731,7 @@ mod tests {
         let draft_path = write_scratch("draft", &link_draft(&tenant()), 0o600);
         let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
 
-        let error = approve_over(&resolved, &invocation(&draft_operand), backend)
+        let error = approve_over(&resolved, &invocation(draft_operand), backend)
             .expect_err("a wrong-length seed refuses");
         remove_seed_ref(&seed_ref);
         remove_scratch(&draft_path);
@@ -758,7 +758,7 @@ mod tests {
         let draft_path = write_scratch("draft", &link_draft(&tenant()), 0o600);
         let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
 
-        let error = approve_over(&resolved, &invocation(&draft_operand), backend)
+        let error = approve_over(&resolved, &invocation(draft_operand), backend)
             .expect_err("the authority split refuses");
         remove_scratch(&draft_path);
 
@@ -775,7 +775,7 @@ mod tests {
         let draft_path = write_scratch("draft", &link_draft(&tenant()), 0o600);
         let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
 
-        let error = approve_over(&resolved, &invocation(&draft_operand), DownBackend)
+        let error = approve_over(&resolved, &invocation(draft_operand), DownBackend)
             .expect_err("a down transport refuses");
         remove_seed_ref(&seed_ref);
         remove_scratch(&draft_path);
@@ -801,7 +801,7 @@ mod tests {
         // refusal.
         let draft_path = write_scratch("draft", &link_draft(&tenant()), 0o600);
         let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
-        let error = run(&invocation(&draft_operand), MapBackend::default())
+        let error = run(&invocation(draft_operand), MapBackend::default())
             .expect_err("an undeclared host refuses at the load");
         remove_scratch(&draft_path);
 
