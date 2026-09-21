@@ -17,7 +17,11 @@
 //! link-request draft read, validated, and signed at the current instant,
 //! published through that store, and emitted as the linked-client record
 //! document its registry entry's `result_schema` names — every refusal a
-//! registered code of `tools/error-codes.toml`, with stdout empty.
+//! registered code of `tools/error-codes.toml`, with stdout empty. The
+//! third is the `admin revoke` command's revocation-draft parsing
+//! ([`revoke`]): the operand document read and grammar-checked into the
+//! draft the command's signing and persistence acts consume, refusing on
+//! the same registered-code discipline.
 //!
 //! # Dependency boundary
 //!
@@ -28,3 +32,4 @@
 
 pub mod admin;
 pub mod approve;
+pub mod revoke;
