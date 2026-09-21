@@ -1348,6 +1348,274 @@ mod tests {
         assert_eq!(error.exit_code(), 64);
     }
 
+    // -------------------------------------------------------------------
+    // The production entry ([`run`]) over a fully-declared host. The
+    // invocation's `--config` file supplies every required key through the
+    // file tier, so the entry's own configuration acquisition succeeds and
+    // the real command path runs end to end over the seam — the way a
+    // deployment actually drives the command. The environment tier is the
+    // test process's own and supplies nothing; the file alone declares the
+    // host.
+    // -------------------------------------------------------------------
+
+    /// Write the fully-declared host configuration file: every required
+    /// key through the file tier — plus `client.state_dir`, whose default
+    /// is a template on an environment variable the file's own host
+    /// declares instead — the administration section pinning this
+    /// fixture's tenant and the protected seed reference, the two
+    /// credential references distinct — the authority split composition
+    /// enforces. This is the file the production entry's `--config`
+    /// consumes.
+    fn declared_host_config(seed_ref: &str) -> std::path::PathBuf {
+        let path = scratch_name("host-config");
+        let body = format!(
+            "[ingest]\n\
+             endpoint_url = \"https://ingest.example.invalid\"\n\
+             [storage]\n\
+             endpoint_url = \"https://s3.example.invalid\"\n\
+             region = \"us-east-1\"\n\
+             encryption = \"s3_sse\"\n\
+             raw_bucket = \"archivist-raw-example\"\n\
+             control_bucket = \"archivist-control-example\"\n\
+             raw_write_credentials_ref = \"env:TEST_RAW_CREDENTIAL\"\n\
+             control_read_credentials_ref = \"env:TEST_CONTROL_CREDENTIAL\"\n\
+             [server]\n\
+             listen_address = \"127.0.0.1:8087\"\n\
+             [client]\n\
+             state_dir = \"/home/operator/.local/state/archivist\"\n\
+             [admin]\n\
+             endpoint_url = \"https://control.example.invalid\"\n\
+             region = \"us-east-1\"\n\
+             control_bucket = \"archivist-control-example\"\n\
+             tenant = \"{TENANT}\"\n\
+             credentials_ref = \"env:TEST_ADMIN_CREDENTIAL\"\n\
+             authority_seed_ref = \"{seed_ref}\"\n"
+        );
+        std::fs::write(&path, body).expect("the host configuration writes");
+        path
+    }
+
+    /// An invocation of the production entry over the real registry: the
+    /// declared host configuration file in `--config`, the draft path as
+    /// the operand, the non-interactive mode declared — the shape an
+    /// operator's shell builds.
+    fn declared_invocation(config_path: &std::path::Path, draft_path: &str) -> Invocation {
+        let args = [
+            "--non-interactive".to_owned(),
+            "--config".to_owned(),
+            config_path.display().to_string(),
+            "admin".to_owned(),
+            "revoke".to_owned(),
+            draft_path.to_owned(),
+        ];
+        let args = args
+            .iter()
+            .map(std::ffi::OsString::from)
+            .collect::<Vec<_>>();
+        let registry = Registry::pinned();
+        match parse::parse(&args, registry).expect("the invocation parses") {
+            Parsed::Command(invocation) => invocation,
+            other => panic!("the parser returned {other:?} for a command invocation"),
+        }
+    }
+
+    /// The real command path runs end to end through the production entry:
+    /// with the host declared through the invocation's `--config` file, a
+    /// valid draft signs, publishes, and returns the revocation
+    /// publication — the document the router frames as the result
+    /// envelope — and the stored record re-reads through the control-admin
+    /// store and verifies from the pinned root.
+    #[test]
+    fn run_drives_a_valid_draft_end_to_end_over_the_declared_host() {
+        let seed_ref = protected_seed_ref(&AUTHORITY_SEED);
+        let host_config = declared_host_config(&seed_ref);
+        let resolved = ConfigSources::non_interactive()
+            .config_path(host_config.clone())
+            .load()
+            .expect("the declared host loads");
+        let backend = ActBackend::default();
+        publish_standing_pointer(&resolved, &backend);
+        let draft_path = write_scratch("draft", &act_draft(1, &standing_half()), 0o600);
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+
+        let document = run(
+            &declared_invocation(&host_config, draft_operand),
+            backend.clone(),
+        )
+        .expect("the declared host drives the golden draft end to end");
+        remove_seed_ref(&seed_ref);
+        remove_scratch(&draft_path);
+        remove_scratch(&host_config);
+
+        // The result is the revocation publication, carrying this draft's
+        // act under the identity tokens the record family pins.
+        let Value::Object(ref members) = document else {
+            panic!("the result document is an object");
+        };
+        assert!(
+            matches!(members.get("schema"), Some(Value::Text(token)) if token == "archivist.control/v1")
+        );
+        assert!(
+            matches!(members.get("record_type"), Some(Value::Text(token)) if token == "revocation")
+        );
+        assert!(matches!(
+            members.get("authorization_epoch"),
+            Some(Value::Int(1))
+        ));
+        assert!(
+            matches!(members.get("revoked_key_id"), Some(Value::Text(token)) if *token == standing_half())
+        );
+
+        // The stored record re-reads through the same control-admin store
+        // the command wrote through, and verifies from the pinned root the
+        // way a reader would.
+        let stored = backend
+            .objects
+            .lock()
+            .expect("test backend lock")
+            .get(&revocation_key())
+            .cloned()
+            .expect("the record published");
+        let root = PinnedAuthorityRoot::new(tenant_id(), public_of(&AUTHORITY_SEED));
+        let no_links = |_: &KeyId| None;
+        RevocationRecord::verify(&root, &stored, no_links, &client_id(), 1)
+            .expect("the stored record verifies from the pinned root");
+    }
+
+    /// The lost-response retry through the production entry: the same
+    /// declared host, the same draft — the second `run` succeeds with the
+    /// byte-identical publication and the seam is unchanged, the store's
+    /// identical-bytes replay (aa-e3097744) ridden at the command level.
+    #[test]
+    fn run_replays_the_same_draft_as_the_idempotent_repair() {
+        let seed_ref = protected_seed_ref(&AUTHORITY_SEED);
+        let host_config = declared_host_config(&seed_ref);
+        let resolved = ConfigSources::non_interactive()
+            .config_path(host_config.clone())
+            .load()
+            .expect("the declared host loads");
+        let backend = ActBackend::default();
+        publish_standing_pointer(&resolved, &backend);
+        let draft_path = write_scratch("draft", &act_draft(1, &standing_half()), 0o600);
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+
+        let first = run(
+            &declared_invocation(&host_config, draft_operand),
+            backend.clone(),
+        )
+        .expect("the first act publishes");
+        let before = snapshot(&backend);
+        let second = run(
+            &declared_invocation(&host_config, draft_operand),
+            backend.clone(),
+        )
+        .expect("the replay repairs idempotently");
+        remove_seed_ref(&seed_ref);
+        remove_scratch(&draft_path);
+        remove_scratch(&host_config);
+
+        // Deterministic signing: the replay's document is byte-identical,
+        // and the store holds exactly what it held.
+        let canonical = |document: Value| match document {
+            Value::Object(members) => Value::Object(members).canonical_bytes(),
+            other => panic!("the result document is an object, got {other:?}"),
+        };
+        assert_eq!(canonical(first), canonical(second));
+        assert_eq!(snapshot(&backend), before);
+    }
+
+    /// A malformed draft refuses through the production entry with the
+    /// registered document code — the load and composition succeed on the
+    /// declared host, the refusal is the command's own, and stdout stays
+    /// empty because nothing was returned to the router. Nothing is
+    /// written.
+    #[test]
+    fn run_refuses_a_malformed_draft_with_the_document_code() {
+        let seed_ref = protected_seed_ref(&AUTHORITY_SEED);
+        let host_config = declared_host_config(&seed_ref);
+        let backend = ActBackend::default();
+        let draft_path = write_scratch("draft", b"not json", 0o600);
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+
+        let error = run(
+            &declared_invocation(&host_config, draft_operand),
+            backend.clone(),
+        )
+        .expect_err("a malformed draft refuses through the entry");
+        remove_seed_ref(&seed_ref);
+        remove_scratch(&draft_path);
+        remove_scratch(&host_config);
+
+        assert_eq!(error.code(), MALFORMED_DRAFT);
+        assert_eq!(error.exit_code(), 65);
+        assert!(snapshot(&backend).is_empty());
+    }
+
+    /// A draft naming an epoch above the standing pointer refuses through
+    /// the production entry with the registered unreached code, stdout
+    /// empty, and nothing is written beyond the pointer itself.
+    #[test]
+    fn run_refuses_an_epoch_above_the_pointer_with_the_unreached_code() {
+        let seed_ref = protected_seed_ref(&AUTHORITY_SEED);
+        let host_config = declared_host_config(&seed_ref);
+        let resolved = ConfigSources::non_interactive()
+            .config_path(host_config.clone())
+            .load()
+            .expect("the declared host loads");
+        let backend = ActBackend::default();
+        publish_standing_pointer(&resolved, &backend);
+        let draft_path = write_scratch("draft", &act_draft(5, &standing_half()), 0o600);
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+
+        let error = run(
+            &declared_invocation(&host_config, draft_operand),
+            backend.clone(),
+        )
+        .expect_err("a forward-dated revocation refuses through the entry");
+        remove_seed_ref(&seed_ref);
+        remove_scratch(&draft_path);
+        remove_scratch(&host_config);
+
+        assert_eq!(error.code(), EPOCH_UNREACHED);
+        assert_eq!(error.exit_code(), 65);
+        let objects = snapshot(&backend);
+        assert_eq!(objects.len(), 1, "only the pointer is stored");
+        assert!(objects.contains_key(&pointer_key()));
+    }
+
+    /// A draft naming the pointer's current epoch with a half the pointer
+    /// does not hold refuses through the production entry with the
+    /// registered mismatch code, stdout empty, and nothing is written.
+    #[test]
+    fn run_refuses_a_foreign_half_with_the_mismatch_code() {
+        let seed_ref = protected_seed_ref(&AUTHORITY_SEED);
+        let host_config = declared_host_config(&seed_ref);
+        let resolved = ConfigSources::non_interactive()
+            .config_path(host_config.clone())
+            .load()
+            .expect("the declared host loads");
+        let backend = ActBackend::default();
+        publish_standing_pointer(&resolved, &backend);
+        let foreign = key_hex_of(&[0x99; 32]);
+        let draft_path = write_scratch("draft", &act_draft(1, &foreign), 0o600);
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+
+        let error = run(
+            &declared_invocation(&host_config, draft_operand),
+            backend.clone(),
+        )
+        .expect_err("a mismatched half refuses through the entry");
+        remove_seed_ref(&seed_ref);
+        remove_scratch(&draft_path);
+        remove_scratch(&host_config);
+
+        assert_eq!(error.code(), KEY_ID_MISMATCH);
+        assert_eq!(error.exit_code(), 65);
+        let objects = snapshot(&backend);
+        assert_eq!(objects.len(), 1, "only the pointer is stored");
+        assert!(objects.contains_key(&pointer_key()));
+    }
+
     /// The const a result-schema member pins, as its text: the identity
     /// tokens the registered schema closes the record's type and kind
     /// with.
