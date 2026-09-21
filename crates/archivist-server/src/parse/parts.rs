@@ -992,6 +992,28 @@ mod tests {
             served_before_failure > 0 && served_before_failure < 4096,
             "{served_before_failure} payload bytes crossed before the failure"
         );
+
+        // A delimiter-shaped line that is not a delimiter — text after the
+        // dash-boundary where only `--` or CRLF may follow — is a framing
+        // violation met mid-payload: the closed set's last kind,
+        // InvalidData. The run before the violation still streams out
+        // first.
+        let payload = format!("x\r\n--{BOUNDARY} junk\r\n").into_bytes();
+        let body = framed_body(&[
+            (ENVELOPE_PART_MEDIA_TYPE, b"{}"),
+            (IDENTITY_MEDIA_TYPE, &payload),
+        ]);
+        let mut request = TwoPartRequest::new(&framing, &body[..]);
+        request.envelope().expect("envelope");
+        let mut stream = request.payload().expect("payload part");
+        let n = stream
+            .read(&mut buffer)
+            .expect("the run before the violation streams");
+        assert_eq!(n, 1);
+        let error = stream
+            .read(&mut buffer)
+            .expect_err("a malformed delimiter mid-payload is a read error");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]
