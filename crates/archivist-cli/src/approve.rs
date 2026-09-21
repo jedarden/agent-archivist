@@ -128,8 +128,8 @@ pub fn run<B: ControlAdminBackend + Sync>(
     let sources = invocation
         .config_sources()
         .capture_environment()
-        .map_err(config_fault)?;
-    let resolved = sources.load().map_err(config_fault)?;
+        .map_err(|error| config_fault(&error))?;
+    let resolved = sources.load().map_err(|error| config_fault(&error))?;
     approve_over(&resolved, invocation, backend)
 }
 
@@ -169,7 +169,7 @@ pub fn approve_over<B: ControlAdminBackend + Sync>(
     // protected material the key declares.
     let secret = resolved
         .resolve_secret(AUTHORITY_SEED_KEY)
-        .map_err(config_fault)?;
+        .map_err(|error| config_fault(&error))?;
     let seed: [u8; 32] = secret
         .as_bytes()
         .try_into()
@@ -227,7 +227,8 @@ pub fn approve_over<B: ControlAdminBackend + Sync>(
 
 /// Map a configuration condition onto its registered CLI code: the code
 /// the loader chose already names the registered condition (CLI-002).
-fn config_fault(error: ConfigError) -> CliError {
+/// The condition is only read — its code, borrowed — never consumed.
+fn config_fault(error: &ConfigError) -> CliError {
     CliError::registered(error.code().token())
 }
 
