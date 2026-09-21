@@ -1,7 +1,7 @@
 # Receipt trust and metadata disclosure threats — acknowledgement and observability path
 
-Status: one of four domain documents feeding the Phase 1 threat model · Last
-updated: 2026-09-12
+Status: one of six domain documents feeding the Phase 1 threat model · Last
+updated: 2026-09-21
 
 Authority: the [implementation plan](../../plan/plan.md) — primarily Section
 7.8 ("Receipts, errors, retries, and poison artifacts", whose fixed sentences
@@ -31,7 +31,7 @@ the error wire contract
 ([`schemas/v1/ingest-error.json`](../../../schemas/v1/ingest-error.json)),
 and the wire contract as pinned in [protocol v1](../../protocol/v1.md)
 (Sections 5–7). This document interprets those contracts; it introduces no
-new contract. The four domain documents under `docs/security/threats/` are
+new contract. The six domain documents under `docs/security/threats/` are
 consolidated into `docs/security/threat-model.md`, whose register must let a
 reader verify the Phase 1 exit gate ("the threat model has a mitigation or
 explicitly accepted risk for every finding") from the register alone.

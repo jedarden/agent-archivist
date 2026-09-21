@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """Threat-model acceptance gate for Agent Archivist.
 
-Validates ``docs/security/threat-model.md`` and the five domain documents
+Validates ``docs/security/threat-model.md`` and the six domain documents
 under ``docs/security/threats/`` against the acceptance check that document
 states for itself — the machine-checked form of the Phase 1 exit gate
 sentence "The threat model has a mitigation or explicitly accepted risk for
 every finding" (plan Section 8):
 
 1. register shape — consolidated and domain register rows carry the six
-   fixed columns, IDs follow the ``<GROUP>-<NN>`` grammar over the five
+   fixed columns, IDs follow the ``<GROUP>-<NN>`` grammar over the six
    closed groups, IDs are unique, and the STRIDE cell is a non-empty
    combination of the six STRIDE letters;
-2. coverage — the consolidated register holds every finding from all five
+2. coverage — the consolidated register holds every finding from all six
    domain documents row for row, none missing and none added, and that set
    equals the expansion of the ID ranges declared in the "Domain documents"
    table;
@@ -28,7 +28,12 @@ every finding" (plan Section 8):
 5. deliverable-list coverage — the nine plan-named threat families are each
    present exactly once and map to at least one existing finding, with
    ``…`` ranges expanded within one group;
-6. wiring — the "Acceptance check" section names this tool, so the document
+6. adapter claim gate — in the adapter-capture document, every AC finding
+   cites at least one ``**tagged**`` negative/fault test class defined by a
+   row of its pre-claim evidence gate, and every gate-defined class is
+   cited by at least one AC finding: the mapping that keeps a real-source
+   adapter unclaimable without its fault evidence;
+7. wiring — the "Acceptance check" section names this tool, so the document
    and the gate cannot drift apart silently.
 
 On success it prints a content-free summary and exits 0. Any failure prints
@@ -63,10 +68,10 @@ MODEL_REL = "docs/security/threat-model.md"
 THREATS_REL = "docs/security/threats"
 CRATES_REL = "crates"
 
-# The five finding groups and their documents, fixed by the domain-documents
+# The six finding groups and their documents, fixed by the domain-documents
 # table. A new group is a reviewed change that extends this map, the table,
-# and the five documents in the same commit.
-GROUPS = ("IA", "PI", "RD", "RMD", "EC")
+# and the domain documents in the same commit.
+GROUPS = ("IA", "PI", "RD", "RMD", "EC", "AC")
 GROUP_PATTERN = "|".join(GROUPS)
 
 ID_RE = re.compile(rf"^(?:{GROUP_PATTERN})-\d{{2}}$")
@@ -109,6 +114,14 @@ TOOL_NAME = "tools/check-threat-model.py"
 DOMAIN_SECTION = "Coverage and disposition register"
 # Where the model lives; domain-document hrefs resolve beside it.
 MODEL_DIR = "docs/security"
+# The adapter-capture document's pre-claim evidence gate: the table whose
+# rows define the negative/fault test classes a real-source adapter must
+# have before it is claimable. Tags are the ``**bold**`` tokens in a gate
+# row's evidence cell; findings cite them in their enforcing-test-class cell.
+ADAPTER_GROUP = "AC"
+GATE_SECTION = "Pre-claim evidence gate"
+GATE_COLUMNS = 4
+GATE_TAG_RE = re.compile(r"\*\*([a-z0-9][a-z0-9-]*)\*\*")
 
 
 def domain_rel(href: str) -> str:
@@ -439,6 +452,53 @@ def risk_register_errors(state: dict) -> list[str]:
     return errors
 
 
+def adapter_gate_errors(state: dict) -> list[str]:
+    """The adapter claim gate: mitigation↔negative/fault-test mapping.
+
+    In the adapter-capture document, every AC finding's enforcing-test-class
+    cell must cite at least one ``**tagged**`` class defined by a gate row,
+    and every gate-defined class must be cited by at least one AC finding.
+    This is the machine-checked form of the acceptance sentence "each
+    adapter mitigation maps to a negative or fault test before that
+    real-source adapter is claimable": a gate class no finding cites guards
+    nothing, and a finding citing no class claims a mitigation no fault
+    evidence pins.
+    """
+    errors: list[str] = []
+    if ADAPTER_GROUP not in state["domains"]:
+        return errors
+    rel = domain_rel(state["domains"][ADAPTER_GROUP]["path"])
+    body = section_body(state["domain_texts"].get(ADAPTER_GROUP, ""), GATE_SECTION)
+    if body is None:
+        return [f"{rel}: '{GATE_SECTION}' section is missing"]
+    rows, row_errors = table_rows(body, GATE_COLUMNS, rel)
+    errors.extend(row_errors)
+    gate_classes: set[str] = set()
+    for cells in rows:
+        tags = GATE_TAG_RE.findall(cells[GATE_COLUMNS - 1])
+        if not tags:
+            errors.append(
+                f"{rel}: gate row {cells[0][:32]!r} names no **tagged** negative "
+                f"or fault test class"
+            )
+        gate_classes.update(tags)
+    cited: set[str] = set()
+    for row in state["domain_registers"].get(ADAPTER_GROUP, []):
+        rid = row["id"]
+        if not ID_RE.match(rid):
+            continue  # already reported by the shape validator
+        tags = set(GATE_TAG_RE.findall(row["mitigation"]))
+        if not tags:
+            errors.append(f"{rel}: {rid} cites no gate test class")
+            continue
+        for tag in sorted(tags - gate_classes):
+            errors.append(f"{rel}: {rid} cites test class **{tag}** that no gate row defines")
+        cited |= tags
+    for tag in sorted(gate_classes - cited):
+        errors.append(f"{rel}: gate test class **{tag}** is cited by no AC finding")
+    return errors
+
+
 def crate_reference_errors(state: dict) -> list[str]:
     """Every backticked `archivist-*` token names a real workspace crate."""
     errors: list[str] = []
@@ -490,6 +550,7 @@ ALL_VALIDATORS = (
     ("disposition", lambda s: disposition_errors(s["consolidated"], "Consolidated register")),
     ("coverage", coverage_set_errors),
     ("risk register", risk_register_errors),
+    ("adapter claim gate", adapter_gate_errors),
     ("crate references", crate_reference_errors),
     ("families", family_errors),
     ("wiring", wiring_errors),
@@ -556,6 +617,7 @@ SANDBOX_MODEL = """# Sandbox threat model
 | [Relay](threats/relay-delegation.md) | RD-01 … RD-02 | relay |
 | [Receipts](threats/receipts-and-disclosure.md) | RMD-01 … RMD-01 | receipts |
 | [Exact capture](threats/exact-capture.md) | EC-01 … EC-01 | exact capture |
+| [Adapter capture](threats/adapter-capture.md) | AC-01 … AC-02 | adapter capture |
 
 ## Consolidated register
 
@@ -568,6 +630,8 @@ SANDBOX_MODEL = """# Sandbox threat model
 | RD-02 | Relay fabrication | S/R | Accepted | — (bounded by RD-01 proofs) | tenant operator |
 | RMD-01 | Forged receipt | S/T | Mitigated | receipt-signature vectors | — |
 | EC-01 | Centralized provider material | I | Mitigated | exact boundary vectors | — |
+| AC-01 | Unknown source fingerprint parse | I/E | Mitigated | **sandbox-fault-a** | — |
+| AC-02 | Projection allowlist escape | I | Mitigated | **sandbox-fault-a**; **sandbox-fault-b** | — |
 
 ## Accepted-risk register
 
@@ -636,6 +700,22 @@ SANDBOX_DOMAINS = {
 | ID | Finding | STRIDE | Disposition | Enforcing test class | Owner of residual |
 |---|---|---|---|---|---|
 | EC-01 | Centralized provider material | I | Mitigated | exact boundary vectors | — |
+""",
+    "adapter-capture.md": """# Sandbox adapter-capture threats
+
+## Pre-claim evidence gate
+
+| Capture surface | Required mitigation | Present evidence | Required negative/fault evidence before the adapter is claimable |
+|---|---|---|---|
+| File sources | complete-record capture | header vectors | **sandbox-fault-a** |
+| Database sources | read-only projection | schema vectors | **sandbox-fault-b** |
+
+## Coverage and disposition register
+
+| ID | Finding | STRIDE | Disposition | Enforcing test class | Owner of residual |
+|---|---|---|---|---|---|
+| AC-01 | Unknown source fingerprint parse | I/E | Mitigated | **sandbox-fault-a** | — |
+| AC-02 | Projection allowlist escape | I | Mitigated | **sandbox-fault-a**; **sandbox-fault-b** | — |
 """,
 }
 
@@ -783,6 +863,42 @@ def self_test() -> int:
         state = mutated()
         state["coverage"]["Usurpation"] = state["coverage"].pop("Spoofing")
         case("family outside the closed set", validate_state(state), True, "families")
+
+        # Adapter claim gate: the AC register and the pre-claim gate table
+        # must map to each other in both directions.
+        state = mutated()
+        state["domain_registers"]["AC"][0]["mitigation"] = "header vectors"
+        case("AC finding cites no gate test class", validate_state(state), True, "adapter claim gate")
+
+        state = mutated()
+        state["domain_registers"]["AC"][0]["mitigation"] = "**sandbox-undefined-faults**"
+        case(
+            "AC finding cites a test class no gate row defines",
+            validate_state(state),
+            True,
+            "adapter claim gate",
+        )
+
+        state = mutated()
+        state["domain_registers"]["AC"][1]["mitigation"] = "**sandbox-fault-a**"
+        case("gate test class cited by no AC finding", validate_state(state), True, "adapter claim gate")
+
+        state = mutated()
+        state["domain_texts"]["AC"] = state["domain_texts"]["AC"].replace(
+            "schema vectors | **sandbox-fault-b** |", "schema vectors | schema fault vectors |"
+        )
+        case("gate row names no tagged test class", validate_state(state), True, "adapter claim gate")
+
+        state = mutated()
+        state["domain_texts"]["AC"] = state["domain_texts"]["AC"].replace(
+            "## Pre-claim evidence gate", "## Evidence table"
+        )
+        case(
+            "gate section removed from the adapter document",
+            validate_state(state),
+            True,
+            "adapter claim gate",
+        )
 
         # Wiring: the acceptance check names the enforcing tool.
         state = mutated()

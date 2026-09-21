@@ -1,7 +1,7 @@
 # Exact-capture and provider-boundary threats
 
-Status: one of five domain documents feeding the Phase 1 threat model · Last
-updated: 2026-09-20
+Status: one of six domain documents feeding the Phase 1 threat model · Last
+updated: 2026-09-21
 
 Authority: the [implementation plan](../../plan/plan.md), especially Phase 9
 ("Exact inference and orchestrator correlation"), Section 11 (centralized

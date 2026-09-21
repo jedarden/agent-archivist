@@ -1,7 +1,7 @@
 # Relay delegation and provenance threats — ingestion path
 
-Status: one of four domain documents feeding the Phase 1 threat model · Last
-updated: 2026-09-12
+Status: one of six domain documents feeding the Phase 1 threat model · Last
+updated: 2026-09-21
 
 Authority: the [implementation plan](../../plan/plan.md) — primarily Section 5
 ("Control-plane boundary", whose fixed sentence is that relay authority is the

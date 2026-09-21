@@ -1,7 +1,7 @@
 # Payload integrity and resource-exhaustion threats — ingestion path
 
-Status: one of four domain documents feeding the Phase 1 threat model · Last
-updated: 2026-09-09
+Status: one of six domain documents feeding the Phase 1 threat model · Last
+updated: 2026-09-21
 
 Authority: the [implementation plan](../../plan/plan.md) — primarily Section 7.4
 ("Identifier and collision rules"), Section 7.6 ("Canonical payload,
@@ -12,7 +12,7 @@ contract sections, the §7.11 edge-case catalog (`EC-*`), and phase exit gates
 cited where a claim depends on them — and the normative
 [requirements](../../notes/requirements.md) (`VAL-*`, `STO-*`, `CAP-*`,
 `ID-*`, `SEC-*`, `OPS-*`). This document interprets those contracts; it
-introduces no new contract. The four domain documents under
+introduces no new contract. The six domain documents under
 `docs/security/threats/` are consolidated into
 `docs/security/threat-model.md`, whose register must let a reader verify the
 Phase 1 exit gate ("the threat model has a mitigation or explicitly accepted

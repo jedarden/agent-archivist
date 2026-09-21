@@ -1,14 +1,14 @@
 # Threat model — agent-archivist ingestion and archive path
 
-Status: top-level index and accepted-risk register, consolidating the five
-Phase 1/9 domain documents · Last updated: 2026-09-20
+Status: top-level index and accepted-risk register, consolidating the six
+Phase 1/6/9 domain documents · Last updated: 2026-09-21
 
 Authority: the [implementation plan](../plan/plan.md), whose Phase 1
 deliverables name this artifact ("A threat model covering spoofing, replay,
 cross-tenant writes, digest confusion, decompression bombs, poisoned
 manifests, and metadata leakage") and whose Phase 1 exit gate fixes the line
 it must close: "The threat model has a mitigation or explicitly accepted risk
-for every finding." The findings live in five domain documents under
+for every finding." The findings live in six domain documents under
 `docs/security/threats/`, each interpreting the plan and the normative
 [requirements](../notes/requirements.md) without introducing new contract;
 this document indexes them, consolidates their registers into one, and
@@ -29,11 +29,17 @@ scope-union escalation, withdrawn-delegation replay, provenance overwrite,
 concurrent origin/relay upload; and the acknowledgement, observability, and
 retention surfaces — receipt trust, receipt-key rotation, object-key and
 metadata enumeration, metadata leakage through logs/status/metrics/error
-bodies, retention/deletion abuse, and exact provider-boundary capture. Exact
+bodies, retention/deletion abuse, exact provider-boundary capture, and
+model-adapter capture at the harness-source boundary — source discovery,
+partial records, rewrite and replacement generations, live-database
+contention, unknown fingerprints, projection allowlists, parity reads,
+source permission boundaries, adapter-surface metadata hygiene, hostile
+source content, and the support-claim gate that binds them. Exact
 capture includes decoded provider inputs/outputs and headers, explicit proxy
 and SDK-hook routes, expectation reconciliation, stream/retry ordering,
 correlation, and incomplete flush. This is the plan's Phase 1 deliverable list
-plus the relay, receipt, and Phase 9 surfaces the same plan sections fix.
+plus the relay, receipt, Phase 6, and Phase 9 surfaces the same plan sections
+fix.
 
 Out of scope, owned elsewhere:
 
@@ -45,11 +51,12 @@ Out of scope, owned elsewhere:
 - Transport protection below the HTTP contract (SEC-001 baseline), and
   network-level volumetric floods or cross-replica aggregate spend below it —
   the deployment perimeter, per PI-04's accepted residual.
-- Harness capture internals outside the explicit provider boundary — source
-  discovery, semantic projections, spool chunking, and queue discipline —
-  remain in the adapter and payload domains. Phase 9 exact-capture threats are
-  in scope because they govern centralized provider data and proxy/hook claims
-  before those implementations exist.
+- The client engine's own state machine below the canonical artifact —
+  spool chunking and queue discipline — remains in the payload domain
+  (PI-05, PI-08); the harness-source side of capture is the adapter-capture
+  document's scope. Phase 9 exact-capture threats are in scope because they
+  govern centralized provider data and proxy/hook claims before those
+  implementations exist.
 
 ## Method
 
@@ -62,6 +69,7 @@ inherits that method:
   each trust-boundary crossing of the path: uploader→server (identity),
   signer→canonical bytes (payload), relay→origin (delegation),
   server→client (receipts), provider boundary→archive (exact capture),
+  harness store→canonical artifact (adapter capture),
   expectation→coverage report (denominator), and service→diagnostics
   (disclosure).
 - **Attacker position first.** Findings name the strongest realistic position
@@ -76,14 +84,16 @@ inherits that method:
   residual is a bound or trust decision the plan already states; every
   accepted risk names an owner.
 - **Test-class citation.** Findings cite the plan's enforced-by test classes
-  (plan §5, §7.4, §7.6, §7.8, §7.10, §10, and Phase 9) plus the phase whose suite renders
+  (plan §5, §7.4, §7.6, §7.8, §7.10, §10, and Phases 6 and 9) plus the phase whose suite renders
   them executable — Phase 1 conformance corpus and derivation vectors,
   Phase 3 auth negatives, Phase 4 fuzz/limit/shutdown gates, Phase 5
-  spool/receipt suites, Phase 6 adapter oracles, Phase 8 restore sample,
+  spool/receipt suites, Phase 6 adapter conformance and oracle suites,
+  Phase 8 restore sample,
   Phase 9 exact-artifact, route, ledger,
   reconstruction, and flush suites, and Phase 10 retention gates. Where a
   proof is executable today, the register names it (conformance corpus
-  scenarios, the exact-artifact corpus and negative matrix, provenance bundle,
+  scenarios, the exact-artifact corpus and negative matrix, the adapter SDK
+  conformance scenarios, provenance bundle,
   fast-lane checker gates in
   [`scripts/definition-of-done.sh`](../../scripts/definition-of-done.sh)).
   Route-specific Phase 9 negatives are release-blocking prerequisites, not
@@ -114,10 +124,11 @@ every residual, so the Phase 1 exit gate is verifiable from this file alone.
 | [Relay delegation and provenance threats](threats/relay-delegation.md) | RD-01 … RD-08 | Unauthorized/out-of-scope relay, provenance overwrite, scope-union escalation, withdrawn-delegation replay, delegation-record attacks, relay identifier substitution, relay fabrication |
 | [Receipt trust and metadata disclosure](threats/receipts-and-disclosure.md) | RMD-01 … RMD-07 | Forged/unsigned/false receipts, rotation and stale-key trust, enumeration, leakage through logs/status/metrics/errors, retention and deletion abuse |
 | [Exact-capture and provider-boundary threats](threats/exact-capture.md) | EC-01 … EC-10 | Centralized provider inputs/outputs, decoded headers and credentials, proxy and SDK-hook routes, expectation forgery, stream/retry reconstruction, correlation leakage, bypass claims, incomplete flush |
+| [Model-adapter capture threats](threats/adapter-capture.md) | AC-01 … AC-11 | Source discovery, partial records, rewrite generations, live-database contention, unknown fingerprints, projection allowlists, parity reads, permission boundaries, adapter metadata hygiene, hostile source content, support-claim gating |
 
 ## Consolidated register
 
-Forty-four findings, one per row, each with its enforcing test class (a
+Fifty-five findings, one per row, each with its enforcing test class (a
 tested mitigation) and/or its explicitly accepted risk and owner. An owner of
 "—" means no residual: the finding is fully mitigated and tested.
 
@@ -167,6 +178,17 @@ tested mitigation) and/or its explicitly accepted risk and owner. An owner of
 | EC-08 | Correlation leakage or identity contamination | I/T | Mitigated | plain-digest independence; metrics/wire disclosure gates; correlation-collision negatives | — |
 | EC-09 | Semantic/exact bypass conflation | S/R | Mitigated | semantic-versus-exact divergence; absent-log and no-expectation negatives | — |
 | EC-10 | Incomplete flush reported as complete | R/D | Mitigated | receipt-gated flush integration; timeout/cancel/auth-pause/outage negatives | — |
+| AC-01 | Source discovery manipulated or fabricated | T/S | Mitigated | `missing-root` scenario (present); **discovery-fault-negatives** | — |
+| AC-02 | Partial record captured or boundary advanced | T | Mitigated | `partial-tail` scenario (present); **partial-record-faults** | — |
+| AC-03 | Rewrite, truncation, or replacement mis-generationalized | T/R | Mitigated; residual accepted | `replacement` scenario (present); **rewrite-generation-faults** | Mid-read rewrite race is per-pass, not atomic — adapter owners; SEC working group |
+| AC-04 | Live-database lock contention | D | Mitigated; residual accepted | **database-contention-faults** | Shared store file for the busy-timeout window — adapter owners |
+| AC-05 | Unknown fingerprint parsed best-effort | I/E | Mitigated | `unsupported-fingerprint` scenario (present); **unknown-fingerprint-negatives** | — |
+| AC-06 | Projection allowlist escape | I | Mitigated | **projection-allowlist-negatives** | — |
+| AC-07 | Silent truncation defeats parity | T/R | Mitigated | `complete-records` scenario (present, file face); **parity-mismatch-faults** | — |
+| AC-08 | Permission boundary dishonesty | S/I | Mitigated; residual accepted | `permissions` scenario (present); **permission-faults** | Over-privileged deployments bounded only by the SEC-005 allowlist — tenant operator |
+| AC-09 | Adapter-surface metadata leakage | I | Mitigated | **content-freedom-negatives** | Coarse local activity patterns, RMD-05/RMD-06's shape — tenant operator; SEC working group |
+| AC-10 | Hostile source content against the adapter | T/D/I | Mitigated; residual accepted | **hostile-source-negatives**; fuzz gate per the Phase 11 fuzz item | Parser-bug residual contained by limits, fuzzing, unprivileged local capture — SEC working group; adapter owners |
+| AC-11 | Unqualified real-source support claim | S/R | Mitigated | **claim-gate-audit**; checker-enforced finding↔test-class mapping | — |
 
 ## Accepted-risk register
 
@@ -193,6 +215,11 @@ and the owner; each expands a row above whose disposition says "accepted".
 | RMD-05 | The key namespace is structural metadata visible to any bucket reader | Session IDs hashed into keys (existence, not identity); SEC-002 encrypts content; inventory travels offline to an independently credentialed destination | Tenant operator; SEC working group |
 | RMD-06 | Aggregate telemetry discloses coarse per-deployment activity patterns | Closed telemetry registry, closed-kind labels, cardinality ceilings; per-source detail lives in the status document, not labels | SEC working group |
 | RMD-07 | A compromised or negligent offline administrator can delete shared blobs; correlated failure domains are a documented risk | Deletion identity held by no ingestion replica; 30-day tombstone, two-scan, HEAD revalidation ordering; GC disabled by default; Phase 7 runbooks | Tenant operator; SEC working group |
+| AC-03 | Source-rewrite detection is per-pass: a rewrite that lands and reverts between two passes is invisible, and a rewrite mid-read yields generations from what each pass observed | Closed `GenerationCause` vocabulary preserves both histories per pass (SID-003); complete-record boundaries keep torn writes out; parity bounds what a single pass may claim | adapter owners; SEC working group |
+| AC-04 | A read-only database read shares the store file with the harness's own writer for the five-second busy-timeout window | Read-only open and the bounded timeout (CAP-004); a timed-out read classifies `read-error` and never blocks harness writes or fabricates content | adapter owners |
+| AC-08 | The filesystem permission boundary is not the relied-on control; an over-privileged deployment reads as far as its configuration names | Discovery reads only configured, allowlisted roots (SEC-005); per-source `permission-denied` classification is retained in status (CAP-010) | tenant operator |
+| AC-09 | Adapter surfaces still disclose coarse per-source activity (counts, sizes, timestamps) to a local status reader | Closed status vocabularies with bounded, content-free fields (CAP-010, SEC-004); same acceptance shape as RMD-05/RMD-06 | tenant operator; SEC working group |
+| AC-10 | An exploitable parser bug in adapter code remains possible while parsing untrusted transcript content | Record limits and bounded-reason quarantine (plan `EC-07`); the Phase 11 fuzz gate over adapter projections; capture runs unprivileged on the local host only | SEC working group; adapter owners |
 
 ## Deliverable-list coverage
 
@@ -201,23 +228,25 @@ relay abuse, receipt trust, and the Phase 9 exact-capture extension. Each maps
 to findings above:
 
 - Spoofing — IA-01, IA-07, IA-08, IA-10, PI-07, RD-01, RD-04, RD-08,
-  RMD-01, RMD-02, RMD-04, EC-02, EC-03, EC-04, EC-05, EC-09
+  RMD-01, RMD-02, RMD-04, EC-02, EC-03, EC-04, EC-05, EC-09, AC-01, AC-11
 - Replay — IA-03, IA-04, IA-05, RD-04, EC-07
 - Cross-tenant writes — IA-06, RD-03
 - Digest confusion — PI-01, PI-02
-- Decompression bombs — PI-03 (with PI-04 for the resource-exhaustion face)
+- Decompression bombs — PI-03 (with PI-04 for the resource-exhaustion face),
+  AC-10 (with the adapter parser's oversized-record face)
 - Poisoned manifests — PI-05, PI-06, PI-07, RD-07
-- Metadata leakage — RMD-05, RMD-06, EC-01, EC-02, EC-08
+- Metadata leakage — RMD-05, RMD-06, EC-01, EC-02, EC-08, AC-05, AC-06,
+  AC-09
 - Relay/delegation abuse — RD-01 … RD-08
 - Receipt trust failure — RMD-01 … RMD-04 (with RMD-07 for the retention
   evidence cycle that answers it)
 
 ## Acceptance check
 
-- **Coverage.** The register holds every finding from all five domain
-  documents — 44 rows: IA-01…IA-11 (11), PI-01…PI-08 (8), RD-01…RD-08 (8),
-  RMD-01…RMD-07 (7), and EC-01…EC-10 (10) — matching each document's own
-  closing register row for row; none missing, none added.
+- **Coverage.** The register holds every finding from all six domain
+  documents — 55 rows: IA-01…IA-11 (11), PI-01…PI-08 (8), RD-01…RD-08 (8),
+  RMD-01…RMD-07 (7), EC-01…EC-10 (10), and AC-01…AC-11 (11) — matching each
+  document's own closing register row for row; none missing, none added.
 - **Disposition.** Every row carries an enforcing test class (a tested
   mitigation) or an explicitly accepted risk; every accepted risk names an
   owner drawn from the plan §16 vocabulary (SEC working group, crate owners
@@ -241,4 +270,9 @@ to findings above:
   nine plan-named families each mapping to existing findings. The exact
   capture document additionally freezes the Phase 9 route/evidence matrix so
   proxy and hook support cannot be claimed from schema validation or missing
-  logs alone.
+  logs alone; the model-adapter capture document freezes its pre-claim
+  evidence gate the same way, and the checker enforces that gate's mapping
+  mechanically — every AC finding cites at least one tagged negative/fault
+  test class from a gate row, and every gate-defined class is cited by at
+  least one AC finding — so a real-source adapter cannot become claimable,
+  and the gate cannot silently rot, without the mapping holding.

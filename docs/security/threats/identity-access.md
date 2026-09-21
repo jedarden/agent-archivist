@@ -1,7 +1,7 @@
 # Identity and access threats — ingestion path
 
-Status: one of four domain documents feeding the Phase 1 threat model · Last
-updated: 2026-09-09
+Status: one of six domain documents feeding the Phase 1 threat model · Last
+updated: 2026-09-21
 
 Authority: the [implementation plan](../../plan/plan.md) — primarily Section 5
 ("Control-plane boundary"), Section 7.2 ("Wire request and authentication"),
@@ -10,7 +10,7 @@ and Section 7.3 ("Envelope fields"), with the plan's §7.11 edge-case catalog
 depends on them — and the normative
 [requirements](../../notes/requirements.md) (`ID-*`, `VAL-*`, `SEC-*`,
 `STO-*`). This document interprets those contracts; it introduces no new
-contract. The four domain documents under `docs/security/threats/` are
+contract. The six domain documents under `docs/security/threats/` are
 consolidated into `docs/security/threat-model.md`, whose register must let a
 reader verify the Phase 1 exit gate ("the threat model has a mitigation or
 explicitly accepted risk for every finding") from the register alone.
