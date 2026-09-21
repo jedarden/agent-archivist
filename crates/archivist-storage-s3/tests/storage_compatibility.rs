@@ -514,6 +514,7 @@ fn assert_checksum(profile: Profile, backend: &SyntheticBackend, key: &str, byte
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_suite(profile: Profile) -> CompatibilityReport {
     let backend = SyntheticBackend::new(profile);
     let store = Arc::new(
