@@ -13,5 +13,15 @@
 //! bounded-memory streaming the plan requires of every parser (plan Section
 //! 7.6; VAL-008). The pipeline slices consume it when they land, replacing
 //! the fail-closed ingest stub.
+//!
+//! The **two-part policy** over that tokenizer is implemented:
+//! [`parts`] enforces the protocol Section 1.2 part order — part one must
+//! declare the pinned envelope media type and is capped at the configured
+//! canonical-envelope size, rejected at the cap before further body bytes
+//! are read — and hands part two to the caller as an incremental reader
+//! whose buffering stays within the framing window regardless of body
+//! size. Every rejection is a content-free typed error; the later envelope
+//! and payload pipeline slices consume it when they land.
 
 pub mod framing;
+pub mod parts;

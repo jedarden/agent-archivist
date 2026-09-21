@@ -290,6 +290,21 @@ impl<S: ByteSource> FramingTokenizer<S> {
         }
     }
 
+    /// The number of bytes currently loaded in the tokenizer's window.
+    ///
+    /// Never greater than [`FRAMING_WINDOW_BYTES`]: this is the observable
+    /// half of the bounded-buffer property (VAL-008) — every layer above
+    /// streams events out of this one fixed allocation, so parser memory
+    /// follows the window plus at most one delimiter's retention, never
+    /// the body. Public so the layers built on the tokenizer — the
+    /// two-part policy in [`crate::parse::parts`], whose
+    /// `PayloadStream::buffered_bytes` reports this count plus its own
+    /// retained run — can hold the property through their own tests.
+    #[must_use]
+    pub fn window_len(&self) -> usize {
+        self.window.len()
+    }
+
     /// Live (unconsumed) byte count in the window.
     fn live(&self) -> usize {
         self.window.len() - self.pos
