@@ -330,10 +330,10 @@ mod tests {
         // and the publication refuses it as MalformedInput — the same
         // refusal, decided here before anything downstream runs.
         assert_malformed(&rewritten(|object| {
-            object.set("authorization_epoch", Value::Int(0))
+            object.set("authorization_epoch", Value::Int(0));
         }));
         assert_malformed(&rewritten(|object| {
-            object.set("authorization_epoch", Value::Int(-1))
+            object.set("authorization_epoch", Value::Int(-1));
         }));
     }
 
@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn a_non_integer_epoch_refuses() {
         assert_malformed(&rewritten(|object| {
-            object.set("authorization_epoch", text("1"))
+            object.set("authorization_epoch", text("1"));
         }));
     }
 
