@@ -104,8 +104,7 @@ pub const REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-archivist-r
 
 /// The response header carrying the body's `correlation_id`, always
 /// present (ERR-026).
-pub const CORRELATION_ID_HEADER: HeaderName =
-    HeaderName::from_static("x-archivist-correlation-id");
+pub const CORRELATION_ID_HEADER: HeaderName = HeaderName::from_static("x-archivist-correlation-id");
 
 /// Why a request was refused by the authorization path — the closed set
 /// of registry `authorization`-class conditions the ingest surface can
@@ -282,28 +281,28 @@ impl ServerFailure {
         let rendered = match self {
             Self::Parse(parse) => parse.message().as_str().to_owned(),
             Self::PayloadLimit(limit) => {
-                let template = template_of(self.code());
+                let template = template_of(&self.code());
                 match limit {
                     PayloadLimit::SplittableBytes {
                         actual_bytes,
                         limit_bytes,
-                    } => render_integer_template(template, &[
-                        ("actual_bytes", *actual_bytes),
-                        ("limit_bytes", *limit_bytes),
-                    ]),
+                    }
+                    | PayloadLimit::UnsplittableRecord {
+                        actual_bytes,
+                        limit_bytes,
+                    } => render_integer_template(
+                        template,
+                        &[
+                            ("actual_bytes", *actual_bytes),
+                            ("limit_bytes", *limit_bytes),
+                        ],
+                    ),
                     PayloadLimit::SplittableRatio { max_ratio } => {
                         render_integer_template(template, &[("max_ratio", *max_ratio)])
                     }
-                    PayloadLimit::UnsplittableRecord {
-                        actual_bytes,
-                        limit_bytes,
-                    } => render_integer_template(template, &[
-                        ("actual_bytes", *actual_bytes),
-                        ("limit_bytes", *limit_bytes),
-                    ]),
                 }
             }
-            other => template_of(other.code()).to_owned(),
+            other => template_of(&other.code()).to_owned(),
         };
         // ERR-011: the rendered message is truncated to at most 200
         // characters. Every interpolable value is charset-constrained, so
@@ -320,7 +319,7 @@ impl ServerFailure {
 /// # Panics
 /// Never in practice: every caller resolves codes the module tests pin
 /// against the embedded registry.
-fn template_of(code: ErrorCode) -> &'static str {
+fn template_of(code: &ErrorCode) -> &'static str {
     registry()
         .template(code.as_str())
         .expect("every mapped code is registered")
@@ -518,7 +517,14 @@ fn parse_registry(text: &'static str) -> Result<ErrorRegistry, &'static str> {
         if !registry.retryable_by_class.contains_key(class) {
             return Err("code names an unregistered class");
         }
-        registry.codes.insert(token, RegisteredCode { class, http: entry.http, message });
+        registry.codes.insert(
+            token,
+            RegisteredCode {
+                class,
+                http: entry.http,
+                message,
+            },
+        );
     }
     Ok(registry)
 }
@@ -703,11 +709,9 @@ impl ErrorResponse {
         let _ = object.insert("message", Value::Text(self.message.clone()));
         let _ = object.insert(
             "request_id",
-            self.request_id
-                .as_ref()
-                .map_or(Value::Null, |request_id| {
-                    Value::Text(request_id.as_str().to_owned())
-                }),
+            self.request_id.as_ref().map_or(Value::Null, |request_id| {
+                Value::Text(request_id.as_str().to_owned())
+            }),
         );
         let _ = object.insert("retryable", Value::Bool(self.retryable));
         let _ = object.insert("schema", Value::Text(ERROR_NAMESPACE.to_owned()));
@@ -743,8 +747,8 @@ impl ErrorResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        CORRELATION_ID_HEADER, ERROR_MEDIA_TYPE, ERROR_NAMESPACE, REQUEST_ID_HEADER,
-        AuthRejection, ErrorResponse, PayloadLimit, ServerFailure, parse_registry, registry,
+        AuthRejection, CORRELATION_ID_HEADER, ERROR_MEDIA_TYPE, ERROR_NAMESPACE, ErrorResponse,
+        PayloadLimit, REQUEST_ID_HEADER, ServerFailure, parse_registry, registry,
     };
     use crate::parse::framing::FramingError;
     use crate::parse::ingest::IngestParseError;
@@ -761,23 +765,17 @@ mod tests {
     /// acceptance matrix, walked end to end.
     fn every_failure() -> Vec<ServerFailure> {
         vec![
-            ServerFailure::Parse(IngestParseError::Framing(
-                TwoPartError::PayloadPartMissing,
-            )),
-            ServerFailure::Parse(IngestParseError::Framing(
-                TwoPartError::EnvelopeNotFirst,
-            )),
+            ServerFailure::Parse(IngestParseError::Framing(TwoPartError::PayloadPartMissing)),
+            ServerFailure::Parse(IngestParseError::Framing(TwoPartError::EnvelopeNotFirst)),
             ServerFailure::Parse(IngestParseError::Framing(
                 TwoPartError::EnvelopeExceedsCap {
                     limit_bytes: 65_536,
                 },
             )),
-            ServerFailure::Parse(IngestParseError::Envelope(
-                EnvelopeError::SchemaInvalid {
-                    field: "occurrence_id",
-                    reason: "re-derivation mismatch",
-                },
-            )),
+            ServerFailure::Parse(IngestParseError::Envelope(EnvelopeError::SchemaInvalid {
+                field: "occurrence_id",
+                reason: "re-derivation mismatch",
+            })),
             ServerFailure::Authorization(AuthRejection::Unlinked),
             ServerFailure::Authorization(AuthRejection::Revoked),
             ServerFailure::Authorization(AuthRejection::ProofRejected),
@@ -865,14 +863,10 @@ mod tests {
             let (status, retryable) = parsed
                 .resolve(token)
                 .unwrap_or_else(|| panic!("{token} resolves to status and class"));
-            let (expected_code, expected_status, expected_retryable) =
-                expected_wire(&failure);
+            let (expected_code, expected_status, expected_retryable) = expected_wire(&failure);
             assert_eq!(token, expected_code, "{token} is the pinned code");
             assert_eq!(status, expected_status, "{token} status is pinned");
-            assert_eq!(
-                retryable, expected_retryable,
-                "{token} retryable is pinned"
-            );
+            assert_eq!(retryable, expected_retryable, "{token} retryable is pinned");
             let template = parsed
                 .template(token)
                 .unwrap_or_else(|| panic!("{token} has a template"));
@@ -892,8 +886,7 @@ mod tests {
         for failure in every_failure() {
             let response =
                 ErrorResponse::with_correlation(failure, Some(request_id()), correlation_id());
-            let (expected_code, expected_status, expected_retryable) =
-                expected_wire(&failure);
+            let (expected_code, expected_status, expected_retryable) = expected_wire(&failure);
             assert_eq!(response.status(), expected_status, "{failure:?} status");
             assert_eq!(response.code(), expected_code, "{failure:?} code");
             assert_eq!(
@@ -913,7 +906,12 @@ mod tests {
             assert_eq!(
                 fields,
                 [
-                    "code", "correlation_id", "message", "request_id", "retryable", "schema"
+                    "code",
+                    "correlation_id",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "schema"
                 ],
                 "{failure:?}: exactly the six schema members, canonically sorted"
             );
@@ -944,8 +942,7 @@ mod tests {
     #[test]
     fn a_failure_without_an_envelope_renders_null_request_id() {
         for failure in every_failure() {
-            let response =
-                ErrorResponse::with_correlation(failure, None, correlation_id());
+            let response = ErrorResponse::with_correlation(failure, None, correlation_id());
             let text = String::from_utf8(response.canonical_bytes()).expect("body is text");
             assert!(
                 text.contains("\"request_id\":null"),
@@ -977,8 +974,7 @@ mod tests {
     }
 
     #[test]
-    fn integer_placeholders_render_as_plain_decimal_and_degrade_outside_the_frozen_grammar()
-    {
+    fn integer_placeholders_render_as_plain_decimal_and_degrade_outside_the_frozen_grammar() {
         let in_grammar = ServerFailure::PayloadLimit(PayloadLimit::SplittableBytes {
             actual_bytes: 2_u64.pow(53),
             limit_bytes: 256,
@@ -1008,10 +1004,7 @@ mod tests {
             max_ratio: u64::MAX,
         });
         assert!(
-            ratio
-                .rendered_message()
-                .as_str()
-                .contains("[max_ratio]"),
+            ratio.rendered_message().as_str().contains("[max_ratio]"),
             "the ratio placeholder degrades under its own name"
         );
     }
@@ -1019,10 +1012,8 @@ mod tests {
     #[test]
     fn the_body_is_byte_deterministic_for_fixed_identifiers() {
         let failure = ServerFailure::PartialCommit;
-        let first =
-            ErrorResponse::with_correlation(failure, Some(request_id()), correlation_id());
-        let second =
-            ErrorResponse::with_correlation(failure, Some(request_id()), correlation_id());
+        let first = ErrorResponse::with_correlation(failure, Some(request_id()), correlation_id());
+        let second = ErrorResponse::with_correlation(failure, Some(request_id()), correlation_id());
         assert_eq!(
             first.canonical_bytes(),
             second.canonical_bytes(),
@@ -1044,20 +1035,19 @@ mod tests {
 
     #[test]
     fn parse_paths_render_the_corpus_pinned_envelope_rendering() {
-        let failure = ServerFailure::Parse(IngestParseError::Envelope(
-            EnvelopeError::SchemaInvalid {
+        let failure =
+            ServerFailure::Parse(IngestParseError::Envelope(EnvelopeError::SchemaInvalid {
                 field: "occurrence_id",
                 reason: "re-derivation mismatch",
-            },
-        ));
+            }));
         assert_eq!(
             failure.rendered_message().as_str(),
             "The envelope fails schema validation at field occurrence_id.",
             "the parser strand's rendering flows through unchanged"
         );
-        let framing = ServerFailure::Parse(IngestParseError::Framing(
-            TwoPartError::Framing(FramingError::MalformedDelimiter),
-        ));
+        let framing = ServerFailure::Parse(IngestParseError::Framing(TwoPartError::Framing(
+            FramingError::MalformedDelimiter,
+        )));
         assert_eq!(
             framing.rendered_message().as_str(),
             "The request is not the pinned two-part multipart/related framing; \
@@ -1081,10 +1071,7 @@ mod tests {
     fn the_registry_reader_rejects_drift() {
         // Not a full TOML parser and not trying to be: the bytes it reads
         // are the checker-gated registry, and drift fails closed.
-        assert!(
-            parse_registry("").is_err(),
-            "an empty registry is refused"
-        );
+        assert!(parse_registry("").is_err(), "an empty registry is refused");
         assert!(
             parse_registry("schema = \"archivist.error-registry/v2\"\n").is_err(),
             "an unknown registry schema is refused"
@@ -1144,12 +1131,9 @@ mod tests {
 
         // Without a request id the header is absent — never an empty
         // value (the schema: "the body request_id when known").
-        let without = ErrorResponse::with_correlation(
-            ServerFailure::RateLimited,
-            None,
-            correlation_id(),
-        )
-        .into_response();
+        let without =
+            ErrorResponse::with_correlation(ServerFailure::RateLimited, None, correlation_id())
+                .into_response();
         assert!(without.headers().get(&REQUEST_ID_HEADER).is_none());
         assert_eq!(
             without
