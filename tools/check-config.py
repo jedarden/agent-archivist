@@ -125,7 +125,10 @@ SCAN_EXTENSIONS = frozenset({
     ".toml", ".yaml", ".yml", ".md", ".example", ".env", ".cfg", ".ini",
     ".conf",
 })
-PRUNE_DIRS = frozenset({".git", "target", "__pycache__"})
+# Vendored dependencies are third-party source, not repository configuration;
+# their TOML and documentation may contain arbitrary ``*_ref`` examples that
+# do not describe Agent Archivist settings (RC-014).
+PRUNE_DIRS = frozenset({".git", "target", "vendor", "__pycache__"})
 
 
 def fail(message: str) -> None:
