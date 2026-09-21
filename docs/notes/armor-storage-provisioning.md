@@ -246,8 +246,9 @@ Live authorization: positive and negative S3 calls per role against the
 serving iad-ci ARMOR pod. The full per-role matrix staged by the
 provisioning bead (calibration: TRANSCRIPTS list → AccessDenied, i.e.
 signature verified and ACL-refused) was left pending its propagation
-window; the raw-writer role's matrix, run at abort enablement, is appended
-below.
+window at provisioning time; it has since been run to completion — see
+"Full four-role enforcement matrix" below. The raw-writer role's matrix,
+run at abort enablement, follows.
 
 ### Abort enablement (2026-09-14, bead aa-e4dcf1c2)
 
@@ -642,3 +643,63 @@ fingerprint `c2427785a68889dd` appears nowhere in the pod's log. The
 drill is complete. KV state matches the interval table: merged document
 v9 (the Phase 10 writers appended on top of this drill's v8),
 raw-writer per-role v4.
+
+## Full four-role enforcement matrix (2026-09-21, bead aa-adeab1be close-out)
+
+The provisioning bead's pending matrix, run to completion against the
+serving pod `armor-6dbb6ff7c4-89tvk` (`ronaldraygun/armor:0.1.1971`, the
+pod the 2026-09-19 merged-document v11 propagation rolled in) over a
+transient port-forward, credentials loaded from the per-role OpenBao
+paths into the environment only — never argv, never printed. Property
+sweep first: all four bead-scoped per-role paths
+(`archivist-control-reader` v2, `archivist-raw-writer` v4,
+`archivist-control-admin` v1, `archivist-backup-restore` v1 — matching
+the rotation table's anchors) hold pairs whose SHA-256 identifier
+fingerprints equal their merged-document entries', with the documented
+`ACCESS_KEY`/`SECRET_KEY` field convention. The merged document stands
+at v11 (2026-09-19); a structural diff of v9→v11 shows exactly one
+changed entry — `WARP`, the B2-profile work's consumer credential,
+which adds `iad-ci:agent-archivist/raw/*:get+list` to the tenant tree's
+readers. Every `ARCHIVIST_*` entry is byte-identical across v9→v11 and
+each ACL string still matches the table above, so the identity set this
+note documents is the set that is live.
+
+Live matrix (SigV4, path-style, bucket `iad-ci`; only status and error
+codes recorded; the bracketed value is the expected one; every row
+matched):
+
+| # | Caller | Operation | Observed |
+|---|---|---|---|
+| 1 | control reader | ListObjectsV2 prefix `agent-archivist/control/` | 200 [200] (prefix empty) |
+| 2 | control reader | ListObjectsV2 prefix `agent-archivist/raw/` | 403 AccessDenied [403] |
+| 3 | control reader | CreateMultipartUpload under `control/` | 403 AccessDenied [403] — write refused |
+| 4 | control reader | GetObject, absent control key | 404 NoSuchKey [404] — read grant proven; no object exists |
+| 5 | raw writer | ListObjectsV2 prefix `agent-archivist/raw/` | 200 [200] |
+| 6 | raw writer | CreateMultipartUpload → UploadPart 64 KiB → AbortMultipartUpload, own session | 200 / 200 / 204 — nothing left behind |
+| 7 | raw writer | GetObject, the committed aa-e827d0f0 canary | 403 AccessDenied [403] — committed-object read refused |
+| 8 | raw writer | ListObjectsV2 prefix `agent-archivist/control/` | 403 AccessDenied [403] |
+| 9 | raw writer | PutObject under `control/` | 403 AccessDenied [403] |
+| 10 | control admin | ListObjectsV2 prefix `agent-archivist/control/` | 200 [200] |
+| 11 | control admin | GetObject, same absent control key as row 4 | 403 AccessDenied [403] — refused before existence |
+| 12 | control admin | CreateMultipartUpload under `raw/` | 403 AccessDenied [403] |
+| 13 | backup/restore | ListObjectsV2 across `raw/`, `control/`, `catalog/`, `derived/` | 200 ×4 [200] |
+| 14 | backup/restore | GetObject, the committed aa-e827d0f0 canary | 200 [200] — cross-prefix committed-object read |
+| 15 | backup/restore | CreateMultipartUpload under `raw/` | 403 AccessDenied [403] — write refused |
+| 16 | calibration | raw-writer access key, wrong secret | 403 SignatureDoesNotMatch |
+| 17 | calibration | unknown access key | 403 InvalidAccessKeyId |
+
+Rows 16–17 calibrate everything above: the positives are
+signature-verified authorizations and the 403s are ACL refusals, not
+credential failures; rows 4 vs 11 on the identical absent key separate
+the reader's granted-but-empty read (404 NoSuchKey) from the admin's
+identity-level no-`get` refusal (403 before any existence check). The
+acceptance clauses land directly: the control reader is refused any
+write (rows 2–3); the raw writer is refused any read of a committed
+object and any cross-prefix access (rows 7–9); each identity is refused
+everything outside its ACL. No new residue: the raw writer's multipart
+session was aborted in-run (row 6) and every refused write wrote
+nothing, so the only object a read touched is the canary row 14 of the
+aa-e827d0f0 record already documents. The control admin's positive put
+stays unprobed — rows 10–12 prove the serving pod enforces exactly the
+live document's `put+list` shape, and a canary would pollute a
+namespace reserved for tenant-authority-signed records.
