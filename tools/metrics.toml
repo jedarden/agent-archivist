@@ -35,7 +35,8 @@ kind = "enum"
 values = [
   "envelope.malformed", "envelope.version_unsupported", "envelope.media_type_unsupported",
   "envelope.schema_invalid", "envelope.size_exceeded", "auth.unlinked", "auth.revoked",
-  "auth.authorization_rejected", "auth.forbidden", "storage.integrity_conflict",
+  "auth.authorization_rejected", "auth.forbidden", "auth.epoch_unreached", "auth.key_id_mismatch",
+  "storage.integrity_conflict",
   "request.payload_too_large", "request.expansion_ratio_exceeded", "request.record_too_large",
   "request.deadline_exceeded", "request.rate_limited", "request.too_early",
   "request.framing_invalid", "server.internal", "server.storage_failure",
