@@ -66,6 +66,10 @@
 //! - [`audit_restore`] — the offline audit/restore identity: paginated
 //!   enumeration, the frozen `inventory-v1` contract, and object inspection
 //!   and bounded reads.
+//! - [`catalog_source`] — the raw catalog source reader: deterministic,
+//!   validating iteration over a frozen tenant raw prefix (occurrences,
+//!   attestations, referenced blobs) for offline catalog rebuild and
+//!   reference scans; reachable only through the audit/restore identity.
 //! - [`ingest`] — the composition of the two ingest identities, proving the
 //!   authority boundary at the type level.
 //! - [`scoped_write`] — the Phase 10 scoped writers: catalog checkpoints
@@ -86,6 +90,10 @@
 //! identity, and the manifest commit path ([`manifests`]) lands the
 //! occurrence manifest and upload attestation at their derived keys with
 //! server-side identity re-derivation and dedupe-not-conflict semantics.
+//! The raw catalog source reader ([`catalog_source`]) reads that committed
+//! raw provenance back — validating, deterministic iteration over a frozen
+//! tenant raw prefix for offline catalog rebuild and reference scans
+//! (plan Section 8, Phase 10).
 //! Backend behavior — the portable S3 adapter's probe source and store,
 //! which implement the primitives these layers drive — arrives with its own
 //! deliverables (plan Section 8, Phase 2).
@@ -98,6 +106,7 @@
 pub mod audit_restore;
 pub mod blob;
 pub mod capability;
+pub mod catalog_source;
 pub mod commit;
 pub mod control;
 pub mod error;
