@@ -675,6 +675,17 @@ impl<B> S3ControlAdminStore<B> {
     pub const fn config(&self) -> &ControlAdminConfig {
         &self.config
     }
+
+    /// The request seam this store reads and writes control objects
+    /// through — the same backend the store was composed with, lent to
+    /// reads that ride alongside a store operation: a signing act walking
+    /// the authority-rotation chain over the same transport its
+    /// publication will write through, so the two never disagree about
+    /// which plane they act on.
+    #[must_use]
+    pub const fn backend(&self) -> &B {
+        &self.backend
+    }
 }
 
 impl<B: ControlAdminBackend> S3ControlAdminStore<B> {

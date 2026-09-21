@@ -13,6 +13,11 @@
 //! unreachable. The first of these is the offline administration control
 //! plane ([`admin`]): the shared assembly of the
 //! `S3ControlAdminStore` from the registered `admin.*` configuration keys.
+//! The second is the `admin approve` command behavior ([`approve`]): the
+//! link-request draft read, validated, and signed at the current instant,
+//! published through that store, and emitted as the linked-client record
+//! document its registry entry's `result_schema` names — every refusal a
+//! registered code of `tools/error-codes.toml`, with stdout empty.
 //!
 //! # Dependency boundary
 //!
@@ -22,3 +27,4 @@
 //! target adds no privilege, only a testable home for composition.
 
 pub mod admin;
+pub mod approve;

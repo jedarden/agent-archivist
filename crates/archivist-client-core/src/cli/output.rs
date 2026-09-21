@@ -147,7 +147,13 @@ fn valid_timestamp(text: &str) -> bool {
     }
 }
 
-fn now_rfc3339() -> String {
+/// The current UTC instant as RFC 3339 text, to second or subsecond
+/// precision, with no date-time dependency. Handlers that must stamp a
+/// record with the invocation's instant reuse this so the emitted shape
+/// matches the envelope framing's own `generated_at` form — and parses as
+/// a protocol `Timestamp`, whose grammar accepts the subsecond form.
+#[must_use]
+pub fn now_rfc3339() -> String {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();

@@ -14,7 +14,7 @@ pub mod registry;
 pub mod router;
 
 pub use error::CliError;
-pub use output::OutputEnvelope;
+pub use output::{OutputEnvelope, now_rfc3339};
 pub use parse::{Invocation, ModeFlags, ParseError};
 pub use router::{CommandHandler, Router};
 

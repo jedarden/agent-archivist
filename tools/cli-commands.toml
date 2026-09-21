@@ -172,6 +172,10 @@ keys = [
   "admin.credentials_ref",
   "admin.authority_seed_ref",
 ]
+# The emitted document is the linked-client record the command signs and
+# publishes (CLI-015): the tenant-authority-signed current pointer
+# `schemas/v1/control-client.json` pins.
+result_schema = "schemas/v1/control-client.json"
 
 [commands."admin revoke"]
 summary = "Write a signed revocation record from the supplied draft, effective on every replica within the trust-cache window."
