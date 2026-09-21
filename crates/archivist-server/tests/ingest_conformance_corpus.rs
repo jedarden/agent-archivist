@@ -77,7 +77,7 @@ fn text<'a>(value: &'a Value, rel: &str, name: &str) -> &'a str {
 }
 
 /// The corpus manifest's scenario objects, in pinned order.
-fn scenarios<'a>(manifest: &'a Value) -> &'a [Value] {
+fn scenarios(manifest: &Value) -> &[Value] {
     match member(manifest, "manifest.json", "scenarios") {
         Value::Array(scenarios) => scenarios,
         other => panic!("manifest.json scenarios is not an array, found {other:?}"),
@@ -266,16 +266,14 @@ fn every_valid_scenario_parses_to_its_pinned_envelope_and_streaming_payload() {
             "{id}: the parsed envelope does not canonicalize to the pinned fixture"
         );
         let manifest = load_json(&root, "manifest.json");
-        let wire_canonical = scenarios(&manifest)
+        let scenario = scenarios(&manifest)
             .iter()
             .find(|scenario| text(scenario, "manifest.json", "id") == id)
-            .map(
-                |scenario| match member(scenario, id, "envelope_wire_canonical") {
-                    Value::Bool(flag) => *flag,
-                    other => panic!("{id}: envelope_wire_canonical is a bool, found {other:?}"),
-                },
-            )
             .unwrap_or_else(|| panic!("{id}: not in the corpus manifest"));
+        let wire_canonical = match member(scenario, id, "envelope_wire_canonical") {
+            Value::Bool(flag) => *flag,
+            other => panic!("{id}: envelope_wire_canonical is a bool, found {other:?}"),
+        };
         if wire_canonical {
             assert_eq!(
                 envelope.canonical_bytes(),
