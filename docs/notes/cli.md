@@ -1,6 +1,6 @@
 # Agent Archivist CLI command conventions
 
-Status: accepted baseline · Last updated: 2026-09-11
+Status: accepted baseline · Last updated: 2026-09-22
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are
 to be interpreted as described by RFC 2119 and RFC 8174 when they appear in bold.
@@ -86,6 +86,12 @@ in the same commit.
   The plan's crate-tree sketch of the CLI as "collect, serve, link, admin,
   status" is realized by this table: capture is `run`/`daemon`, and the
   crate map points here rather than restating names.
+
+  Implementation status: `admin approve` is implemented. The
+  `archivist-cli` composition root routes the command through the Phase 3
+  authority-signing and control-admin publication path; its registry entry
+  names `archivist-auth` as the behavior owner and pins the linked-client
+  result to `schemas/v1/control-client.json`.
 - **CLI-007** — The state-lock field states the command's relationship to
   the plan Section 7.9 single-mutator contract: `exclusive` commands take
   the advisory lock and a second mutator exits 75 with `client.lock_held`;
