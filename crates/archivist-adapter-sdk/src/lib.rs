@@ -48,10 +48,13 @@
 //!   resolution (plan Phase 6A, plan Section 7.4): opaque IDs preserved
 //!   byte-for-byte, a minted `UUIDv4` stand-in for absent IDs, and
 //!   content-free fail-closed rejection for invalid ones.
+//! - [`conformance`]: the append-only conformance suite (plan Phase 6D):
+//!   the harness-agnostic runner that drives any adapter built on this
+//!   SDK through the synthetic corpus's time-dimension scenes — complete
+//!   records, a partial tail, growth — and names every capture-contract
+//!   breach. The `synthetic_append_only` example is the executable shape
+//!   a community adapter starts from; this suite is what it is held to.
 //!
-//! The synthetic adapter example and the conformance suite that hold
-//! community adapters to these contracts are the Phase 6D work that
-//! follows this publication (plan Phase 6D).
 //!
 //! # Dependency boundary
 //!
@@ -62,6 +65,7 @@
 
 pub mod artifact;
 pub mod capability;
+pub mod conformance;
 pub mod descriptor;
 pub mod discovery;
 pub mod expected_inference;
@@ -74,6 +78,11 @@ pub mod session_identity;
 pub mod status;
 
 pub use capability::{AdapterCapability, CapabilitySet, MAX_CAPABILITIES};
+pub use conformance::{
+    CORPUS_RELATIVE, ConformanceAdapter, ConformanceSuite, CorpusError, GenerationContinuity,
+    MountError, PassError, PassReport, SOURCE_FILE_NAME, Scenario, ScenarioOutcome,
+    TimeDimensionReport, Violation,
+};
 pub use descriptor::{AdapterDescriptor, DescriptorError};
 pub use discovery::{
     DiscoveredSource, DiscoveredSources, DiscoveryError, DiscoveryReport, SourceDiscovery,
