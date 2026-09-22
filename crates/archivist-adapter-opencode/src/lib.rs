@@ -21,10 +21,14 @@
 //! validates the store's schema metadata against the embedded allowlist
 //! before any projected content is read, and [`adapter_descriptor`]
 //! publishes the adapter's fail-closed fingerprint allowlist. The
-//! allowlisted projection and the parity oracle
-//! — a transactionally consistent read-only snapshot and the adapter
-//! producing identical allowlisted keys, row counts, null/presence bits,
-//! and per-field digests — arrive with the remaining Phase 6B work.
+//! transactionally consistent snapshot is implemented: [`Snapshot::take`]
+//! gates on the schema allowlist and reads the five allowlisted tables
+//! inside one read transaction, with deterministic ordering, per-cell
+//! presence bits, raw field bytes, and shape-only debug output. The
+//! allowlisted projection and the parity oracle — the adapter producing
+//! records identical to the snapshot's allowlisted keys, row counts,
+//! null/presence bits, and per-field digests — arrive with the remaining
+//! Phase 6B work.
 //!
 //! # Dependency boundary
 //!
@@ -34,10 +38,12 @@
 //! inside the adapter per docs/notes/crate-ownership.md rule 3.
 
 mod schema;
+mod snapshot;
 mod store_connection;
 
 pub use schema::{
     ALLOWED_TABLES, ALLOWED_VERSIONS, DetectError, PROJECTION_VERSION, SUPPORTED_FINGERPRINT,
     SchemaDivergence, adapter_descriptor, detect,
 };
+pub use snapshot::{Cell, Row, Snapshot, SnapshotError, TableSnapshot};
 pub use store_connection::{BUSY_TIMEOUT, StoreConnection, StoreOpenError};
