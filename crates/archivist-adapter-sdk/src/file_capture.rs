@@ -18,10 +18,11 @@
 //! returned as a record, never counted as complete bytes, and never part
 //! of any backlog figure.
 //!
-//! Boundary selection is all this module does. Generation detection,
-//! sidecar relationships, and session identity are the surrounding
-//! Phase 6 work and are deliberately absent: this contract is the one
-//! every later file-capture child composes, so it stays free of any
+//! Boundary selection is all this module does. The surrounding Phase 6
+//! work composes on top of it — generation detection
+//! ([`crate::file_generation`]), sidecar artifact relationships
+//! ([`crate::file_sidecar`]), and session-identity resolution
+//! ([`crate::session_identity`]) — so this contract stays free of any
 //! policy that could change under it.
 //!
 //! [`SourceScan`]: crate::status::SourceScan

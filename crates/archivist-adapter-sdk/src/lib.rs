@@ -40,6 +40,14 @@
 //!   discontinuity closes the acknowledged generation and opens a new
 //!   `UUIDv7` one with the cause frozen at detection, preserving both
 //!   histories (AC-03).
+//! - [`file_sidecar`]: the file-source capture core's sidecar artifact
+//!   relationships (plan Phase 6A): sidecars captured as artifacts in
+//!   their own right, each carrying an explicit relationship to its
+//!   parent, independently addressable and enumerable per parent.
+//! - [`session_identity`]: the file-source capture core's session-identity
+//!   resolution (plan Phase 6A, plan Section 7.4): opaque IDs preserved
+//!   byte-for-byte, a minted `UUIDv4` stand-in for absent IDs, and
+//!   content-free fail-closed rejection for invalid ones.
 //!
 //! The synthetic adapter example and the conformance suite that hold
 //! community adapters to these contracts are the Phase 6D work that
@@ -59,8 +67,10 @@ pub mod discovery;
 pub mod expected_inference;
 pub mod file_capture;
 pub mod file_generation;
+pub mod file_sidecar;
 pub mod fingerprint;
 pub mod lifecycle;
+pub mod session_identity;
 pub mod status;
 
 pub use capability::{AdapterCapability, CapabilitySet, MAX_CAPABILITIES};
@@ -78,11 +88,15 @@ pub use file_generation::{
     AcknowledgedSource, AcknowledgedSourceError, FileGenerationTracker, FileIdentity,
     GenerationDecision, SourceObservation, detect_generation,
 };
+pub use file_sidecar::{
+    MAX_SIDECARS_PER_PARENT, SidecarError, SidecarKind, SidecarLedger, SidecarRelationship,
+};
 pub use fingerprint::{
     FingerprintAllowlist, FingerprintError, MAX_FINGERPRINTS, SourceFingerprint,
     UnsupportedFingerprint, unsupported_report,
 };
 pub use lifecycle::{AdapterLifecycle, LifecycleState};
+pub use session_identity::{SessionIdentity, SessionIdentityError};
 pub use status::{
     AccountLabel, AdapterAccountStatus, ClassificationCounts, CoverageCounts, CoverageState,
     FreshnessLane, ScanClassification, SourceId, SourceScan,

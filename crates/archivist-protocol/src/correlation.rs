@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! `UUIDv7` correlation identities for exact inference capture (plan Phase 9).
+//! Minted identity handles: `UUIDv7` correlation identities for exact
+//! inference capture (plan Phase 9), and the `UUIDv4` synthetic session
+//! stand-in for sessions a harness left unidentified (plan Section 7.4).
 //!
 //! The lifecycle types make the intended scopes explicit:
 //!
@@ -23,7 +25,9 @@ use std::io::Read;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::vocabulary::{GenerationId, InferenceRequestId, ProviderAttemptId, RequestId, TraceId};
+use crate::vocabulary::{
+    GenerationId, InferenceRequestId, OpaqueId, ProviderAttemptId, RequestId, TraceId,
+};
 
 /// The largest attempt ordinal representable by the protocol's `u63` wire
 /// shape.
@@ -180,21 +184,31 @@ impl ProviderAttempt {
 #[must_use]
 pub fn mint_trace_id() -> TraceId {
     let text = mint_uuid_v7_text();
-    parse_minted("trace_id", &text, TraceId::parse)
+    parse_minted("trace_id", &text, "UUIDv7", TraceId::parse)
 }
 
 /// Mint a `UUIDv7` identity for one logical inference.
 #[must_use]
 pub fn mint_inference_request_id() -> InferenceRequestId {
     let text = mint_uuid_v7_text();
-    parse_minted("inference_request_id", &text, InferenceRequestId::parse)
+    parse_minted(
+        "inference_request_id",
+        &text,
+        "UUIDv7",
+        InferenceRequestId::parse,
+    )
 }
 
 /// Mint a `UUIDv7` identity for one provider transport attempt.
 #[must_use]
 pub fn mint_provider_attempt_id() -> ProviderAttemptId {
     let text = mint_uuid_v7_text();
-    parse_minted("provider_attempt_id", &text, ProviderAttemptId::parse)
+    parse_minted(
+        "provider_attempt_id",
+        &text,
+        "UUIDv7",
+        ProviderAttemptId::parse,
+    )
 }
 
 /// Mint one correlation identifier (`UUIDv7`, the ERR-026 shape): the fresh
@@ -229,15 +243,36 @@ pub fn mint_correlation_id() -> RequestId {
 #[must_use]
 pub fn mint_generation_id() -> GenerationId {
     let text = mint_uuid_v7_text();
-    parse_minted("generation_id", &text, GenerationId::parse)
+    parse_minted("generation_id", &text, "UUIDv7", GenerationId::parse)
+}
+
+/// Mint a `UUIDv4` stand-in for a session the harness left unidentified
+/// (plan Section 7.4's `id_source=synthetic`): the adapter-minted
+/// upstream-session identity that replaces a missing harness session ID.
+/// The value is minted from entropy exactly once and never inferred from
+/// a path name, so two unidentified sessions stay distinct identities
+/// instead of merging on an empty identity input.
+///
+/// The minted text is canonical lowercase `UUIDv4`, 36 bytes, well inside
+/// the opaque-ID grammar (1–1,024 bytes) by construction.
+///
+/// # Panics
+/// Never in practice: the minted text is constructed in canonical form and
+/// re-validated through the protocol's own grammar as a belt-and-braces
+/// check.
+#[must_use]
+pub fn mint_synthetic_session_id() -> OpaqueId {
+    let text = mint_uuid_v4_text();
+    parse_minted("synthetic_session_id", &text, "UUIDv4", OpaqueId::parse)
 }
 
 fn parse_minted<T>(
     name: &str,
     text: &str,
+    shape: &str,
     parse: fn(&str) -> Result<T, crate::vocabulary::GrammarError>,
 ) -> T {
-    parse(text).unwrap_or_else(|_| panic!("minted {name} is not canonical UUIDv7"))
+    parse(text).unwrap_or_else(|_| panic!("minted {name} is not canonical {shape}"))
 }
 
 /// Make one canonical `UUIDv7` text value using the Unix millisecond clock and
@@ -268,6 +303,30 @@ fn mint_uuid_v7_text() -> String {
     bytes[8] = 0x80 | (random[1] & 0x3f);
     bytes[9..].copy_from_slice(&random[2..]);
 
+    canonical_uuid_text(&bytes)
+}
+
+/// Make one canonical `UUIDv4` text value from 122 random bits.
+/// `/dev/urandom` is the normal source; the fallback is the same
+/// process-local mix the `UUIDv7` path uses.
+fn mint_uuid_v4_text() -> String {
+    let mut bytes = [0u8; 16];
+    if File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(&mut bytes))
+        .is_err()
+    {
+        fill_fallback(&mut bytes);
+    }
+    // UUIDv4: version 4 in the high nibble of byte 6 and RFC 9562
+    // variant `10` in the top two bits of byte 8 — 122 of the 128 bits
+    // stay random.
+    bytes[6] = 0x40 | (bytes[6] & 0x0f);
+    bytes[8] = 0x80 | (bytes[8] & 0x3f);
+    canonical_uuid_text(&bytes)
+}
+
+/// Render 16 UUID bytes as the canonical lowercase hyphenated text.
+fn canonical_uuid_text(bytes: &[u8; 16]) -> String {
     let mut text = String::with_capacity(36);
     for (index, byte) in bytes.iter().enumerate() {
         if matches!(index, 4 | 6 | 8 | 10) {
@@ -280,7 +339,7 @@ fn mint_uuid_v7_text() -> String {
 
 static FALLBACK_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn fill_fallback(buffer: &mut [u8; 9]) {
+fn fill_fallback(buffer: &mut [u8]) {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| {
@@ -340,6 +399,27 @@ mod tests {
         // Each minted generation id is fresh too: two rotations of the
         // same cause are still distinct generations.
         assert_ne!(generation.as_str(), mint_generation_id().as_str());
+    }
+
+    #[test]
+    fn synthetic_session_ids_are_canonical_uuid_v4_and_distinct() {
+        let first = mint_synthetic_session_id();
+        let second = mint_synthetic_session_id();
+        for text in [first.as_str(), second.as_str()] {
+            assert_eq!(text.len(), 36, "canonical uuid text length");
+            assert_eq!(text.as_bytes()[14], b'4', "version 4 nibble");
+            assert!(
+                matches!(text.as_bytes()[19], b'8' | b'9' | b'a' | b'b'),
+                "RFC 9562 variant nibble"
+            );
+            assert!(
+                text.bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() || byte == b'-'),
+                "lowercase canonical hex"
+            );
+        }
+        // Two unidentified sessions must not merge: each mint is fresh.
+        assert_ne!(first.as_str(), second.as_str());
     }
 
     #[test]
