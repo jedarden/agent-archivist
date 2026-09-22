@@ -17,8 +17,11 @@
 //! read-only flag with the five-second busy window, and open-time outcomes
 //! classify into the SDK's closed
 //! [`ScanClassification`](archivist_adapter_sdk::ScanClassification)
-//! vocabulary. The
-//! schema-version gate, the allowlisted projection, and the parity oracle
+//! vocabulary. The schema-version gate is implemented: [`detect`]
+//! validates the store's schema metadata against the embedded allowlist
+//! before any projected content is read, and [`adapter_descriptor`]
+//! publishes the adapter's fail-closed fingerprint allowlist. The
+//! allowlisted projection and the parity oracle
 //! — a transactionally consistent read-only snapshot and the adapter
 //! producing identical allowlisted keys, row counts, null/presence bits,
 //! and per-field digests — arrive with the remaining Phase 6B work.
@@ -30,6 +33,11 @@
 //! bundled `rusqlite` driver is the crate's one external dependency, kept
 //! inside the adapter per docs/notes/crate-ownership.md rule 3.
 
+mod schema;
 mod store_connection;
 
+pub use schema::{
+    ALLOWED_TABLES, ALLOWED_VERSIONS, DetectError, PROJECTION_VERSION, SUPPORTED_FINGERPRINT,
+    SchemaDivergence, adapter_descriptor, detect,
+};
 pub use store_connection::{BUSY_TIMEOUT, StoreConnection, StoreOpenError};

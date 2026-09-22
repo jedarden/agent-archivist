@@ -15,8 +15,10 @@ archivist-adapter-sdk = { path = "../archivist-adapter-sdk" }
 # opens it with the same pinned, bundled driver the client state uses, so
 # one SQLite build serves both and the adapter never inherits the host's
 # library version (docs/notes/crate-ownership.md rule 3 keeps the
-# dependency inside this crate).
-rusqlite.workspace = true
+# dependency inside this crate). The `hooks` feature adds the driver's
+# authorizer callback, which the schema gate's metadata-only evidence
+# uses to prove detection reads no projected column.
+rusqlite = { workspace = true, features = ["hooks"] }
 
 [lints]
 workspace = true

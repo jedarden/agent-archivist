@@ -77,6 +77,12 @@ pub mod lifecycle;
 pub mod session_identity;
 pub mod status;
 
+// Re-exported so a source adapter — which depends on this SDK alone
+// (crate-ownership rule 3, pinned by the dependency-boundary test) — can
+// assemble its [`AdapterDescriptor`] from the protocol-typed identity
+// parts without a protocol edge of its own.
+pub use archivist_protocol::vocabulary::{AdapterId, VersionToken};
+
 pub use capability::{AdapterCapability, CapabilitySet, MAX_CAPABILITIES};
 pub use conformance::{
     CORPUS_RELATIVE, ConformanceAdapter, ConformanceSuite, CorpusError, GenerationContinuity,
