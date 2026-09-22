@@ -1020,9 +1020,8 @@ mod tests {
         match container {
             None => object.set(name, value),
             Some(container) => {
-                let mut inner = match object.remove(container) {
-                    Some(Value::Object(inner)) => inner,
-                    _ => panic!("baseline carries the {container} object"),
+                let Some(Value::Object(mut inner)) = object.remove(container) else {
+                    panic!("baseline carries the {container} object");
                 };
                 inner.set(name, value);
                 object.set(container, Value::Object(inner));
@@ -1040,18 +1039,16 @@ mod tests {
         };
         match container {
             None => {
-                if object.remove(name).is_none() {
-                    panic!("baseline carries {name}");
-                }
+                assert!(object.remove(name).is_some(), "baseline carries {name}");
             }
             Some(container) => {
-                let mut inner = match object.remove(container) {
-                    Some(Value::Object(inner)) => inner,
-                    _ => panic!("baseline carries the {container} object"),
+                let Some(Value::Object(mut inner)) = object.remove(container) else {
+                    panic!("baseline carries the {container} object");
                 };
-                if inner.remove(name).is_none() {
-                    panic!("baseline carries {container}.{name}");
-                }
+                assert!(
+                    inner.remove(name).is_some(),
+                    "baseline carries {container}.{name}"
+                );
                 object.set(container, Value::Object(inner));
             }
         }
@@ -1247,9 +1244,10 @@ mod tests {
         else {
             panic!("baseline record is an object");
         };
-        if object.remove("metadata").is_none() {
-            panic!("baseline carries metadata");
-        }
+        assert!(
+            object.remove("metadata").is_some(),
+            "baseline carries metadata"
+        );
         object.set("metadata", Value::Object(Object::new()));
         let mutated = Value::Object(object).canonical_bytes();
         assert_refused_at(&mutated, "metadata", "empty");
