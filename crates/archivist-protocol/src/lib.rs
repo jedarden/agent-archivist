@@ -28,6 +28,10 @@
 //!   reconstruction fold relies on — attempt boundaries, dense attempt and
 //!   event ordinals, and the exactly-one transport-error rule below the
 //!   decoded-content boundary.
+//! - [`attempt_reconstruction`] — the read-side fold over an ordered
+//!   artifact stream: independent attempt timelines, retry edges, usage,
+//!   stream prefixes, and explicit completed, transport-failed,
+//!   abandoned-mid-stream, or truncated terminal states.
 //! - [`derivation`] — the domain-separated, length-prefixed identity
 //!   constructions ([`schemas/v1/ingest-identifiers.json`], plan Section 7.4)
 //!   and the ingest-attempt signing preimage.
@@ -74,6 +78,7 @@
 //! [`schemas/v1/examples/inference`]: ../../../schemas/v1/examples/inference
 //! [`schemas/v1/inference-artifact.json`]: ../../../schemas/v1/inference-artifact.json
 
+pub mod attempt_reconstruction;
 pub mod attempt_sequence;
 pub mod correlation;
 pub mod derivation;

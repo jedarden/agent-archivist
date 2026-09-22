@@ -39,6 +39,54 @@ use archivist_protocol::vocabulary::{
 fn type_inventory() -> Vec<(&'static str, &'static str)> {
     vec![
         (
+            "attempt_reconstruction::AttemptOutcome",
+            type_name::<archivist_protocol::attempt_reconstruction::AttemptOutcome>(),
+        ),
+        (
+            "attempt_reconstruction::AttemptReconstruction",
+            type_name::<archivist_protocol::attempt_reconstruction::AttemptReconstruction>(),
+        ),
+        (
+            "attempt_reconstruction::AttemptTerminalState",
+            type_name::<archivist_protocol::attempt_reconstruction::AttemptTerminalState>(),
+        ),
+        (
+            "attempt_reconstruction::AttemptTransportError",
+            type_name::<archivist_protocol::attempt_reconstruction::AttemptTransportError>(),
+        ),
+        (
+            "attempt_reconstruction::InferenceReconstruction",
+            type_name::<archivist_protocol::attempt_reconstruction::InferenceReconstruction>(),
+        ),
+        (
+            "attempt_reconstruction::PartitionField",
+            type_name::<archivist_protocol::attempt_reconstruction::PartitionField>(),
+        ),
+        (
+            "attempt_reconstruction::PayloadRef",
+            type_name::<archivist_protocol::attempt_reconstruction::PayloadRef>(),
+        ),
+        (
+            "attempt_reconstruction::ReconstructionAnomaly",
+            type_name::<archivist_protocol::attempt_reconstruction::ReconstructionAnomaly>(),
+        ),
+        (
+            "attempt_reconstruction::ReconstructionError",
+            type_name::<archivist_protocol::attempt_reconstruction::ReconstructionError>(),
+        ),
+        (
+            "attempt_reconstruction::RetryTransition",
+            type_name::<archivist_protocol::attempt_reconstruction::RetryTransition>(),
+        ),
+        (
+            "attempt_reconstruction::StreamEventRef",
+            type_name::<archivist_protocol::attempt_reconstruction::StreamEventRef>(),
+        ),
+        (
+            "attempt_reconstruction::UsageObservation",
+            type_name::<archivist_protocol::attempt_reconstruction::UsageObservation>(),
+        ),
+        (
             "attempt_sequence::AttemptSequencer",
             type_name::<archivist_protocol::attempt_sequence::AttemptSequencer>(),
         ),
@@ -319,16 +367,17 @@ fn type_inventory() -> Vec<(&'static str, &'static str)> {
 
 /// Number of documented public types in [`type_inventory`]; the boundary gate
 /// cross-checks the literal against the source.
-const PUBLIC_TYPES: usize = 69;
+const PUBLIC_TYPES: usize = 81;
 
 /// Number of pinned signatures in [`function_inventory`]; the boundary gate
 /// cross-checks the literal against the source.
-const FREE_FUNCTIONS: usize = 17;
+const FREE_FUNCTIONS: usize = 18;
 
 /// The documented public free functions, each with its exact signature pinned
 /// by a function-pointer binding in [`pinned_signatures`].
 fn function_inventory() -> Vec<&'static str> {
     vec![
+        "attempt_reconstruction::reconstruct_inference",
         "correlation::mint_correlation_id",
         "correlation::mint_generation_id",
         "correlation::mint_inference_request_id",
@@ -359,6 +408,12 @@ fn function_inventory() -> Vec<&'static str> {
 // `no_effect_underscore_binding` fires on.
 #[allow(clippy::no_effect_underscore_binding)]
 fn pinned_signatures() {
+    let _reconstruct_inference: fn(
+        &[protocol::inference_artifact::InferenceArtifact],
+    ) -> Result<
+        protocol::attempt_reconstruction::InferenceReconstruction,
+        protocol::attempt_reconstruction::ReconstructionError,
+    > = protocol::attempt_reconstruction::reconstruct_inference;
     let _mint_trace_id: fn() -> protocol::vocabulary::TraceId =
         protocol::correlation::mint_trace_id;
     let _mint_correlation_id: fn() -> protocol::vocabulary::RequestId =
