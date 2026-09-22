@@ -700,7 +700,7 @@ mod tests {
         let first = &reconstruction.attempts()[0];
         assert_eq!(first.attempt_ordinal(), 0);
         assert_eq!(first.terminal_state(), AttemptTerminalState::Completed);
-        assert_eq!(first.response_complete(), true);
+        assert!(first.response_complete());
 
         let second = &reconstruction.attempts()[1];
         assert_eq!(second.attempt_ordinal(), 1);
