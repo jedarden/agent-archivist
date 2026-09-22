@@ -27,6 +27,12 @@
 //! - [`object_key`] — server-derived object keys assembled only from validated
 //!   identifiers, sharded digests, and the pinned storage profile (plan
 //!   Section 7.5).
+//! - [`inference_artifact`] — the exact-inference capture artifact of plan
+//!   Phase 9 (CAP-008; [`schemas/v1/inference-artifact.json`]): one typed
+//!   record per observed provider-boundary event, six closed kinds, the
+//!   closed metadata allowlist, and the capture-boundary rules carried
+//!   structurally (post-transfer-decoded payloads only, credentials
+//!   unrepresentable).
 //! - [`usage_summary`] — the derived usage-summary record of plan Phase 10
 //!   (token accounting): the deterministic derivation from an adapter
 //!   projection's reading of captured inference records to the canonical
@@ -49,17 +55,22 @@
 //!
 //! Phase 1 contract core: the envelope wire type, canonicalization,
 //! validation, identifier and object-key derivation, and the corpus-pinned
-//! tests of plan Sections 7.1 through 7.5 are implemented. Signing and
-//! signature verification live in `archivist-auth`; multipart framing,
-//! compression, and the occurrence/attestation durable records arrive with
-//! their owning phases.
+//! tests of plan Sections 7.1 through 7.5 are implemented. The plan Phase 9
+//! exact-inference capture artifact is implemented alongside it, pinned by
+//! the [`schemas/v1/examples/inference`] corpus. Signing and signature
+//! verification live in `archivist-auth`; multipart framing, compression,
+//! and the occurrence/attestation durable records arrive with their owning
+//! phases.
 //!
 //! [`schemas/v1/ingest-identifiers.json`]: ../../../schemas/v1/ingest-identifiers.json
 //! [`schemas/v1/examples/conformance`]: ../../../schemas/v1/examples/conformance
+//! [`schemas/v1/examples/inference`]: ../../../schemas/v1/examples/inference
+//! [`schemas/v1/inference-artifact.json`]: ../../../schemas/v1/inference-artifact.json
 
 pub mod correlation;
 pub mod derivation;
 pub mod envelope;
+pub mod inference_artifact;
 pub mod json;
 pub mod object_key;
 pub mod sha256;

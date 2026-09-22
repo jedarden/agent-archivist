@@ -738,6 +738,94 @@ closed_enum!(
         Ed25519 => "ed25519",
     }
 );
+closed_enum!(
+    /// Exact-inference artifact kind (`artifact_kind` of
+    /// [`schemas/v1/inference-artifact.json`]; plan Phase 9): which
+    /// provider-boundary event one record represents. Identity-bearing —
+    /// the kind is the interpretive frame for every other member, so an
+    /// unknown value fails closed.
+    ///
+    /// [`schemas/v1/inference-artifact.json`]: ../../../schemas/v1/inference-artifact.json
+    InferenceArtifactKind {
+        /// One decoded HTTP request body.
+        ProviderRequest => "provider-request",
+        /// One decoded HTTP response body.
+        ProviderResponse => "provider-response",
+        /// One ordered decoded event of a streamed attempt.
+        StreamingEvent => "streaming-event",
+        /// That a further transport attempt was started, and why.
+        Retry => "retry",
+        /// The bounded usage counters extracted from a response body or
+        /// stream event.
+        Usage => "usage",
+        /// A failure that produced no decodable provider response.
+        TransportError => "transport-error",
+    }
+);
+closed_enum!(
+    /// Why a retry was started (`retry_reason` of
+    /// [`schemas/v1/inference-artifact.json`]; plan Phase 9), classified
+    /// at the capture boundary. Provenance classification, not provider
+    /// content: an unknown value fails closed.
+    ///
+    /// [`schemas/v1/inference-artifact.json`]: ../../../schemas/v1/inference-artifact.json
+    RetryReason {
+        /// A decoded error status not classified as rate limiting.
+        HttpStatus => "http-status",
+        /// A decoded rate-limit rejection.
+        RateLimit => "rate-limit",
+        /// The prior attempt ended in a transport-error record.
+        TransportError => "transport-error",
+        /// The stream ended before a terminal event.
+        StreamIncomplete => "stream-incomplete",
+        /// A deadline the boundary enforces.
+        Timeout => "timeout",
+    }
+);
+closed_enum!(
+    /// Where a usage record's counters were extracted from
+    /// (`usage_source` of [`schemas/v1/inference-artifact.json`]; plan
+    /// Phase 9): fail-closed.
+    ///
+    /// [`schemas/v1/inference-artifact.json`]: ../../../schemas/v1/inference-artifact.json
+    UsageSource {
+        /// The decoded body of a non-streamed response.
+        ResponseBody => "response-body",
+        /// One decoded event of a streamed attempt.
+        StreamEvent => "stream-event",
+    }
+);
+closed_enum!(
+    /// Closed transport-failure classification (`error_class` of
+    /// [`schemas/v1/inference-artifact.json`]; plan Phase 9): the layer of
+    /// a failure that produced no decodable provider response. The class
+    /// names the layer and never carries the failure's bytes or text — no
+    /// free-text detail member exists, because error strings are a known
+    /// credential-leak route (plan Section 11).
+    ///
+    /// [`schemas/v1/inference-artifact.json`]: ../../../schemas/v1/inference-artifact.json
+    TransportErrorClass {
+        /// TCP connect failed.
+        Connect => "connect",
+        /// Name resolution failed.
+        Dns => "dns",
+        /// The TLS handshake failed.
+        TlsHandshake => "tls-handshake",
+        /// A read deadline elapsed.
+        ReadTimeout => "read-timeout",
+        /// A write deadline elapsed.
+        WriteTimeout => "write-timeout",
+        /// The connection was reset.
+        ConnectionReset => "connection-reset",
+        /// The decoded stream ended abnormally.
+        StreamInterrupted => "stream-interrupted",
+        /// The declared transfer or content encoding did not decode.
+        TransferDecode => "transfer-decode",
+        /// A counted residual for a failure the boundary could not
+        /// classify.
+        Other => "other",
+    }
+);
 
 #[cfg(test)]
 mod tests {
