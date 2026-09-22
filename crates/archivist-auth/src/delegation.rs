@@ -1123,7 +1123,13 @@ mod tests {
 
     #[test]
     fn an_authoritative_grant_verifies_at_its_own_pair_key() {
-        let envelope = grant_at(DelegationState::Active, &claude_code_only(), 1, None, GRANT_INSTANT);
+        let envelope = grant_at(
+            DelegationState::Active,
+            &claude_code_only(),
+            1,
+            None,
+            GRANT_INSTANT,
+        );
         let record = verify_fixture(&envelope).expect("the authority's grant verifies");
         assert_eq!(record.tenant_id(), &tenant());
         assert_eq!(record.relay_client_id(), &relay());
@@ -1137,7 +1143,13 @@ mod tests {
 
     #[test]
     fn a_record_served_at_a_swapped_pair_key_is_not_the_reverse_grant() {
-        let envelope = grant_at(DelegationState::Active, &claude_code_only(), 1, None, GRANT_INSTANT);
+        let envelope = grant_at(
+            DelegationState::Active,
+            &claude_code_only(),
+            1,
+            None,
+            GRANT_INSTANT,
+        );
         // The segments are order-sensitive: serving relay's grant at
         // (origin, relay) — the reverse grant's key — is a disagreement,
         // not a naming oddity.
@@ -1151,11 +1163,18 @@ mod tests {
         let foreign_tenant =
             TenantId::parse("4a6d1c90-8d24-4f67-a1b9-2c7d6e5f4a30").expect("fixture tenant");
         let foreign_root = PinnedAuthorityRoot::new(foreign_tenant, public_half(&AUTHORITY_SEED));
-        let envelope = grant_at(DelegationState::Active, &claude_code_only(), 1, None, GRANT_INSTANT);
+        let envelope = grant_at(
+            DelegationState::Active,
+            &claude_code_only(),
+            1,
+            None,
+            GRANT_INSTANT,
+        );
         // The envelope names the fixture tenant; a verifier pinned to
         // another tenant's root refuses it before the walk.
-        let error = DelegationRecord::verify(&foreign_root, &envelope, |_| None, &relay(), &origin())
-            .expect_err("a foreign tenant's root refuses the record");
+        let error =
+            DelegationRecord::verify(&foreign_root, &envelope, |_| None, &relay(), &origin())
+                .expect_err("a foreign tenant's root refuses the record");
         assert_eq!(error, DelegationError::RecordDisagreement);
     }
 
@@ -1163,7 +1182,12 @@ mod tests {
     fn a_self_delegation_record_is_not_a_shape_the_verifier_accepts() {
         // Hand-built, because publication refuses the shape: relay and
         // origin both the fixture relay.
-        let mut members = base_members(DelegationState::Active, &claude_code_only(), 1, GRANT_INSTANT);
+        let mut members = base_members(
+            DelegationState::Active,
+            &claude_code_only(),
+            1,
+            GRANT_INSTANT,
+        );
         members.set("origin_client_id", text(RELAY));
         let envelope = signed(&AUTHORITY_SEED, members);
         let error = DelegationRecord::verify(&root(), &envelope, |_| None, &relay(), &relay())
@@ -1176,25 +1200,41 @@ mod tests {
         // The same record the relay signed, naming the authority's key.
         // The named authority_key_id is unchanged, so the only evidence
         // is the signature itself — and it is not the signer's.
-        let members = base_members(DelegationState::Active, &claude_code_only(), 1, GRANT_INSTANT);
+        let members = base_members(
+            DelegationState::Active,
+            &claude_code_only(),
+            1,
+            GRANT_INSTANT,
+        );
         let relay_signed = signed(&RELAY_SEED, members);
-        let error = verify_fixture(&relay_signed).expect_err("a grant the relay signed is not a grant");
+        let error =
+            verify_fixture(&relay_signed).expect_err("a grant the relay signed is not a grant");
         assert_eq!(error, DelegationError::UntrustedAuthority);
     }
 
     #[test]
     fn an_unknown_state_token_fails_closed() {
-        let mut members = base_members(DelegationState::Active, &claude_code_only(), 1, GRANT_INSTANT);
+        let mut members = base_members(
+            DelegationState::Active,
+            &claude_code_only(),
+            1,
+            GRANT_INSTANT,
+        );
         members.set("delegation_state", text("paused"));
         let envelope = signed(&AUTHORITY_SEED, members);
-        let error = verify_fixture(&envelope)
-            .expect_err("an unknown state is never guessed into a grant");
+        let error =
+            verify_fixture(&envelope).expect_err("an unknown state is never guessed into a grant");
         assert_eq!(error, DelegationError::MalformedRecord);
     }
 
     #[test]
     fn an_extra_member_is_malformed_not_a_smuggled_payload() {
-        let mut members = base_members(DelegationState::Active, &claude_code_only(), 1, GRANT_INSTANT);
+        let mut members = base_members(
+            DelegationState::Active,
+            &claude_code_only(),
+            1,
+            GRANT_INSTANT,
+        );
         members.set("notes", text("widen everything"));
         let envelope = signed(&AUTHORITY_SEED, members);
         let error = verify_fixture(&envelope).expect_err("the closed shape has no notes member");
@@ -1205,7 +1245,12 @@ mod tests {
     fn scope_shape_violations_fail_closed() {
         // Duplicate harness tokens: uniqueItems is schema syntax, so a
         // duplicate is a shape violation, not a longer allowlist.
-        let mut members = base_members(DelegationState::Active, &claude_code_only(), 1, GRANT_INSTANT);
+        let mut members = base_members(
+            DelegationState::Active,
+            &claude_code_only(),
+            1,
+            GRANT_INSTANT,
+        );
         with_scopes(&mut members, |scopes| {
             scopes.set(
                 "harnesses",
@@ -1213,12 +1258,18 @@ mod tests {
             );
         });
         let envelope = signed(&AUTHORITY_SEED, members);
-        let error = verify_fixture(&envelope).expect_err("a duplicated token is not a second grant");
+        let error =
+            verify_fixture(&envelope).expect_err("a duplicated token is not a second grant");
         assert_eq!(error, DelegationError::MalformedRecord);
 
         // An operation token outside the closed enum: unknown scopes
         // fail closed.
-        let mut members = base_members(DelegationState::Active, &claude_code_only(), 1, GRANT_INSTANT);
+        let mut members = base_members(
+            DelegationState::Active,
+            &claude_code_only(),
+            1,
+            GRANT_INSTANT,
+        );
         with_scopes(&mut members, |scopes| {
             scopes.set(
                 "operations",
@@ -1231,7 +1282,12 @@ mod tests {
 
         // An empty harness allowlist: a grant that grants nothing is a
         // withdrawn record, never an active one with empty arrays.
-        let mut members = base_members(DelegationState::Active, &claude_code_only(), 1, GRANT_INSTANT);
+        let mut members = base_members(
+            DelegationState::Active,
+            &claude_code_only(),
+            1,
+            GRANT_INSTANT,
+        );
         with_scopes(&mut members, |scopes| {
             scopes.set("harnesses", Value::Array(vec![]));
         });
@@ -1242,7 +1298,12 @@ mod tests {
         // A harness token outside the common grammar: the grammar has
         // no wildcard and no uppercase, so a widened-token grant cannot
         // even be expressed.
-        let mut members = base_members(DelegationState::Active, &claude_code_only(), 1, GRANT_INSTANT);
+        let mut members = base_members(
+            DelegationState::Active,
+            &claude_code_only(),
+            1,
+            GRANT_INSTANT,
+        );
         with_scopes(&mut members, |scopes| {
             scopes.set("harnesses", Value::Array(vec![text("*")]));
         });
@@ -1253,16 +1314,26 @@ mod tests {
 
     #[test]
     fn a_zero_epoch_is_malformed_and_a_dead_calendar_instant_too() {
-        let mut members = base_members(DelegationState::Active, &claude_code_only(), 1, GRANT_INSTANT);
+        let mut members = base_members(
+            DelegationState::Active,
+            &claude_code_only(),
+            1,
+            GRANT_INSTANT,
+        );
         members.set("authorization_epoch", Value::Int(0));
         let envelope = signed(&AUTHORITY_SEED, members);
-        let error = verify_fixture(&envelope)
-            .expect_err("epoch zero was never established for any pair");
+        let error =
+            verify_fixture(&envelope).expect_err("epoch zero was never established for any pair");
         assert_eq!(error, DelegationError::MalformedRecord);
 
         // The grammar alone accepts an impossible date; the semantic
         // check refuses it.
-        let mut members = base_members(DelegationState::Active, &claude_code_only(), 1, GRANT_INSTANT);
+        let mut members = base_members(
+            DelegationState::Active,
+            &claude_code_only(),
+            1,
+            GRANT_INSTANT,
+        );
         members.set("signed_at", text("2026-02-30T00:00:00Z"));
         let envelope = signed(&AUTHORITY_SEED, members);
         let error = verify_fixture(&envelope).expect_err("February 30 never happened");
@@ -1357,12 +1428,23 @@ mod tests {
 
     #[test]
     fn withdrawal_publishes_the_next_epoch_with_inert_scopes() {
-        let grant = grant_at(DelegationState::Active, &claude_code_only(), 3, Some(2), GRANT_INSTANT);
+        let grant = grant_at(
+            DelegationState::Active,
+            &claude_code_only(),
+            3,
+            Some(2),
+            GRANT_INSTANT,
+        );
         let record = verify_fixture(&grant).expect("the grant verifies");
         assert_eq!(record.state(), DelegationState::Active);
 
-        let withdrawal =
-            grant_at(DelegationState::Withdrawn, &claude_code_only(), 4, Some(3), WITHDRAW_INSTANT);
+        let withdrawal = grant_at(
+            DelegationState::Withdrawn,
+            &claude_code_only(),
+            4,
+            Some(3),
+            WITHDRAW_INSTANT,
+        );
         let withdrawn = verify_fixture(&withdrawal).expect("the withdrawal verifies");
         assert_eq!(withdrawn.state(), DelegationState::Withdrawn);
         assert_eq!(withdrawn.epoch(), 4);
@@ -1405,7 +1487,13 @@ mod tests {
 
     #[test]
     fn an_authorized_relay_presents_the_origin_not_itself() {
-        let envelope = grant_at(DelegationState::Active, &claude_code_only(), 1, None, GRANT_INSTANT);
+        let envelope = grant_at(
+            DelegationState::Active,
+            &claude_code_only(),
+            1,
+            None,
+            GRANT_INSTANT,
+        );
         let record = verify_fixture(&envelope).expect("the grant verifies");
         let presented = record
             .authorize(&authorized_attempt(), &relay_scopes())
@@ -1418,7 +1506,13 @@ mod tests {
 
     #[test]
     fn every_dimension_of_the_conjunction_rejects_alone() {
-        let envelope = grant_at(DelegationState::Active, &claude_code_only(), 1, None, GRANT_INSTANT);
+        let envelope = grant_at(
+            DelegationState::Active,
+            &claude_code_only(),
+            1,
+            None,
+            GRANT_INSTANT,
+        );
         let record = verify_fixture(&envelope).expect("the grant verifies");
 
         // Cross-tenant: the grant is valid nowhere else.
@@ -1466,7 +1560,13 @@ mod tests {
             vec![ScopeOperation::Ingest],
         )
         .expect("fixture scopes");
-        let envelope = grant_at(DelegationState::Active, &both_harnesses, 2, Some(1), GRANT_INSTANT);
+        let envelope = grant_at(
+            DelegationState::Active,
+            &both_harnesses,
+            2,
+            Some(1),
+            GRANT_INSTANT,
+        );
         let record = verify_fixture(&envelope).expect("the grant verifies");
 
         // Widened past the relay's own allowlist: the grant names the
@@ -1486,7 +1586,13 @@ mod tests {
             vec![ScopeOperation::Ingest],
         )
         .expect("fixture relay scopes");
-        let envelope = grant_at(DelegationState::Active, &claude_code_only(), 3, Some(2), GRANT_INSTANT);
+        let envelope = grant_at(
+            DelegationState::Active,
+            &claude_code_only(),
+            3,
+            Some(2),
+            GRANT_INSTANT,
+        );
         let narrowed_grant = verify_fixture(&envelope).expect("the grant verifies");
         let rejection = narrowed_grant
             .authorize(&widened, &relay_codex)
@@ -1520,7 +1626,13 @@ mod tests {
             .expect("the revocation folds");
 
         // The grant is active and would accept the attempt alone.
-        let envelope = grant_at(DelegationState::Active, &claude_code_only(), 1, None, GRANT_INSTANT);
+        let envelope = grant_at(
+            DelegationState::Active,
+            &claude_code_only(),
+            1,
+            None,
+            GRANT_INSTANT,
+        );
         let record = verify_fixture(&envelope).expect("the grant verifies");
         record
             .authorize(&authorized_attempt(), &relay_scopes())
@@ -1603,14 +1715,11 @@ mod tests {
             let envelope = Value::Object(record.clone()).canonical_bytes();
             match text_member(entry, "expected").expect("pinned expectation") {
                 "accepted" => {
-                    let verified = DelegationRecord::verify(
-                        root,
-                        &envelope,
-                        |_| None,
-                        &relay(),
-                        &origin(),
-                    )
-                    .unwrap_or_else(|error| panic!("{name}: the accepted record verifies: {error}"));
+                    let verified =
+                        DelegationRecord::verify(root, &envelope, |_| None, &relay(), &origin())
+                            .unwrap_or_else(|error| {
+                                panic!("{name}: the accepted record verifies: {error}")
+                            });
                     assert_eq!(
                         verified.epoch(),
                         epoch_member(record).unwrap_or_else(|_| panic!("{name}: pinned epoch")),
@@ -1648,8 +1757,14 @@ mod tests {
                         assert_eq!(error, DelegationPublicationError::StaleEpoch);
                     }
                     "untrusted-signer" => {
-                        let error = DelegationRecord::verify(root, &envelope, |_| None, &relay(), &origin())
-                            .expect_err("{name}: the forged record is no grant");
+                        let error = DelegationRecord::verify(
+                            root,
+                            &envelope,
+                            |_| None,
+                            &relay(),
+                            &origin(),
+                        )
+                        .expect_err("{name}: the forged record is no grant");
                         assert_eq!(error, DelegationError::UntrustedAuthority, "{name}");
                     }
                     other => panic!("{name}: unexpected corpus reason {other}"),
