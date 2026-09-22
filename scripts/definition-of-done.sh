@@ -162,6 +162,13 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   run_check "cargo doc"            cargo doc --workspace --no-deps
   run_check "stub scan"            stub_scan
   run_check "crate graph"          python3 tools/check-crate-graph.py
+  # No-SDK-type boundary (plan Section 4; docs/notes/crate-ownership.md
+  # rules 1 and 6): the manifest half — archivist-protocol stays sealed,
+  # dependency-free — is the crate-graph check above; this is the source
+  # half: every public signature and re-export names only project-owned
+  # type paths, and the public API inventory test is complete and current.
+  # (--self-test replays every rejection path against fixture crates.)
+  run_check "protocol boundary"    python3 tools/check-protocol-boundary.py
   run_check "license gate"         python3 tools/check-licenses.py
   run_check "error-code registry"  python3 tools/check-error-codes.py --self-test
   # Metrics and telemetry registry (docs/notes/metrics.md): metric, span,
