@@ -7,9 +7,15 @@ Reads the committed manifests alone and verifies that:
    (the documented purpose the Phase 0 exit gate requires);
 2. every member has a doc-commented entry point (``lib.rs`` or ``main.rs``);
 3. every internal ``path`` dependency resolves to a workspace member whose
-   package name matches; and
+   package name matches;
 4. the internal dependency graph — normal, dev, and build dependencies alike —
-   is acyclic.
+   is acyclic; and
+5. every crate in ``SEALED_CRATES`` declares no dependency at all in any
+   dependency section — plain, dev, build, or target-qualified — so the wire
+   contract cannot grow a replaceable SDK shape (plan Section 4;
+   docs/notes/crate-ownership.md rule 1 and rule 6). Source-surface
+   enforcement of the same boundary lives in
+   ``tools/check-protocol-boundary.py``.
 
 On success it prints the crate layers implied by the graph and exits 0. Any
 failure prints a report on stderr and exits 2.
@@ -44,6 +50,27 @@ DOC_COMMENT_RE = re.compile(r"\A(?:[ \t]*(?://[^\n]*)?\n)*[ \t]*//!")
 
 DEPENDENCY_SECTIONS = ("dependencies", "dev-dependencies", "build-dependencies")
 
+# Crates whose manifests must stay dependency-free. archivist-protocol owns
+# the wire contract: any dependency — even a project-local one — would let a
+# third-party shape reach a public signature, so nothing may be declared in
+# any dependency section (docs/notes/crate-ownership.md rule 1). Unsealing a
+# crate is a deliberate boundary decision: change this table in the commit
+# that moves the boundary, with the plan section that authorises it.
+SEALED_CRATES = {
+    "archivist-protocol": (
+        "the no-SDK-type boundary (plan Section 4): the wire contract stays "
+        "dependency-free so no public type can expose a replaceable SDK shape"
+    ),
+}
+
+# One dependency entry: bare or quoted `name`, optionally dotted
+# (`name.workspace`), then the value to end of line. Multi-line inline tables
+# are joined by the caller.
+_DEP_ENTRY_RE = re.compile(
+    r'^(?P<name>"[A-Za-z_][A-Za-z0-9_-]*"|[A-Za-z_][A-Za-z0-9_-]*)'
+    r"\s*(?:\.[A-Za-z0-9_]+)?\s*=\s*(?P<value>.+)$"
+)
+
 
 def fail(message: str) -> None:
     print(f"error: {message}", file=sys.stderr)
@@ -63,6 +90,50 @@ def section(manifest: str, name: str) -> str:
         end = matches[index + 1].start() if index + 1 < len(matches) else len(manifest)
         return manifest[start:end]
     return ""
+
+
+def dependency_entries(manifest: str) -> list[tuple[str, str]]:
+    """Return every dependency entry as ``(name, value)`` for a manifest.
+
+    Covers ``[dependencies]``, ``[dev-dependencies]``, ``[build-dependencies]``,
+    target-qualified tables, and dotted dependency tables such as
+    ``[dependencies.foo]``. A value that opens an inline table it does not
+    close is joined with the following lines, so a multi-line ``{ ... }`` stays
+    one entry. Return-value comments and blank lines are ignored.
+    """
+    entries: list[tuple[str, str]] = []
+    in_dependency_section = False
+    open_name = ""
+    open_parts: list[str] = []
+    for raw_line in manifest.splitlines() + [""]:
+        line = raw_line.strip()
+        if open_name:
+            open_parts.append(line)
+            if line.count("}") >= line.count("{"):
+                entries.append((open_name, " ".join(open_parts)))
+                open_name = ""
+            continue
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("["):
+            header = line.strip("[]").strip()
+            in_dependency_section = any(
+                re.search(rf"(?:^|\.){re.escape(name)}(?:\.|$)", header)
+                for name in DEPENDENCY_SECTIONS
+            )
+            continue
+        if not in_dependency_section:
+            continue
+        match = _DEP_ENTRY_RE.match(line)
+        if not match:
+            continue
+        name = match.group("name").strip('"')
+        value = match.group("value")
+        if value.count("{") > value.count("}"):
+            open_name, open_parts = name, [value]
+            continue
+        entries.append((name, value))
+    return entries
 
 
 def workspace_members() -> list[Path]:
@@ -128,6 +199,15 @@ def load_crate(directory: Path) -> tuple[str, str, list[str]] | None:
                 return None
             dependencies.append(target_name)
 
+    if name in SEALED_CRATES:
+        for dep_name, value in dependency_entries(manifest):
+            fail(
+                f"{name} is sealed and must declare no dependencies "
+                f"({SEALED_CRATES[name]}); found `{dep_name} = "
+                f"{value[:60]}{'…' if len(value) > 60 else ''}`"
+            )
+            return None
+
     return name, description, dependencies
 
 
@@ -182,6 +262,9 @@ def main() -> int:
     print(f"agent-archivist crate graph: {len(graph)} members")
     if check_acyclic(graph, descriptions) is None:
         return 2
+    sealed = ", ".join(sorted(set(graph) & set(SEALED_CRATES)))
+    if sealed:
+        print(f"sealed (zero dependencies): {sealed}")
     print(f"OK: acyclic ({sum(len(deps) for deps in graph.values())} internal edges)")
     return 0
 
