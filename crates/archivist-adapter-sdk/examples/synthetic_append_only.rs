@@ -200,11 +200,11 @@ impl Scene {
     fn parse(name: &str) -> Option<Self> {
         SCENES.iter().copied().find(|scene| scene.account == name)
     }
+}
 
-    /// The source file of one snapshot directory.
-    fn source_path(&self, corpus: &Path, directory: &str) -> PathBuf {
-        corpus.join(directory).join(SOURCE_FILE_NAME)
-    }
+/// The source file of one snapshot directory.
+fn snapshot_path(corpus: &Path, directory: &str) -> PathBuf {
+    corpus.join(directory).join(SOURCE_FILE_NAME)
 }
 
 /// The synthetic append-only adapter: the SDK's interfaces implemented
@@ -386,7 +386,7 @@ fn main() -> ExitCode {
                 if scene_name != "complete-records" {
                     usage_error("only one scene may be given");
                 }
-                scene_name = other.to_owned();
+                other.clone_into(&mut scene_name);
             }
         }
     }
@@ -424,16 +424,16 @@ fn run(scene: &Scene, corpus: &Path) -> ExitCode {
     // The classifications capture never reads past: the status contract
     // carries the gap, and the demo's contract-total posture ends in
     // success, because reporting the gap *is* the adapter working.
-    if let Some(coverage) = report.classification.forced_coverage() {
-        if coverage != CoverageState::Unsupported {
-            emit_status(
-                &adapter.descriptor.adapter,
-                &adapter.account,
-                report.classification,
-            );
-            finish(&mut adapter);
-            return ExitCode::SUCCESS;
-        }
+    if let Some(coverage) = report.classification.forced_coverage()
+        && coverage != CoverageState::Unsupported
+    {
+        emit_status(
+            &adapter.descriptor.adapter,
+            &adapter.account,
+            report.classification,
+        );
+        finish(&mut adapter);
+        return ExitCode::SUCCESS;
     }
 
     // The source exists; run the capture passes over it.
@@ -465,7 +465,7 @@ fn capture_phase(
     projection: &VersionToken,
     allowlist: &FingerprintAllowlist,
 ) -> Result<CaptureSummary, ScanClassification> {
-    let bytes = read_snapshot(&scene.source_path(corpus, scene.directory))?;
+    let bytes = read_snapshot(&snapshot_path(corpus, scene.directory))?;
     let fingerprint =
         detect_fingerprint(&bytes).ok_or(ScanClassification::FingerprintUnsupported)?;
     println!("event=fingerprint detected={fingerprint}");
@@ -484,58 +484,55 @@ fn capture_phase(
     let mut sequence = 0;
     let mut cursor = CaptureCursor::new();
     let mut boundary = capture_pass(&mut cursor, &bytes, &generation, projection, &mut sequence);
-    let mut acknowledged = AcknowledgedSource::acknowledge(scene.identity, &bytes);
+    let acknowledged = AcknowledgedSource::acknowledge(scene.identity, &bytes);
     let mut final_bytes = bytes;
 
-    match scene.second {
-        // The scene models two observations of one source: the decision is
-        // continue-or-rotate exactly as a live adapter's would be.
-        Some((second_directory, second_identity)) => {
-            let second = read_snapshot(&scene.source_path(corpus, second_directory))?;
-            let fingerprint =
-                detect_fingerprint(&second).ok_or(ScanClassification::FingerprintUnsupported)?;
-            allowlist
-                .admit(&fingerprint)
-                .map_err(|denial| emit_denial(&denial))?;
-            let observation = SourceObservation::observe(second_identity, &second);
-            match detect_generation(&acknowledged, &observation) {
-                GenerationDecision::Continue => {
-                    println!(
-                        "event=generation-continued generation={}",
-                        generation.generation
-                    );
-                }
-                GenerationDecision::Rotated(opened) => {
-                    println!(
-                        "event=generation-opened cause={} generation={}",
-                        opened.cause, opened.generation
-                    );
-                    // Both histories are preserved; capture restarts at the
-                    // new generation's first complete record (AC-03). The
-                    // rotated acknowledgement lives inside the decision, so
-                    // nothing here re-acknowledges by hand.
-                    generation = opened;
-                    cursor = CaptureCursor::new();
-                    sequence = 0;
-                }
+    // The scene models two observations of one source: the decision is
+    // continue-or-rotate exactly as a live adapter's would be.
+    if let Some((second_directory, second_identity)) = scene.second {
+        let second = read_snapshot(&snapshot_path(corpus, second_directory))?;
+        let fingerprint =
+            detect_fingerprint(&second).ok_or(ScanClassification::FingerprintUnsupported)?;
+        allowlist
+            .admit(&fingerprint)
+            .map_err(|denial| emit_denial(&denial))?;
+        let observation = SourceObservation::observe(second_identity, &second);
+        match detect_generation(&acknowledged, &observation) {
+            GenerationDecision::Continue => {
+                println!(
+                    "event=generation-continued generation={}",
+                    generation.generation
+                );
             }
-            boundary = capture_pass(&mut cursor, &second, &generation, projection, &mut sequence);
-            final_bytes = second;
+            GenerationDecision::Rotated(opened) => {
+                println!(
+                    "event=generation-opened cause={} generation={}",
+                    opened.cause, opened.generation
+                );
+                // Both histories are preserved; capture restarts at the
+                // new generation's first complete record (AC-03). The
+                // rotated acknowledgement lives inside the decision, so
+                // nothing here re-acknowledges by hand.
+                generation = opened;
+                cursor = CaptureCursor::new();
+                sequence = 0;
+            }
         }
+        boundary = capture_pass(&mut cursor, &second, &generation, projection, &mut sequence);
+        final_bytes = second;
+    } else {
         // One snapshot: re-observing it must continue the generation. A
         // snapshot cannot rotate against its own acknowledgement.
-        None => {
-            let observation = SourceObservation::observe(scene.identity, &final_bytes);
-            match detect_generation(&acknowledged, &observation) {
-                GenerationDecision::Continue => {
-                    println!(
-                        "event=generation-continued generation={}",
-                        generation.generation
-                    );
-                }
-                GenerationDecision::Rotated(_) => {
-                    return Err(ScanClassification::ReadError);
-                }
+        let observation = SourceObservation::observe(scene.identity, &final_bytes);
+        match detect_generation(&acknowledged, &observation) {
+            GenerationDecision::Continue => {
+                println!(
+                    "event=generation-continued generation={}",
+                    generation.generation
+                );
+            }
+            GenerationDecision::Rotated(_) => {
+                return Err(ScanClassification::ReadError);
             }
         }
     }
@@ -755,9 +752,8 @@ fn read_snapshot(path: &Path) -> Result<Vec<u8>, ScanClassification> {
 fn detect_fingerprint(bytes: &[u8]) -> Option<SourceFingerprint> {
     let first = RecordBoundary::records(bytes).next()?;
     let value = json::parse(first).ok()?;
-    let object = match value {
-        Value::Object(object) => object,
-        _ => return None,
+    let Value::Object(object) = value else {
+        return None;
     };
     if object.get("schema") != Some(&Value::Int(1)) {
         return None;
@@ -823,8 +819,10 @@ fn default_corpus() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
-        .map(|workspace| workspace.join(CORPUS_RELATIVE))
-        .unwrap_or_else(|| PathBuf::from(CORPUS_RELATIVE))
+        .map_or_else(
+            || PathBuf::from(CORPUS_RELATIVE),
+            |workspace| workspace.join(CORPUS_RELATIVE),
+        )
 }
 
 /// A slice measurement widened into the byte-count domain, saturating.
