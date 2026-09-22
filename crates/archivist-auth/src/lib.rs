@@ -38,6 +38,11 @@
 //!   revocation record and linked-client pointer, the append-only
 //!   client trust view, the per-attempt fail-closed evaluation, and the
 //!   60-second propagation bound (EC-09).
+//! - [`delegation`] — the delegation record: the tenant-authority-signed
+//!   relay grant at the `(relay, origin)` pair key, verified through the
+//!   same authority chain, and the tenant/origin/harness/operation
+//!   conjunction decision whose authorized attempts present the origin,
+//!   never the relay.
 //! - [`error`] — the failure taxonomy; every variant names a class and
 //!   carries no path, value, or key material.
 //!
@@ -67,8 +72,10 @@
 //! (`schemas/v1/examples/control/authority-rotation-chain.json`).
 //! Runtime revocation enforcement — record verification, the
 //! append-only trust view, and per-attempt evaluation — is
-//! [`revocation`]. Per-attempt request signing, full linked-client and
-//! delegation records, rotation epochs, receipt signing keys, and
+//! [`revocation`], and origin/uploader delegation — the signed relay
+//! grant and the tenant/origin/harness/operation conjunction — is
+//! [`delegation`]. Per-attempt request signing, full linked-client
+//! records, rotation epochs, receipt signing keys, and
 //! receipt verification arrive with their owning deliverables on these
 //! same primitives.
 //!
@@ -81,6 +88,7 @@
 
 pub mod authority;
 pub mod consumption_policy;
+pub mod delegation;
 pub mod ed25519;
 pub mod error;
 pub mod identity;
