@@ -211,7 +211,7 @@ fn run_parent() {
                 "{story}: a golden run writes nothing to stderr (stdout: {})",
                 String::from_utf8_lossy(&output.stdout),
             );
-            assert_golden_stdout(scenario, &output.stdout);
+            assert_golden_stdout(*scenario, &output.stdout);
         }
     }
 }
@@ -220,7 +220,7 @@ fn run_parent() {
 /// document and a newline — the record itself in bare mode, the CLI
 /// output envelope with the record as its result under `--json` — and
 /// the framed record verifies from the pinned root.
-fn assert_golden_stdout(scenario: &Scenario, stdout: &[u8]) {
+fn assert_golden_stdout(scenario: Scenario, stdout: &[u8]) {
     let story = scenario.name();
     let framed = stdout
         .strip_suffix(b"\n")
