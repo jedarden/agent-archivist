@@ -52,4 +52,5 @@ pub mod config;
 pub mod control_admin;
 pub mod control_read;
 pub mod raw_write;
+pub mod request;
 pub mod scoped_write;

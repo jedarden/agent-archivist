@@ -89,3 +89,4 @@ mod random;
 pub mod reference;
 pub mod revocation;
 mod sha512;
+pub mod sigv4;

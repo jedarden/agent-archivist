@@ -13,6 +13,13 @@ repository.workspace = true
 archivist-auth = { path = "../archivist-auth" }
 archivist-protocol = { path = "../archivist-protocol" }
 archivist-storage = { path = "../archivist-storage" }
+bytes.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-rustls.workspace = true
+hyper-util.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

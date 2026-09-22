@@ -402,6 +402,85 @@ impl CredentialReference {
             Self::Env { .. } => CredentialKind::Env,
         }
     }
+
+    /// Resolve the referenced S3 credential document at composition time.
+    ///
+    /// The document contains exactly `ACCESS_KEY=...` and
+    /// `SECRET_KEY=...` lines. The returned pair is crate-private so the
+    /// resolved values cannot become part of the public configuration API;
+    /// request composition immediately hands them to the redacting auth
+    /// signer. A file reference is accepted only for a regular owner-only
+    /// file, and neither failure class carries the path, variable name, or
+    /// secret value.
+    pub(crate) fn resolve_s3_credentials(
+        &self,
+    ) -> Result<(String, String), CredentialResolutionError> {
+        let document = match self {
+            Self::File { path } => {
+                let metadata =
+                    std::fs::metadata(path).map_err(|_| CredentialResolutionError::Unavailable)?;
+                if !metadata.is_file() {
+                    return Err(CredentialResolutionError::Malformed);
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if metadata.permissions().mode() & 0o077 != 0 {
+                        return Err(CredentialResolutionError::Malformed);
+                    }
+                }
+                std::fs::read_to_string(path).map_err(|_| CredentialResolutionError::Unavailable)?
+            }
+            Self::Env { name } => {
+                std::env::var(name.as_ref()).map_err(|_| CredentialResolutionError::Unavailable)?
+            }
+        };
+        parse_s3_credential_document(&document)
+    }
+}
+
+/// The two content-free failure classes for composition-time credential
+/// resolution. This is crate-private deliberately: callers receive a
+/// constructor error, never a path or secret-bearing diagnostic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CredentialResolutionError {
+    /// The reference target could not be read.
+    Unavailable,
+    /// The target was readable but was not a valid credential document.
+    Malformed,
+}
+
+/// Parse one bounded `ACCESS_KEY`/`SECRET_KEY` credential document.
+fn parse_s3_credential_document(
+    document: &str,
+) -> Result<(String, String), CredentialResolutionError> {
+    const MAX_DOCUMENT_BYTES: usize = 4096;
+    const MAX_FIELD_BYTES: usize = 1024;
+    if document.is_empty() || document.len() > MAX_DOCUMENT_BYTES {
+        return Err(CredentialResolutionError::Malformed);
+    }
+    let mut access = None;
+    let mut secret = None;
+    for line in document.lines() {
+        let Some((name, value)) = line.split_once('=') else {
+            return Err(CredentialResolutionError::Malformed);
+        };
+        if value.is_empty()
+            || value.len() > MAX_FIELD_BYTES
+            || !value.bytes().all(|byte| (b'!'..=b'~').contains(&byte))
+        {
+            return Err(CredentialResolutionError::Malformed);
+        }
+        match name {
+            "ACCESS_KEY" if access.is_none() => access = Some(value.to_owned()),
+            "SECRET_KEY" if secret.is_none() => secret = Some(value.to_owned()),
+            _ => return Err(CredentialResolutionError::Malformed),
+        }
+    }
+    match (access, secret) {
+        (Some(access), Some(secret)) => Ok((access, secret)),
+        _ => Err(CredentialResolutionError::Malformed),
+    }
 }
 
 impl fmt::Debug for CredentialReference {
