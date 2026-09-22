@@ -149,17 +149,24 @@ and one of the two is wrong and must be fixed in the same commit.
 - **CFG-019** — Every key declares exactly one of a `default`,
   `required = true`, or `optional = true` — never more than one, never
   none. `optional = true` is the one way a key resolves to nothing when
-  absent from every tier, and only a secret reference may declare it
-  (CFG-028): any other type expresses optionality as a default, while a
-  secret is never defaulted, so an omitted credential role — the storage
-  raw-reader (STO-007 preflight) and offline-restore identities, for
-  example — would otherwise be inexpressible. Absent, the capability does
-  not exist and no failure is reported (CFG-020 is a required-key rule);
-  present, the reference validates by the ordinary rules (CFG-013,
-  CFG-029). Defaults live only in the registry; documentation, examples,
-  and code quote the registry and are not a second source. The gate is the
-  proof that the sentence "every key has a defined resolution" is true —
-  where resolution now includes the deliberate empty result.
+  absent from every tier, and only a capability a deployment may omit may
+  declare it. A secret reference declares it because any other type
+  expresses optionality as a default while a secret is never defaulted:
+  an omitted credential role — the storage raw-reader (STO-007 preflight)
+  and offline-restore identities, for example — would otherwise be
+  inexpressible. The `admin` section (CFG-005) declares it because it is
+  a whole surface a deployment omits: an ingest replica never configures
+  the offline administration surface, so a plain load demands nothing of
+  it, and the section's requiredness is enforced where the surface
+  exists — the administrator commands' composition gate refuses any act
+  whose administration settings resolved from no tier. Absent, the
+  capability does not exist and no failure is reported (CFG-020 is a
+  required-key rule); present, the key validates by the ordinary rules
+  (CFG-013, CFG-029). Defaults live only in the registry; documentation,
+  examples, and code quote the registry and are not a second source. The
+  gate is the proof that the sentence "every key has a defined
+  resolution" is true — where resolution now includes the deliberate
+  empty result.
 - **CFG-020** — A required key missing from every tier is a usage error: in
   non-interactive mode, exit 64 with `cli.decision_missing` naming the field;
   in interactive mode a non-secret required key **MAY** prompt. A secret

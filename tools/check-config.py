@@ -12,7 +12,10 @@ Validates ``tools/config-keys.toml`` against the conventions in
 3. every key is owned by a workspace crate, carries a closed type, a
    non-empty tier list that includes the file tier, and a bounded
    description and example; exactly one of a default, ``required``, or
-   (secret references only) ``optional`` is declared;
+   ``optional`` is declared — optionality is for a capability a deployment
+   may omit (a secret reference naming a credential role, or the offline
+   ``admin`` section whose requiredness the administrator commands'
+   composition gate enforces);
 4. integer keys carry a unit suffix (``_bytes``, ``_seconds``,
    ``_percent``, ``_count``, ``_ratio``) and defaults/examples respect the
    suffix bounds — there are no float values anywhere;
@@ -373,10 +376,17 @@ def validate_registry(registry: dict) -> list[str]:
             if secret and has_default:
                 errors.append(f"{what} is secret with a default; secrets "
                               "are required, never defaulted")
-            if has_optional and not secret:
-                errors.append(f"{what} declares optional but is not secret; "
-                              "optionality exists for credential "
-                              "references a deployment may omit")
+            admin_surface = isinstance(name, str) and \
+                name.split(".")[0] == "admin"
+            if has_optional and not (secret or admin_surface):
+                errors.append(f"{what} declares optional but is neither a "
+                              "secret reference nor an offline-administration "
+                              "key; optionality exists for capabilities a "
+                              "deployment may omit — a credential role an "
+                              "ingest replica does not hold, or the "
+                              "administration surface it never configures, "
+                              "whose requiredness the administrator "
+                              "commands' composition gate enforces")
 
         tiers = declared.get("tiers")
         if not isinstance(tiers, list) or not tiers:

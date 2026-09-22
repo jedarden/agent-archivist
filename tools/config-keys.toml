@@ -296,7 +296,14 @@ example = 10
 
 # ---------------------------------------------------------------------------
 # Offline administration surface (plan Section 5, Phase 3) — owners
-# archivist-storage-s3 (store assembly) and archivist-auth (authority seed)
+# archivist-storage-s3 (store assembly) and archivist-auth (authority seed).
+#
+# Every key in this section is optional or defaulted, never required: the
+# section is disjoint from the ingest surface by design (CFG-005), so an
+# ingest replica's configuration never carries administration material and
+# its load never demands any. Requiredness is enforced where the surface
+# exists — the administrator commands' composition gate refuses any act
+# whose administration settings resolved from no tier.
 # ---------------------------------------------------------------------------
 
 [keys."admin.endpoint_url"]
@@ -304,7 +311,7 @@ owner = "archivist-storage-s3"
 type = "string"
 tiers = ["flag", "env", "file"]
 secret = false
-required = true
+optional = true
 description = "S3-compatible endpoint URL of the control bucket the offline administration store reads and writes (plan Section 5)."
 example = "https://s3.example.invalid"
 
@@ -313,7 +320,7 @@ owner = "archivist-storage-s3"
 type = "string"
 tiers = ["flag", "env", "file"]
 secret = false
-required = true
+optional = true
 description = "Region string the administration endpoint expects."
 example = "us-east-1"
 
@@ -332,7 +339,7 @@ owner = "archivist-storage-s3"
 type = "string"
 tiers = ["flag", "env", "file"]
 secret = false
-required = true
+optional = true
 description = "Bucket for control-plane records below one tenant's control prefix; the administration credential's only write target (plan Section 5)."
 example = "archivist-control-example"
 
@@ -341,7 +348,7 @@ owner = "archivist-storage-s3"
 type = "string"
 tiers = ["flag", "env", "file"]
 secret = false
-required = true
+optional = true
 description = "The one tenant whose control prefix the administration credential provisions; canonical UUID grammar, and every record the store accepts belongs to it."
 example = "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b"
 
@@ -350,7 +357,7 @@ owner = "archivist-storage-s3"
 type = "reference"
 tiers = ["env", "file"]
 secret = true
-required = true
+optional = true
 description = "Reference to the dedicated control-administration credential: read-write below one tenant's control prefix and nothing else, never an ingest identity (plan Section 5)."
 example = "file:/etc/archivist/admin/credentials"
 
@@ -359,6 +366,6 @@ owner = "archivist-auth"
 type = "reference"
 tiers = ["env", "file"]
 secret = true
-required = true
+optional = true
 description = "Reference to the tenant authority's 32-byte Ed25519 signing seed; the private half every administrative signing act borrows (SEC-006)."
 example = "file:/etc/archivist/admin/authority-seed"

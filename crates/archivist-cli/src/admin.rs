@@ -100,9 +100,10 @@ impl<B> fmt::Debug for AdminControlPlane<B> {
 ///
 /// # Errors
 /// [`S3ConfigErrorKind::MissingSetting`] when a composition-required key
-/// did not resolve — unreachable while the registry marks those keys
-/// required, because the load itself fails first, and the guard stands for
-/// any future registry that makes them optional;
+/// did not resolve — the registry marks the administration section
+/// optional so an ingest replica's load never demands administration
+/// material (plan Section 5), and this composition gate is where the
+/// surface's requiredness is enforced;
 /// [`S3ConfigErrorKind::MalformedSetting`] when a resolved value is outside
 /// its closed grammar (endpoint, bucket, region bounds, tenant UUID,
 /// path-style or encryption token, credential-reference grammar);
@@ -190,9 +191,10 @@ fn ingest_config(resolved: &ResolvedConfig) -> Result<S3StorageConfig, S3ConfigE
     builder.build()
 }
 
-/// A required administration setting's text. The registry resolves these as
-/// required keys, so the load has already failed any host without them;
-/// this refusal stands for a future registry that makes them optional.
+/// A required administration setting's text. The registry marks the
+/// administration section optional so a plain load demands nothing of an
+/// ingest replica; this composition gate is where the surface's
+/// requiredness is enforced.
 fn required_admin_text<'a>(
     resolved: &'a ResolvedConfig,
     key: &str,

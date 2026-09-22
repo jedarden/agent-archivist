@@ -228,10 +228,13 @@ impl KeyDefinition {
         self.required
     }
 
-    /// Whether the key is an optional secret reference a deployment may
-    /// omit: neither required nor defaulted (CFG-019). Absent from every
-    /// tier it resolves to nothing; supplied, it validates like any
-    /// reference.
+    /// Whether the key is an optional key a deployment may omit: neither
+    /// required nor defaulted (CFG-019). Optionality is the secret
+    /// references naming credential roles a deployment does not hold, and
+    /// the offline-administration section an ingest replica never
+    /// configures — that surface's requiredness is enforced by the
+    /// administrator commands' composition gate. Absent from every tier
+    /// the key resolves to nothing; supplied, it validates like any other.
     #[must_use]
     pub const fn optional(&self) -> bool {
         self.optional
@@ -522,8 +525,14 @@ fn parse_key_entry(name: &str, table: &TomlTable) -> Result<KeyDefinition, &'sta
     if secret && flag_tier {
         return Err("a secret key never exposes a flag tier");
     }
-    if optional && !secret {
-        return Err("only a secret reference key may be optional");
+    // Optionality marks a capability a deployment may omit: a secret
+    // reference naming a credential role it does not hold, or the offline
+    // administration surface an ingest replica never configures — that
+    // surface's requiredness is enforced by the administrator commands'
+    // composition gate, not by a plain load (CFG-019, plan Section 5).
+    let administration_surface = name.starts_with("admin.");
+    if optional && !(secret || administration_surface) {
+        return Err("only a secret reference or an offline-administration key may be optional");
     }
     let key_type = match type_token {
         "boolean" => KeyType::Boolean,
@@ -723,6 +732,34 @@ mod tests {
             "storage.raw_read_credentials_ref",
             "storage.offline_restore_credentials_ref",
         ] {
+            let key = registry
+                .key(name)
+                .unwrap_or_else(|| panic!("{name} must be registered"));
+            assert!(key.secret() && key.optional() && !key.required());
+            assert!(!key.flag_tier());
+        }
+    }
+
+    /// The offline administration surface never rides an ingest load
+    /// (plan Section 5): every `admin.*` key is optional or defaulted, so
+    /// a replica's configuration carries no administration material and a
+    /// plain load demands none. The administrator commands enforce the
+    /// surface's requiredness at their own composition gate.
+    #[test]
+    fn the_administration_surface_is_never_demanded_of_an_ingest_load() {
+        let registry = config_registry();
+        for key in registry
+            .keys()
+            .iter()
+            .filter(|key| key.name().starts_with("admin."))
+        {
+            assert!(
+                !key.required(),
+                "{}: an administration key is optional or defaulted, never required",
+                key.name()
+            );
+        }
+        for name in ["admin.credentials_ref", "admin.authority_seed_ref"] {
             let key = registry
                 .key(name)
                 .unwrap_or_else(|| panic!("{name} must be registered"));
