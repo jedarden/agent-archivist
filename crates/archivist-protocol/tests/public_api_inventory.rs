@@ -33,6 +33,9 @@ use archivist_protocol::vocabulary::{
 };
 
 /// The documented public types: `(inventory path, resolved type name)`.
+// One entry per public type, four lines each by rustfmt; the length is the
+// inventory, not complexity.
+#[allow(clippy::too_many_lines)]
 fn type_inventory() -> Vec<(&'static str, &'static str)> {
     vec![
         (
@@ -446,6 +449,9 @@ fn free_functions_are_signed_and_inventoried() {
 }
 
 #[test]
+// Every wire value is pinned at full width below, so the function's length
+// tracks the constant inventory.
+#[allow(clippy::too_many_lines)]
 fn public_constants_pin_wire_values() {
     let inventory = constant_inventory();
     assert_eq!(
