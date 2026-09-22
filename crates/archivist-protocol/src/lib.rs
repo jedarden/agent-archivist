@@ -21,6 +21,13 @@
 //!   digest on the wire uses, owned here so the crate stays dependency-free.
 //! - [`correlation`] — `UUIDv7` trace, logical-inference, and provider-attempt
 //!   handles, with the lifecycle rules that keep their scopes distinct.
+//! - [`attempt_sequence`] — the capture-side sequencing layer over
+//!   [`inference_artifact`] (plan Phase 9): the per-inference state machine
+//!   that mints each transport attempt's identity, stamps every record with
+//!   it, orders retry transitions, and enforces the per-attempt shapes the
+//!   reconstruction fold relies on — attempt boundaries, dense attempt and
+//!   event ordinals, and the exactly-one transport-error rule below the
+//!   decoded-content boundary.
 //! - [`derivation`] — the domain-separated, length-prefixed identity
 //!   constructions ([`schemas/v1/ingest-identifiers.json`], plan Section 7.4)
 //!   and the ingest-attempt signing preimage.
@@ -67,6 +74,7 @@
 //! [`schemas/v1/examples/inference`]: ../../../schemas/v1/examples/inference
 //! [`schemas/v1/inference-artifact.json`]: ../../../schemas/v1/inference-artifact.json
 
+pub mod attempt_sequence;
 pub mod correlation;
 pub mod derivation;
 pub mod envelope;

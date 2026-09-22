@@ -39,6 +39,14 @@ use archivist_protocol::vocabulary::{
 fn type_inventory() -> Vec<(&'static str, &'static str)> {
     vec![
         (
+            "attempt_sequence::AttemptSequencer",
+            type_name::<archivist_protocol::attempt_sequence::AttemptSequencer>(),
+        ),
+        (
+            "attempt_sequence::SequenceError",
+            type_name::<archivist_protocol::attempt_sequence::SequenceError>(),
+        ),
+        (
             "correlation::CorrelationError",
             type_name::<archivist_protocol::correlation::CorrelationError>(),
         ),
@@ -311,7 +319,7 @@ fn type_inventory() -> Vec<(&'static str, &'static str)> {
 
 /// Number of documented public types in [`type_inventory`]; the boundary gate
 /// cross-checks the literal against the source.
-const PUBLIC_TYPES: usize = 67;
+const PUBLIC_TYPES: usize = 69;
 
 /// Number of pinned signatures in [`function_inventory`]; the boundary gate
 /// cross-checks the literal against the source.
