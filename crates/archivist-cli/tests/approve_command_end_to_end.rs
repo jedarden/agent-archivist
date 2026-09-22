@@ -27,6 +27,18 @@
 //! after the link's own instant, so a link signed 2020-01-01 is past its
 //! overlap at any real current instant and the signing window is closed
 //! deterministically forever.
+//!
+//! Two scenarios prove the ingest-credential boundary at the process
+//! level. A host whose ingest write role names the administration
+//! credential's target refuses at composition, before any store exists
+//! — the joint split check the command composition enforces
+//! (`cli.usage_error`, exit 64). A host that composes cleanly but whose
+//! seam models the ingest credential's deployment policy — read-write
+//! everywhere except the tenant control prefix, which is denied — is
+//! refused at every control-prefix request the store issues, the
+//! publication included, and no byte lands anywhere
+//! (`client.internal_error`, exit 70): the command surface fail-closes
+//! even when the deployment behind it is scoped wrong.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -48,7 +60,7 @@ use archivist_protocol::json::{self, Object, Value};
 use archivist_protocol::vocabulary::{
     ClientId, Ed25519PublicKey, Ed25519Signature, HarnessId, KeyId, TenantId, Timestamp,
 };
-use archivist_storage::error::StorageError;
+use archivist_storage::error::{StorageError, StorageErrorKind};
 use archivist_storage_s3::control_admin::{ControlAdminBackend, ControlObjectKey};
 
 // The deterministic story: the same fixture identifiers the control-admin
@@ -98,6 +110,14 @@ enum Scenario {
     WindowClosed,
     /// The client already linked at epoch 1: exit 80, empty stdout.
     StaleEpoch,
+    /// The ingest write role mapped onto the administration credential's
+    /// target: composition refuses before any store exists — exit 64,
+    /// empty stdout.
+    SplitRefusal,
+    /// A clean composition over a seam modeling the ingest credential's
+    /// deployment policy: every control-prefix request denied, nothing
+    /// landed — exit 70, empty stdout.
+    IngestScopeDenial,
 }
 
 const SCENARIOS: &[Scenario] = &[
@@ -106,6 +126,8 @@ const SCENARIOS: &[Scenario] = &[
     Scenario::Malformed,
     Scenario::WindowClosed,
     Scenario::StaleEpoch,
+    Scenario::SplitRefusal,
+    Scenario::IngestScopeDenial,
 ];
 
 impl Scenario {
@@ -116,6 +138,8 @@ impl Scenario {
             Self::Malformed => "malformed",
             Self::WindowClosed => "window-closed",
             Self::StaleEpoch => "stale-epoch",
+            Self::SplitRefusal => "split-refusal",
+            Self::IngestScopeDenial => "ingest-scope-denial",
         }
     }
 
@@ -145,6 +169,8 @@ impl Scenario {
             Self::Malformed => 65,
             Self::WindowClosed => 78,
             Self::StaleEpoch => 80,
+            Self::SplitRefusal => 64,
+            Self::IngestScopeDenial => 70,
         }
     }
 
@@ -156,6 +182,8 @@ impl Scenario {
             Self::Malformed => Some("envelope.malformed"),
             Self::WindowClosed => Some("auth.authorization_rejected"),
             Self::StaleEpoch => Some("storage.integrity_conflict"),
+            Self::SplitRefusal => Some("cli.usage_error"),
+            Self::IngestScopeDenial => Some("client.internal_error"),
         }
     }
 }
@@ -348,6 +376,9 @@ fn assert_linked_client_record(story: &str, record: &Value, root: &PinnedAuthori
 struct Fixture {
     root: std::path::PathBuf,
     draft: std::path::PathBuf,
+    /// The scenario the fixture was written for — the split-refusal
+    /// story's environment deliberately misdeclares one reference.
+    scenario: Scenario,
 }
 
 impl Fixture {
@@ -377,12 +408,18 @@ impl Fixture {
             Scenario::GoldenBare
             | Scenario::GoldenJson
             | Scenario::WindowClosed
-            | Scenario::StaleEpoch => link_draft(&tenant()),
+            | Scenario::StaleEpoch
+            | Scenario::SplitRefusal
+            | Scenario::IngestScopeDenial => link_draft(&tenant()),
         };
         let draft = root.join("link-request.json");
         std::fs::write(&draft, draft_bytes).expect("the draft bytes write");
 
-        Self { root, draft }
+        Self {
+            root,
+            draft,
+            scenario,
+        }
     }
 
     /// The fully-declared host environment, mirrored from the
@@ -393,7 +430,7 @@ impl Fixture {
     /// intact, and no scenario maps one credential onto the other's role.
     fn config_environment(&self) -> Vec<(String, String)> {
         let seed_ref = format!("file:{}", self.root.join("authority.seed").display());
-        vec![
+        let mut environment = vec![
             ("HOME".to_owned(), self.root.display().to_string()),
             (
                 "ARCHIVIST_INGEST_ENDPOINT_URL".to_owned(),
@@ -446,7 +483,18 @@ impl Fixture {
                 "env:TEST_ADMIN_CREDENTIAL".to_owned(),
             ),
             ("ARCHIVIST_ADMIN_AUTHORITY_SEED_REF".to_owned(), seed_ref),
-        ]
+        ];
+
+        // The split-refusal story's one misdeclaration: the ingest write
+        // role names the administration credential's target — the exact
+        // composition the joint check refuses before any store exists.
+        if matches!(self.scenario, Scenario::SplitRefusal) {
+            environment.push((
+                "ARCHIVIST_STORAGE_RAW_WRITE_CREDENTIALS_REF".to_owned(),
+                "env:TEST_ADMIN_CREDENTIAL".to_owned(),
+            ));
+        }
+        environment
     }
 }
 
@@ -497,6 +545,42 @@ fn run_child(scenario: Scenario) -> ! {
                 std::process::exit(SCENARIO_FAULT);
             }
         }
+        Scenario::SplitRefusal => {
+            // Composition refused before any store existed: no request
+            // reached the seam at all, refused or otherwise.
+            let untouched = seam().objects.lock().expect("test backend lock").is_empty();
+            if !untouched {
+                eprintln!("the split-refused run wrote to the store");
+                std::process::exit(SCENARIO_FAULT);
+            }
+        }
+        Scenario::IngestScopeDenial => {
+            // The boundary story: nothing landed anywhere, and the
+            // refusals happened at the seam — every denied key aimed at
+            // the control prefix, exactly where the ingest credential's
+            // policy denies.
+            let backend = seam();
+            let untouched = backend
+                .objects
+                .lock()
+                .expect("test backend lock")
+                .is_empty();
+            if !untouched {
+                eprintln!("a run over an ingest-scoped seam landed bytes");
+                std::process::exit(SCENARIO_FAULT);
+            }
+            let refusals = backend.refusals.lock().expect("test backend lock").clone();
+            if refusals.is_empty() {
+                eprintln!("the ingest-scoped policy refused nothing");
+                std::process::exit(SCENARIO_FAULT);
+            }
+            for key in refusals {
+                if !key.starts_with(&control_prefix()) {
+                    eprintln!("the policy refused {key}, which leaves the control prefix alone");
+                    std::process::exit(SCENARIO_FAULT);
+                }
+            }
+        }
     }
     std::process::exit(code);
 }
@@ -510,12 +594,65 @@ fn approve_handler(invocation: &Invocation) -> Result<Value, CliError> {
     archivist_cli::approve::run(invocation, seam())
 }
 
+/// The tenant control prefix the administration identity is provisioned
+/// for — and the one prefix an ingest-scoped deployment policy denies.
+fn control_prefix() -> String {
+    format!("tenants/{TENANT}/v1/control/")
+}
+
 /// The seam: map-backed, shared with the scenario through a clone so the
 /// child can seed chain state and inspect what the command wrote — the
-/// control-admin store's own publication-test pattern.
+/// control-admin store's own publication-test pattern. The seam also
+/// models the deployment policy a credential carries: the administration
+/// credential's profile grants the control prefix, and the ingest
+/// credential's profile denies every key below it, which is the refusal
+/// the `ingest-scope-denial` scenario runs the real command over.
 #[derive(Debug, Default, Clone)]
 struct MapBackend {
     objects: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+    /// Whether this seam's policy is the ingest credential's: every key
+    /// below the control prefix denied, everything else granted.
+    ingest_scoped: bool,
+    /// Every control-prefix key the policy refused, in request order —
+    /// the postcondition's record that the refusals happened at the seam
+    /// and aimed only at the control prefix.
+    refusals: Arc<Mutex<Vec<String>>>,
+}
+
+impl MapBackend {
+    /// The seam the `ingest-scope-denial` scenario runs over: the ingest
+    /// credential's deployment policy. The mock grants everything outside
+    /// the control prefix, so any out-of-prefix write the command
+    /// attempted would land bytes and be seen.
+    fn ingest_scoped() -> Self {
+        Self {
+            ingest_scoped: true,
+            ..Self::default()
+        }
+    }
+
+    /// The seam flavor the named scenario runs over.
+    fn for_scenario(scenario: Scenario) -> Self {
+        match scenario {
+            Scenario::IngestScopeDenial => Self::ingest_scoped(),
+            _ => Self::default(),
+        }
+    }
+
+    /// The deployment policy over one object key: the ingest credential's
+    /// profile denies the control prefix outright, with the refusal the
+    /// seam contract states for a key outside the credential's provisioned
+    /// scope.
+    fn policy_permits(&self, key: &str) -> Result<(), StorageError> {
+        if self.ingest_scoped && key.starts_with(&control_prefix()) {
+            self.refusals
+                .lock()
+                .expect("test backend lock")
+                .push(key.to_owned());
+            return Err(StorageError::of_kind(StorageErrorKind::ScopeViolation));
+        }
+        Ok(())
+    }
 }
 
 impl ControlAdminBackend for MapBackend {
@@ -523,6 +660,7 @@ impl ControlAdminBackend for MapBackend {
         &self,
         key: &ControlObjectKey,
     ) -> Result<Option<Vec<u8>>, StorageError> {
+        self.policy_permits(key.as_str())?;
         Ok(self
             .objects
             .lock()
@@ -536,6 +674,7 @@ impl ControlAdminBackend for MapBackend {
         key: &ControlObjectKey,
         envelope: &[u8],
     ) -> Result<(), StorageError> {
+        self.policy_permits(key.as_str())?;
         self.objects
             .lock()
             .expect("test backend lock")
@@ -545,11 +684,22 @@ impl ControlAdminBackend for MapBackend {
 }
 
 /// The process-global seam instance: the handler and the scenario's setup
-/// and postcondition checks all see the same map.
+/// and postcondition checks all see the same map, initialized to the
+/// flavor the parent named for this child.
 static SEAM: OnceLock<MapBackend> = OnceLock::new();
 
 fn seam() -> MapBackend {
-    SEAM.get_or_init(MapBackend::default).clone()
+    SEAM.get_or_init(|| MapBackend::for_scenario(current_scenario()))
+        .clone()
+}
+
+/// The scenario the parent named in the environment — the child's own
+/// dispatch, shared by the seam's initialization and the postconditions.
+fn current_scenario() -> Scenario {
+    Scenario::from_name(
+        &std::env::var(SCENARIO_ENV).expect("the parent names the child's scenario"),
+    )
+    .expect("the parent names a known scenario")
 }
 
 /// Seed the store with the rotation link that retires the pinned root's

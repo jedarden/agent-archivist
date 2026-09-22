@@ -821,10 +821,47 @@ mod tests {
 
     /// The backend seam: map-backed, shared with the test through a clone
     /// so the test seeds the standing pointer and inspects what the act
-    /// wrote.
+    /// wrote. The seam also models the deployment policy a credential
+    /// carries: the administration credential's profile grants the
+    /// control prefix, and the ingest credential's profile denies every
+    /// key below it.
     #[derive(Debug, Default, Clone)]
     struct ActBackend {
         objects: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+        /// Whether this seam's policy is the ingest credential's: every
+        /// key below the control prefix denied, everything else granted.
+        ingest_scoped: bool,
+        /// Every control-prefix key the policy refused, in request order.
+        refusals: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl ActBackend {
+        /// The seam an ingest-scoped credential drives: the deployment
+        /// policy denies the control prefix outright, and the mock grants
+        /// everything else, so any out-of-prefix write the act attempted
+        /// would land bytes and be seen.
+        fn ingest_scoped() -> Self {
+            Self {
+                ingest_scoped: true,
+                ..Self::default()
+            }
+        }
+
+        /// The deployment policy over one object key: the ingest
+        /// credential's profile denies the control prefix with the
+        /// refusal the seam contract states for a key outside the
+        /// credential's provisioned scope.
+        fn policy_permits(&self, key: &str) -> Result<(), StorageError> {
+            let prefix = format!("tenants/{TENANT}/v1/control/");
+            if self.ingest_scoped && key.starts_with(&prefix) {
+                self.refusals
+                    .lock()
+                    .expect("test backend lock")
+                    .push(key.to_owned());
+                return Err(StorageError::of_kind(StorageErrorKind::ScopeViolation));
+            }
+            Ok(())
+        }
     }
 
     impl ControlAdminBackend for ActBackend {
@@ -832,6 +869,7 @@ mod tests {
             &self,
             key: &ControlObjectKey,
         ) -> Result<Option<Vec<u8>>, StorageError> {
+            self.policy_permits(key.as_str())?;
             Ok(self
                 .objects
                 .lock()
@@ -845,6 +883,7 @@ mod tests {
             key: &ControlObjectKey,
             envelope: &[u8],
         ) -> Result<(), StorageError> {
+            self.policy_permits(key.as_str())?;
             self.objects
                 .lock()
                 .expect("test backend lock")
@@ -1367,6 +1406,21 @@ mod tests {
     /// enforces. This is the file the production entry's `--config`
     /// consumes.
     fn declared_host_config(seed_ref: &str) -> std::path::PathBuf {
+        declared_host_config_with_raw_write("env:TEST_RAW_CREDENTIAL", seed_ref)
+    }
+
+    /// The declared host with the ingest write role mapped onto the
+    /// administration credential's target — the one misdeclaration the
+    /// authority split refuses at composition, before any store exists.
+    fn declared_host_config_split(seed_ref: &str) -> std::path::PathBuf {
+        declared_host_config_with_raw_write("env:TEST_ADMIN_CREDENTIAL", seed_ref)
+    }
+
+    /// The host configuration body over one ingest write reference.
+    fn declared_host_config_with_raw_write(
+        raw_write_ref: &str,
+        seed_ref: &str,
+    ) -> std::path::PathBuf {
         let path = scratch_name("host-config");
         let body = format!(
             "[ingest]\n\
@@ -1377,7 +1431,7 @@ mod tests {
              encryption = \"s3_sse\"\n\
              raw_bucket = \"archivist-raw-example\"\n\
              control_bucket = \"archivist-control-example\"\n\
-             raw_write_credentials_ref = \"env:TEST_RAW_CREDENTIAL\"\n\
+             raw_write_credentials_ref = \"{raw_write_ref}\"\n\
              control_read_credentials_ref = \"env:TEST_CONTROL_CREDENTIAL\"\n\
              [server]\n\
              listen_address = \"127.0.0.1:8087\"\n\
@@ -1614,6 +1668,72 @@ mod tests {
         let objects = snapshot(&backend);
         assert_eq!(objects.len(), 1, "only the pointer is stored");
         assert!(objects.contains_key(&pointer_key()));
+    }
+
+    /// A deployment that mapped the ingest write role onto the
+    /// administration credential's target refuses at composition, through
+    /// the production entry and the usage family — the same authority-
+    /// split refusal the approve command surfaces, and nothing reaches
+    /// the seam at all.
+    #[test]
+    fn run_refuses_an_ingest_role_on_the_administration_credential_at_composition() {
+        let seed_ref = protected_seed_ref(&AUTHORITY_SEED);
+        let host_config = declared_host_config_split(&seed_ref);
+        let backend = ActBackend::default();
+        let draft_path = write_scratch("draft", &act_draft(1, &standing_half()), 0o600);
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+
+        let error = run(
+            &declared_invocation(&host_config, draft_operand),
+            backend.clone(),
+        )
+        .expect_err("the authority split refuses through the entry");
+        remove_seed_ref(&seed_ref);
+        remove_scratch(&draft_path);
+        remove_scratch(&host_config);
+
+        assert_eq!(error.code(), CliError::usage().code());
+        assert_eq!(error.exit_code(), 64);
+        assert!(snapshot(&backend).is_empty());
+    }
+
+    /// A seam modeling the ingest credential's deployment policy refuses
+    /// every control-prefix request: the production entry's pointer view
+    /// is the first refused read, the act fails closed before anything is
+    /// signed or written, and nothing lands anywhere — a control record
+    /// is not an ingest credential's to mutate.
+    #[test]
+    fn run_refuses_an_ingest_scoped_seam_before_any_byte_lands() {
+        let seed_ref = protected_seed_ref(&AUTHORITY_SEED);
+        let host_config = declared_host_config(&seed_ref);
+        let backend = ActBackend::ingest_scoped();
+        let draft_path = write_scratch("draft", &act_draft(1, &standing_half()), 0o600);
+        let draft_operand = draft_path.to_str().expect("utf-8 scratch path");
+
+        let error = run(
+            &declared_invocation(&host_config, draft_operand),
+            backend.clone(),
+        )
+        .expect_err("an ingest-scoped seam refuses the act");
+        remove_seed_ref(&seed_ref);
+        remove_scratch(&draft_path);
+        remove_scratch(&host_config);
+
+        assert_eq!(error.code(), CliError::internal().code());
+        assert_eq!(error.exit_code(), 70);
+        assert!(
+            snapshot(&backend).is_empty(),
+            "no byte lands under an ingest-scoped credential"
+        );
+        let refusals = backend.refusals.lock().expect("test backend lock").clone();
+        assert!(!refusals.is_empty(), "the refusals happened at the seam");
+        let prefix = format!("tenants/{TENANT}/v1/control/");
+        for key in refusals {
+            assert!(
+                key.starts_with(&prefix),
+                "{key} aimed outside the control prefix"
+            );
+        }
     }
 
     /// The const a result-schema member pins, as its text: the identity
