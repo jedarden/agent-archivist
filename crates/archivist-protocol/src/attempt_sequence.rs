@@ -284,9 +284,9 @@ impl AttemptSequencer {
     }
 
     /// Start the exchange's first transport attempt: a fresh
-    /// [`ProviderAttemptId`] with the dense ordinal `0`, minted by the
-    /// logical inference itself so the correlation semantics stay in one
-    /// place.
+    /// [`ProviderAttemptId`](crate::vocabulary::ProviderAttemptId) with
+    /// the dense ordinal `0`, minted by the logical inference itself so
+    /// the correlation semantics stay in one place.
     ///
     /// # Errors
     ///
@@ -672,8 +672,8 @@ mod tests {
         Timestamp::parse(TIME).expect("timestamp parses")
     }
 
-    fn metadata_with_status(status: u64) -> Option<Metadata> {
-        Some(Metadata {
+    fn metadata_with_status(status: u64) -> Metadata {
+        Metadata {
             content_type: Some("application/json".to_owned()),
             provider_request_id: None,
             http_status: Some(status),
@@ -683,7 +683,7 @@ mod tests {
             usage_input_tokens: None,
             usage_output_tokens: None,
             usage_total_tokens: None,
-        })
+        }
     }
 
     /// Every emitted record is a fixed point of the protocol's own
@@ -742,7 +742,7 @@ mod tests {
             sequencer
                 .provider_response(
                     b"{\"error\":\"rate_limited\"}",
-                    metadata_with_status(429),
+                    Some(metadata_with_status(429)),
                     Some(time()),
                 )
                 .expect("429 response"),
@@ -771,7 +771,7 @@ mod tests {
             sequencer
                 .provider_response(
                     b"{\"output\":\"hello\"}",
-                    metadata_with_status(200),
+                    Some(metadata_with_status(200)),
                     Some(time()),
                 )
                 .expect("200 response"),
@@ -793,19 +793,18 @@ mod tests {
         let mut seen_ordinals: Vec<u64> = Vec::new();
         let mut seen_ids: Vec<&ProviderAttemptId> = Vec::new();
         for artifact in &artifacts {
-            match seen_ordinals
+            if let Some(index) = seen_ordinals
                 .iter()
                 .position(|ordinal| *ordinal == artifact.attempt_ordinal)
             {
-                Some(index) => assert_eq!(
+                assert_eq!(
                     seen_ids[index], &artifact.provider_attempt_id,
                     "attempt {} must carry exactly one identity",
                     artifact.attempt_ordinal
-                ),
-                None => {
-                    seen_ordinals.push(artifact.attempt_ordinal);
-                    seen_ids.push(&artifact.provider_attempt_id);
-                }
+                );
+            } else {
+                seen_ordinals.push(artifact.attempt_ordinal);
+                seen_ids.push(&artifact.provider_attempt_id);
             }
         }
         assert_eq!(seen_ordinals.len(), 3, "three attempts, never merged");
@@ -879,12 +878,11 @@ mod tests {
     fn below_boundary_failure_yields_one_transport_error_and_no_decoded_payloads() {
         let mut sequencer = sequencer();
         let _first = sequencer.start_attempt().expect("first attempt");
-        let mut artifacts = Vec::new();
-        artifacts.push(
+        let mut artifacts = vec![
             sequencer
                 .provider_request(b"{\"model\":\"synthetic\"}", None, Some(time()))
                 .expect("request"),
-        );
+        ];
         artifacts.push(
             sequencer
                 .transport_error(TransportErrorClass::ReadTimeout, Some(30_000), Some(time()))
