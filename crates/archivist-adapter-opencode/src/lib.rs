@@ -28,7 +28,14 @@
 //! allowlisted projection and the parity oracle — the adapter producing
 //! records identical to the snapshot's allowlisted keys, row counts,
 //! null/presence bits, and per-field digests — arrive with the remaining
-//! Phase 6B work.
+//! Phase 6B work. The assembled-reader fault suite (`tests/
+//! database_faults.rs`) lands the "database-contention-faults" gate-row
+//! evidence: unknown schemas, locks held past the busy window, store bytes
+//! that vanish mid-scan, and permission denials all classify into the
+//! closed vocabulary without reading projected content, the harness's own
+//! writer commits through the reader's whole contention window, and
+//! hostile or oversized cells never reach a rendering surface
+//! (docs/security/threats/adapter-capture.md).
 //!
 //! # Dependency boundary
 //!
