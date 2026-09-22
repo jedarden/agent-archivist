@@ -351,10 +351,10 @@ fn has_divergent_version(conn: &Connection) -> Result<bool, DetectError> {
 ///
 /// # Panics
 ///
-/// Never in practice: every [`expect`] guards a literal against a
-/// grammar its own module defines — the fingerprint token and adapter id
-/// are valid by the token grammars, the capability token is in the
-/// closed set, and a one-element allowlist satisfies the set rules.
+/// Never in practice: every `expect` guards a literal against a grammar
+/// its own module defines — the fingerprint token and adapter id are
+/// valid by the token grammars, the capability token is in the closed
+/// set, and a one-element allowlist satisfies the set rules.
 #[must_use]
 pub fn adapter_descriptor() -> AdapterDescriptor {
     let fingerprints = FingerprintAllowlist::new([SourceFingerprint::parse(SUPPORTED_FINGERPRINT)

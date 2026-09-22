@@ -67,7 +67,7 @@ fn seed_store(dir: &Path, extra: &str) -> PathBuf {
     let writer = Connection::open(&path).expect("the seed store is creatable");
     writer
         .execute_batch(&format!(
-            r#"
+            r"
             CREATE TABLE session (
                 id TEXT PRIMARY KEY,
                 project_id TEXT,
@@ -155,7 +155,7 @@ fn seed_store(dir: &Path, extra: &str) -> PathBuf {
             );
             {SESSION_ROW};
             {extra}
-            "#
+            "
         ))
         .expect("the seed schema applies");
     drop(writer);
@@ -233,7 +233,7 @@ fn an_extra_column_fails_closed() {
     let scratch = Scratch::new("extra-column");
     let path = seed_store(
         scratch.path(),
-        r#"ALTER TABLE message ADD COLUMN overshare TEXT;"#,
+        r"ALTER TABLE message ADD COLUMN overshare TEXT;",
     );
 
     let result = detect(&read_only(&path));
