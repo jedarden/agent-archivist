@@ -343,6 +343,10 @@ fn function_inventory() -> Vec<&'static str> {
 /// build of this test, which is the inventory contract: signature changes are
 /// reviewed inventory changes. Keep these bindings in step with
 /// [`function_inventory`]; the boundary gate verifies the count literal.
+// The bindings ARE the assertion: each exists to be type-checked against its
+// function-pointer type and deliberately has no effect — exactly what
+// `no_effect_underscore_binding` fires on.
+#[allow(clippy::no_effect_underscore_binding)]
 fn pinned_signatures() {
     let _mint_trace_id: fn() -> protocol::vocabulary::TraceId =
         protocol::correlation::mint_trace_id;
