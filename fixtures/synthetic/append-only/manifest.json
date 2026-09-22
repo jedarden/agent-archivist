@@ -1,0 +1,108 @@
+{
+  "corpus_digest": "3693630538ee518cb511a4a63031d641908a018865df56cd71b939c704daa8e9",
+  "files": [
+    {
+      "bytes": 1727,
+      "path": "README.md",
+      "sha256": "b44bc369ff1fc4f5210b86870603a20adf5f962653f14679616b110b640d0887"
+    },
+    {
+      "bytes": 515,
+      "path": "complete-records/root/source.jsonl",
+      "sha256": "8cc8e822e7784abca8348c74c00ea3bf4009c180ce06cb18648c46acdd345d58"
+    },
+    {
+      "bytes": 820,
+      "path": "growth/after/source.jsonl",
+      "sha256": "1a957b94d7ba1e151db561e911b5f112714beb21d268871a672c1c9fb441062d"
+    },
+    {
+      "bytes": 549,
+      "path": "growth/before/source.jsonl",
+      "sha256": "79c2ba97fe18d595ca3fc8613a2b2a0c92e327c4e98934404b891aa975dacaa9"
+    },
+    {
+      "bytes": 199,
+      "path": "missing-root/README.md",
+      "sha256": "ffccd8b5b5fab7ccada2629657f951a3496ff07f27edf5971928c1eb298351e6"
+    },
+    {
+      "bytes": 512,
+      "path": "partial-tail/root/source.jsonl",
+      "sha256": "0d650215f2f121c49fd938fe9d5bf6f3d2bf12a18b544e106e547fad1676c4fd"
+    },
+    {
+      "bytes": 531,
+      "path": "permissions/root/source.jsonl",
+      "sha256": "f377167d233a563d8125c63d5784a2b6728b1f13d3f9d7a07d8c03ef8f04edf6"
+    },
+    {
+      "bytes": 529,
+      "path": "replacement/new/source.jsonl",
+      "sha256": "5a20aa781f5bd7ab67445d643746df6561ac8ba15db2fbef6e446c283d0fc7f8"
+    },
+    {
+      "bytes": 522,
+      "path": "replacement/old/source.jsonl",
+      "sha256": "0600a73b456e93179e0b2bc314ed2c576cb8e48cc2dd1909bb1cd9edbe96b73b"
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "complete-records",
+      "kind": "complete",
+      "root": "complete-records/root",
+      "files": [
+        "complete-records/root/source.jsonl"
+      ]
+    },
+    {
+      "name": "partial-tail",
+      "kind": "torn-final-line",
+      "root": "partial-tail/root",
+      "files": [
+        "partial-tail/root/source.jsonl"
+      ]
+    },
+    {
+      "name": "growth",
+      "kind": "append-pair",
+      "roots": {
+        "before": "growth/before",
+        "after": "growth/after"
+      },
+      "files": [
+        "growth/before/source.jsonl",
+        "growth/after/source.jsonl"
+      ]
+    },
+    {
+      "name": "replacement",
+      "kind": "root-swap",
+      "roots": {
+        "old": "replacement/old",
+        "new": "replacement/new"
+      },
+      "files": [
+        "replacement/old/source.jsonl",
+        "replacement/new/source.jsonl"
+      ]
+    },
+    {
+      "name": "permissions",
+      "kind": "normal-readable-source",
+      "root": "permissions/root",
+      "files": [
+        "permissions/root/source.jsonl"
+      ]
+    },
+    {
+      "name": "missing-root",
+      "kind": "absent-root",
+      "root": "missing-root/root",
+      "files": []
+    }
+  ],
+  "schema": "archivist.synthetic-append-only/v1",
+  "seed": "archivist-phase6d-append-only-2026-09-22"
+}

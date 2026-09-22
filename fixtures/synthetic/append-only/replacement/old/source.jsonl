@@ -1,0 +1,4 @@
+{"id":"00000000-0000-4000-8000-000000000301","schema":1,"ts":"2026-06-04T13:00:00Z","type":"session_start"}
+{"id":"00000000-0000-4000-8000-000000000302","role":"user","text":"the old grove holds a steady shape","ts":"2026-06-04T13:00:01Z","type":"user"}
+{"id":"00000000-0000-4000-8000-000000000303","role":"assistant","text":"the old signal remains complete","ts":"2026-06-04T13:00:02Z","type":"assistant"}
+{"id":"00000000-0000-4000-8000-000000000304","reason":"complete","ts":"2026-06-04T13:00:03Z","type":"session_end"}

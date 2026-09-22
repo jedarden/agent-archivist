@@ -84,6 +84,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CANONICAL_OUTPUT = ROOT / "fixtures" / "synthetic"
 MANIFEST_NAME = "manifest.json"
+# The Phase 6D append-only corpus has its own generator and manifest.  Keep it
+# as a sibling of this Phase 0 corpus without making the older verifier treat
+# its adapter-agnostic files as unregistered legacy fixtures.
+SEPARATE_CORPUS_DIRS = frozenset({"append-only"})
 
 # Corpus identity. Bumping the schema string is a corpus-format version
 # event: regenerate and commit corpus + manifest + code together.
@@ -863,7 +867,9 @@ def cmd_verify(args: argparse.Namespace) -> int:
     for path in sorted(
         p.relative_to(corpus_dir).as_posix()
         for p in corpus_dir.rglob("*")
-        if p.is_file() and p.name != MANIFEST_NAME
+        if p.is_file()
+        and p.name != MANIFEST_NAME
+        and p.relative_to(corpus_dir).parts[0] not in SEPARATE_CORPUS_DIRS
     ):
         disk_files[path] = (corpus_dir / path).read_bytes()
 

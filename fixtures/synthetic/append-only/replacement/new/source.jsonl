@@ -1,0 +1,4 @@
+{"id":"00000000-0000-4000-8000-000000000401","schema":1,"ts":"2026-06-04T14:00:00Z","type":"session_start"}
+{"id":"00000000-0000-4000-8000-000000000402","role":"user","text":"the new grove opens a different path","ts":"2026-06-04T14:00:01Z","type":"user"}
+{"id":"00000000-0000-4000-8000-000000000403","role":"assistant","text":"the new signal starts a fresh record","ts":"2026-06-04T14:00:02Z","type":"assistant"}
+{"id":"00000000-0000-4000-8000-000000000404","reason":"complete","ts":"2026-06-04T14:00:03Z","type":"session_end"}
