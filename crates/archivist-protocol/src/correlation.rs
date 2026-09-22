@@ -23,7 +23,7 @@ use std::io::Read;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::vocabulary::{InferenceRequestId, ProviderAttemptId, RequestId, TraceId};
+use crate::vocabulary::{GenerationId, InferenceRequestId, ProviderAttemptId, RequestId, TraceId};
 
 /// The largest attempt ordinal representable by the protocol's `u63` wire
 /// shape.
@@ -214,6 +214,24 @@ pub fn mint_correlation_id() -> RequestId {
         .unwrap_or_else(|_| panic!("minted correlation id is not canonical UUIDv7"))
 }
 
+/// Mint a `UUIDv7` source-generation identity: the fresh generation a
+/// source adapter opens when a detected discontinuity — replacement,
+/// truncation, rewind, incompatible rewrite, tail mismatch, or digest
+/// change — closes the previous one (SID-003; plan `EC-02`). The identity
+/// is frozen at detection, minted exactly once and never re-derived from
+/// content, so two rotations of the same cause are still distinct
+/// generations and both histories stay separable.
+///
+/// # Panics
+/// Never in practice: the minted text is constructed in canonical form and
+/// re-validated through the protocol's own grammar as a belt-and-braces
+/// check.
+#[must_use]
+pub fn mint_generation_id() -> GenerationId {
+    let text = mint_uuid_v7_text();
+    parse_minted("generation_id", &text, GenerationId::parse)
+}
+
 fn parse_minted<T>(
     name: &str,
     text: &str,
@@ -298,11 +316,13 @@ mod tests {
         let request = mint_inference_request_id();
         let attempt = mint_provider_attempt_id();
         let correlation = mint_correlation_id();
+        let generation = mint_generation_id();
         for text in [
             trace.as_str(),
             request.as_str(),
             attempt.as_str(),
             correlation.as_str(),
+            generation.as_str(),
         ] {
             assert_eq!(text.len(), 36);
             assert_eq!(text.as_bytes()[14], b'7');
@@ -317,6 +337,9 @@ mod tests {
         assert_ne!(trace.as_str(), attempt.as_str());
         // Each minted correlation id is fresh: two calls never share one.
         assert_ne!(correlation.as_str(), mint_correlation_id().as_str());
+        // Each minted generation id is fresh too: two rotations of the
+        // same cause are still distinct generations.
+        assert_ne!(generation.as_str(), mint_generation_id().as_str());
     }
 
     #[test]

@@ -35,6 +35,11 @@
 //! - [`file_capture`]: the file-source capture core's complete-JSONL
 //!   boundary selection (CAP-003, plan `EC-01`): the torn tail is
 //!   measured, never captured, and re-measured on the next pass (AC-02).
+//! - [`file_generation`]: the file-source capture core's generation
+//!   detection (plan Phase 6A, CAP-005, `SID-003`, plan `EC-02`): a
+//!   discontinuity closes the acknowledged generation and opens a new
+//!   `UUIDv7` one with the cause frozen at detection, preserving both
+//!   histories (AC-03).
 //!
 //! The synthetic adapter example and the conformance suite that hold
 //! community adapters to these contracts are the Phase 6D work that
@@ -53,6 +58,7 @@ pub mod descriptor;
 pub mod discovery;
 pub mod expected_inference;
 pub mod file_capture;
+pub mod file_generation;
 pub mod fingerprint;
 pub mod lifecycle;
 pub mod status;
@@ -68,6 +74,10 @@ pub use expected_inference::{
     InferenceIdentity, IntegrationFailure, LedgerError, ObservedArtifact, RoutePolicy,
 };
 pub use file_capture::{CaptureCursor, CaptureCursorError, PassOutcome, RecordBoundary};
+pub use file_generation::{
+    AcknowledgedSource, AcknowledgedSourceError, FileGenerationTracker, FileIdentity,
+    GenerationDecision, SourceObservation, detect_generation,
+};
 pub use fingerprint::{
     FingerprintAllowlist, FingerprintError, MAX_FINGERPRINTS, SourceFingerprint,
     UnsupportedFingerprint, unsupported_report,
