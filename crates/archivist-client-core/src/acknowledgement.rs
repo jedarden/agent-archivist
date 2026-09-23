@@ -840,6 +840,7 @@ mod tests {
         Value::Text(value.to_owned())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn signed_receipt(
         signer: &CertifiedReceiptKey,
         tenant: &TenantId,
@@ -882,6 +883,7 @@ mod tests {
             .canonical_bytes()
     }
 
+    #[allow(clippy::too_many_lines)]
     fn fixture() -> (
         TempDir,
         Spool,
@@ -1037,6 +1039,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn receipt_acknowledgement_is_atomic_and_cleans_up_after_commit() {
         let (temp, spool, mut store, root, signer, receipt, request_id, bundle_name) = fixture();
         let bad_blob =
