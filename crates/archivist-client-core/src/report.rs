@@ -202,7 +202,7 @@ fn live_spool_bytes(conn: &Connection) -> Result<u64, StateError> {
         rusqlite::params![STATE_ACKNOWLEDGED],
         |row| row.get::<_, i64>(0),
     )
-    .map(|sum| counted(sum))
+    .map(counted)
     .map_err(|_| read_failed())
 }
 
@@ -410,13 +410,12 @@ pub fn verification_report(
 /// materializations a reconciliation pass removes, not bundles, and
 /// non-UTF-8 or unstatable entries are not canonical bundle names.
 fn orphan_bundle_files(spool_dir: &Path, known: &HashSet<String>) -> u64 {
-    let entries = match std::fs::read_dir(spool_dir) {
-        Ok(entries) => entries,
-        Err(_) => return 0,
+    let Ok(entries) = std::fs::read_dir(spool_dir) else {
+        return 0;
     };
     let mut orphans = 0u64;
     for entry in entries.flatten() {
-        let is_file = entry.file_type().map_or(false, |kind| kind.is_file());
+        let is_file = entry.file_type().is_ok_and(|kind| kind.is_file());
         if !is_file {
             continue;
         }

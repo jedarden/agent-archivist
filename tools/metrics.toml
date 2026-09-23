@@ -44,6 +44,7 @@ values = [
   "transport.connection_failed", "transport.response_lost", "cli.usage_error", "cli.decision_missing",
   "client.lock_held", "client.spool_high_water", "client.state_io", "client.state_corrupt",
   "client.clock_skew", "client.secret_ref_refused", "client.internal_error",
+  "client.permissions", "client.disk_floor", "client.source_unreadable",
 ]
 description = "Stable archivist.error/v1 code (ERR-032); the only error-derived label value, pinned equal to tools/error-codes.toml."
 

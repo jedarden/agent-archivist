@@ -5,7 +5,7 @@
 //! The doctor deliberately does not reuse mutator helpers such as
 //! [`crate::state::lock::StateDirLock::acquire`] or [`crate::spool::Spool::open`]:
 //! both of those are allowed to create state on behalf of a mutator.  The
-//! examination uses metadata, a read-only SQLite snapshot, a no-create lock
+//! examination uses metadata, a read-only `SQLite` snapshot, a no-create lock
 //! probe, and a filesystem statistics call instead.  The caller supplies the
 //! result of the one server-readiness request so this crate stays independent
 //! of a transport implementation.
@@ -18,7 +18,7 @@
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use archivist_adapter_sdk::status::{ScanClassification, SourceScan};
 use archivist_protocol::json::{Object, Value};
@@ -28,7 +28,7 @@ use rusqlite::Connection;
 use crate::config::ResolvedConfig;
 use crate::spool::SPOOL_DIR_NAME;
 use crate::state::lock::LOCK_FILE_NAME;
-use crate::state::{LATEST_SCHEMA_VERSION, STATE_DB_NAME, StateSnapshot};
+use crate::state::{IntegrityReport, LATEST_SCHEMA_VERSION, STATE_DB_NAME, StateSnapshot};
 
 /// The plan's five-minute allowance for a local clock that is ahead of the
 /// freshest durable event.
@@ -41,7 +41,7 @@ pub enum Finding {
     /// A state directory or state file has an unsafe mode, or the lock probe
     /// could not be completed safely.
     Permissions,
-    /// SQLite integrity, foreign-key, schema-object, or migration-version
+    /// `SQLite` integrity, foreign-key, schema-object, or migration-version
     /// evidence is not healthy.
     SqliteIntegrity,
     /// An adapter scan or persisted adapter-health record says a source is
@@ -73,7 +73,7 @@ impl Finding {
     }
 }
 
-/// A failure opening or examining the local SQLite file before a useful
+/// A failure opening or examining the local `SQLite` file before a useful
 /// report can be composed.  The error intentionally contains no path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DoctorError {
@@ -303,13 +303,126 @@ impl Evidence {
 /// # Errors
 /// Returns [`DoctorError::StateUnavailable`] when the state directory or
 /// database cannot be opened read-only. Corruption that can be represented by
-/// SQLite's read-only checks becomes a [`Finding::SqliteIntegrity`] instead.
+/// `SQLite`'s read-only checks becomes a [`Finding::SqliteIntegrity`] instead.
 pub fn inspect(
     config: &ResolvedConfig,
     scans: &[SourceScan],
     server_ready: bool,
     generated_at: &Timestamp,
 ) -> Result<DoctorResult, DoctorError> {
+    let state = open_read_only_state(config)?;
+    let schema_version = state.snapshot.schema_version().unwrap_or(0);
+
+    let spool_path = state.state_dir.join(SPOOL_DIR_NAME);
+    let spool_metadata = fs::metadata(&spool_path).ok();
+    let spool_mode = spool_metadata.as_ref().map(mode_literal);
+    let lock_path = state.state_dir.join(LOCK_FILE_NAME);
+    let lock_metadata = fs::metadata(&lock_path).ok();
+    let lock_mode = lock_metadata.as_ref().map(mode_literal);
+
+    let mut findings = Vec::new();
+    let lock = match probe_lock(&lock_path) {
+        Ok(lock) => lock,
+        Err(ProbeError::Permission | ProbeError::Unavailable) => {
+            findings.push(Finding::Permissions);
+            "free"
+        }
+    };
+
+    if !modes_are_safe(
+        &state.state_dir_metadata,
+        &state.database_metadata,
+        spool_metadata.as_ref(),
+        &spool_path,
+        lock_metadata.as_ref(),
+    ) {
+        findings.push(Finding::Permissions);
+    }
+
+    let version_ok = schema_version == LATEST_SCHEMA_VERSION;
+    if !state.integrity.healthy() || !version_ok {
+        findings.push(Finding::SqliteIntegrity);
+    }
+
+    let enrolled_sources =
+        query_u64(state.snapshot.connection(), "SELECT COUNT(*) FROM sources").unwrap_or(0);
+    let receipt_count = query_u64(
+        state.snapshot.connection(),
+        "SELECT COUNT(*) FROM receipts WHERE signature_verified = 1",
+    )
+    .unwrap_or(0);
+    let adapter_unhealthy = query_u64(
+        state.snapshot.connection(),
+        "SELECT COUNT(*) FROM adapter_health WHERE health_state != 'healthy'",
+    )
+    .unwrap_or(0);
+
+    let (scanned_sources, unreadable_sources) = scan_counts(scans, adapter_unhealthy);
+    if unreadable_sources > 0 {
+        findings.push(Finding::SourceReadability);
+    }
+
+    let free_bytes = free_space_bytes(&state.state_dir).unwrap_or(0);
+    let free_floor_bytes = u64::try_from(config.spool_free_floor_bytes()).unwrap_or(u64::MAX);
+    if free_bytes < free_floor_bytes {
+        findings.push(Finding::SpoolSpace);
+    }
+
+    let freshest_event_at = freshest_event(state.snapshot.connection());
+    let clock_ok = freshest_event_at
+        .as_deref()
+        .and_then(|text| Timestamp::parse(text).ok())
+        .and_then(|timestamp| unix_seconds(&timestamp))
+        .zip(unix_seconds(generated_at))
+        .is_none_or(|(event, now)| event <= now.saturating_add(CLOCK_SKEW_ALLOWANCE_SECONDS));
+    if !clock_ok {
+        findings.push(Finding::ClockSanity);
+    }
+    if !server_ready {
+        findings.push(Finding::ServerReadiness);
+    }
+    if receipt_count == 0 {
+        findings.push(Finding::ClientLinkage);
+    }
+
+    let findings = canonical_findings(findings);
+
+    Ok(DoctorResult {
+        generated_at: generated_at.as_str().to_owned(),
+        evidence: Evidence {
+            state_dir_mode: mode_literal(&state.state_dir_metadata),
+            spool_dir_mode: spool_mode,
+            state_db_mode: mode_literal(&state.database_metadata),
+            lock_file_mode: lock_mode,
+            lock,
+            free_bytes,
+            free_floor_bytes,
+            schema_version: u64::try_from(schema_version).unwrap_or(0),
+            enrolled_sources,
+            scanned_sources,
+            unreadable_sources,
+            receipt_count,
+            freshest_event_at,
+        },
+        findings,
+    })
+}
+
+/// The read-only handles one examination opens: metadata for the state
+/// directory and database, plus the snapshot connection and its integrity
+/// summary.  Opening any of it never creates state.
+struct ReadOnlyState {
+    state_dir: PathBuf,
+    state_dir_metadata: fs::Metadata,
+    database_metadata: fs::Metadata,
+    snapshot: StateSnapshot,
+    integrity: IntegrityReport,
+}
+
+/// Open the pinned state layout without creating any of it: a missing or
+/// unreadable state directory or database is [`DoctorError::StateUnavailable`]
+/// rather than a finding.
+fn open_read_only_state(config: &ResolvedConfig) -> Result<ReadOnlyState, DoctorError> {
     let state_dir = config.state_dir();
     let state_dir_metadata = fs::metadata(state_dir).map_err(|_| DoctorError::StateUnavailable)?;
     if !state_dir_metadata.is_dir() {
@@ -325,66 +438,46 @@ pub fn inspect(
 
     let snapshot =
         StateSnapshot::open(&database_path).map_err(|_| DoctorError::StateUnavailable)?;
-    let schema_version = snapshot.schema_version().unwrap_or(0);
     let integrity = snapshot
         .integrity()
         .map_err(|_| DoctorError::StateUnavailable)?;
+    Ok(ReadOnlyState {
+        state_dir: state_dir.to_path_buf(),
+        state_dir_metadata,
+        database_metadata,
+        snapshot,
+        integrity,
+    })
+}
 
-    let spool_path = state_dir.join(SPOOL_DIR_NAME);
-    let spool_metadata = fs::metadata(&spool_path).ok();
-    let spool_mode = spool_metadata.as_ref().map(mode_literal);
-    let lock_path = state_dir.join(LOCK_FILE_NAME);
-    let lock_metadata = fs::metadata(&lock_path).ok();
-    let lock_mode = lock_metadata.as_ref().map(mode_literal);
-
-    let mut findings = Vec::new();
-    let state_mode = mode_literal(&state_dir_metadata);
-    let database_mode = mode_literal(&database_metadata);
-    let lock = match probe_lock(&lock_path) {
-        Ok(lock) => lock,
-        Err(ProbeError::Permission) => {
-            findings.push(Finding::Permissions);
-            "free"
-        }
-        Err(ProbeError::Unavailable) => {
-            findings.push(Finding::Permissions);
-            "free"
-        }
-    };
-
-    let mut permissions_ok = state_dir_metadata.permissions().mode() & 0o777 == 0o700
+/// Whether every present state path keeps its pinned mode: the state
+/// directory 0o700, the database 0o600, the spool directory 0o700 with only
+/// 0o600 files, and the lock file 0o600.
+fn modes_are_safe(
+    state_dir_metadata: &fs::Metadata,
+    database_metadata: &fs::Metadata,
+    spool_metadata: Option<&fs::Metadata>,
+    spool_path: &Path,
+    lock_metadata: Option<&fs::Metadata>,
+) -> bool {
+    let mut safe = state_dir_metadata.permissions().mode() & 0o777 == 0o700
         && database_metadata.permissions().mode() & 0o777 == 0o600;
-    if let Some(metadata) = spool_metadata.as_ref() {
-        permissions_ok &= metadata.is_dir() && metadata.permissions().mode() & 0o777 == 0o700;
+    if let Some(metadata) = spool_metadata {
+        safe &= metadata.is_dir() && metadata.permissions().mode() & 0o777 == 0o700;
         if metadata.is_dir() {
-            permissions_ok &= spool_files_have_safe_modes(&spool_path);
+            safe &= spool_files_have_safe_modes(spool_path);
         }
     }
-    if let Some(metadata) = lock_metadata.as_ref() {
-        permissions_ok &= metadata.is_file() && metadata.permissions().mode() & 0o777 == 0o600;
+    if let Some(metadata) = lock_metadata {
+        safe &= metadata.is_file() && metadata.permissions().mode() & 0o777 == 0o600;
     }
-    if !permissions_ok {
-        findings.push(Finding::Permissions);
-    }
+    safe
+}
 
-    let version_ok = schema_version == LATEST_SCHEMA_VERSION;
-    if !integrity.healthy() || !version_ok {
-        findings.push(Finding::SqliteIntegrity);
-    }
-
-    let enrolled_sources =
-        query_u64(snapshot.connection(), "SELECT COUNT(*) FROM sources").unwrap_or(0);
-    let receipt_count = query_u64(
-        snapshot.connection(),
-        "SELECT COUNT(*) FROM receipts WHERE signature_verified = 1",
-    )
-    .unwrap_or(0);
-    let adapter_unhealthy = query_u64(
-        snapshot.connection(),
-        "SELECT COUNT(*) FROM adapter_health WHERE health_state != 'healthy'",
-    )
-    .unwrap_or(0);
-
+/// Fold the adapter scans and the persisted adapter-health rows into the
+/// counted source populations: unique scanned sources and unreadable
+/// observations.
+fn scan_counts(scans: &[SourceScan], adapter_unhealthy: u64) -> (u64, u64) {
     let mut scanned = HashSet::new();
     let mut unreadable = HashSet::new();
     for scan in scans {
@@ -402,33 +495,12 @@ pub fn inspect(
     let unreadable_sources = u64::try_from(unreadable.len())
         .unwrap_or(u64::MAX)
         .saturating_add(adapter_unhealthy);
-    if unreadable_sources > 0 {
-        findings.push(Finding::SourceReadability);
-    }
+    (scanned_sources, unreadable_sources)
+}
 
-    let free_bytes = free_space_bytes(state_dir).unwrap_or(0);
-    let free_floor_bytes = u64::try_from(config.spool_free_floor_bytes()).unwrap_or(u64::MAX);
-    if free_bytes < free_floor_bytes {
-        findings.push(Finding::SpoolSpace);
-    }
-
-    let freshest_event_at = freshest_event(snapshot.connection());
-    let clock_ok = freshest_event_at
-        .as_deref()
-        .and_then(|text| Timestamp::parse(text).ok())
-        .and_then(|timestamp| unix_seconds(&timestamp))
-        .zip(unix_seconds(generated_at))
-        .is_none_or(|(event, now)| event <= now.saturating_add(CLOCK_SKEW_ALLOWANCE_SECONDS));
-    if !clock_ok {
-        findings.push(Finding::ClockSanity);
-    }
-    if !server_ready {
-        findings.push(Finding::ServerReadiness);
-    }
-    if receipt_count == 0 {
-        findings.push(Finding::ClientLinkage);
-    }
-
+/// Order findings by the canonical [`Finding::all`] sequence and drop the
+/// duplicates independent checks can push.
+fn canonical_findings(mut findings: Vec<Finding>) -> Vec<Finding> {
     findings.sort_by_key(|finding| {
         Finding::all()
             .iter()
@@ -436,26 +508,7 @@ pub fn inspect(
             .unwrap_or(usize::MAX)
     });
     findings.dedup();
-
-    Ok(DoctorResult {
-        generated_at: generated_at.as_str().to_owned(),
-        evidence: Evidence {
-            state_dir_mode: state_mode,
-            spool_dir_mode: spool_mode,
-            state_db_mode: database_mode,
-            lock_file_mode: lock_mode,
-            lock,
-            free_bytes,
-            free_floor_bytes,
-            schema_version: u64::try_from(schema_version).unwrap_or(0),
-            enrolled_sources,
-            scanned_sources,
-            unreadable_sources,
-            receipt_count,
-            freshest_event_at,
-        },
-        findings,
-    })
+    findings
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -586,7 +639,7 @@ fn unix_seconds(timestamp: &Timestamp) -> Option<i64> {
 // Howard Hinnant's proleptic Gregorian conversion, matching the timestamp
 // renderer in the CLI module without adding a date/time dependency.
 fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
-    if !(1..=12).contains(&month) || day < 1 || day > 31 {
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
     let year = year - i64::from(month <= 2);

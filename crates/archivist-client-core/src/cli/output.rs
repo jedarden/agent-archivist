@@ -95,6 +95,10 @@ impl OutputEnvelope {
 /// indented field tree so an operator can read it without decoding compact
 /// JSON. The renderer is intentionally uncoloured: output remains safe when
 /// a terminal is captured or copied into a diagnostic transcript.
+///
+/// # Errors
+/// Returns the underlying writer's error unchanged; nothing further is
+/// written after a failure.
 pub fn write_human<W: Write>(value: &json::Value, writer: &mut W) -> io::Result<()> {
     let needs_newline = match value {
         json::Value::Object(object) => object.is_empty(),
