@@ -101,4 +101,3 @@ pub mod retention;
 pub mod revocation;
 mod sha512;
 pub mod sigv4;
-pub mod use_approval;
