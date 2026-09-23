@@ -64,14 +64,20 @@
 //!
 //! # Status
 //!
-//! Phase 1 contract core: the envelope wire type, canonicalization,
-//! validation, identifier and object-key derivation, and the corpus-pinned
-//! tests of plan Sections 7.1 through 7.5 are implemented. The plan Phase 9
-//! exact-inference capture artifact is implemented alongside it, pinned by
-//! the [`schemas/v1/examples/inference`] corpus. Signing and signature
-//! verification live in `archivist-auth`; multipart framing, compression,
-//! and the occurrence/attestation durable records arrive with their owning
-//! phases.
+//! Delivered: the Phase 1 contract core of plan Sections 7.1 through 7.5 —
+//! the envelope wire type with its bounded validation and unknown-field
+//! retention, canonicalization, identifier and object-key derivation, and
+//! the corpus-pinned tests; the Phase 9 capture and read sides — the
+//! exact-inference capture artifact ([`schemas/v1/examples/inference`]),
+//! its correlation identities, the capture-side sequencing state machine,
+//! and the read-side reconstruction fold; and the Phase 10 usage-summary
+//! derivation. Signing and signature verification live in `archivist-auth`;
+//! the ingest-attempt signing preimage they sign over is fixed in
+//! [`derivation`]. Not implemented in this crate: multipart framing beyond
+//! the bounded envelope metadata part, any compression codec (the wire
+//! declares a Zstandard transport encoding, but only the identity transport
+//! carries validation constraints), and the occurrence-manifest and
+//! upload-attestation record types — their wire schemas pin the shape.
 //!
 //! [`schemas/v1/ingest-identifiers.json`]: ../../../schemas/v1/ingest-identifiers.json
 //! [`schemas/v1/examples/conformance`]: ../../../schemas/v1/examples/conformance
