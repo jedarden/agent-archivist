@@ -95,6 +95,7 @@ pub mod identity;
 pub mod link;
 mod random;
 pub mod reference;
+pub mod receipt;
 pub mod revocation;
 mod sha512;
 pub mod sigv4;
