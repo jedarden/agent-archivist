@@ -1255,12 +1255,7 @@ mod tests {
             authority().issue(&root(), &candidate, |_| None),
             Err(ExportApprovalError::InvalidBounds)
         );
-        candidate.export_request_id =
-            RequestId::parse("018f2d2a-7b3c-47bc-8def-0123456789ab").unwrap();
-        assert_eq!(
-            authority().issue(&root(), &candidate, |_| None),
-            Err(ExportApprovalError::InvalidBounds)
-        );
+        assert!(RequestId::parse("018f2d2a-7b3c-47bc-8def-0123456789ab").is_err());
     }
 
     #[test]
