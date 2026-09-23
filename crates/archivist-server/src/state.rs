@@ -486,8 +486,11 @@ mod tests {
         // A's, so it is past its window (stale).
         // Both facts follow from the captured instant, with no assumption
         // about scheduling delay.
-        let snapshot =
-            tracker.evaluate(a_rerecorded + TRUST_EVIDENCE_WINDOW - Duration::from_nanos(1));
+        let snapshot = tracker.evaluate(
+            (a_rerecorded + TRUST_EVIDENCE_WINDOW)
+                .checked_sub(Duration::from_nanos(1))
+                .expect("the test window is longer than one nanosecond"),
+        );
         assert!(!snapshot.ready);
         assert_eq!(snapshot.tenants_ready, 1);
         assert_eq!(snapshot.reason, Some(NotReadyReason::TrustEvidenceStale));
