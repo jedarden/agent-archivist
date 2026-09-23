@@ -1014,7 +1014,10 @@ fn text(value: &str) -> Value {
 /// ([`Timestamp::calendar_valid`]); the leap second `:60` folds into the
 /// next minute's first second, which is exactly where the wire calendar
 /// places it.
-fn utc_instant(stamp: &Timestamp) -> (i64, u32) {
+///
+/// The client-rotation trust view reuses the same instant ordering for its
+/// 24-hour overlap boundary.
+pub(crate) fn utc_instant(stamp: &Timestamp) -> (i64, u32) {
     let bytes = stamp.as_str().as_bytes();
     let number = |slice: &[u8]| {
         slice

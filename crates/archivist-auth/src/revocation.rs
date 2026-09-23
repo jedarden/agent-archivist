@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Runtime revocation enforcement: the ingestion replica's half of the
-//! revocation workflow, from signed control-record publication through
-//! trust evaluation (plan Section 5; ID-006 — credentials must be
-//! revocable; EC-09 — propagation is bounded by the reader's trust cache).
+//! Runtime enforcement of the client's revocation and rotation
+//! workflows: the ingestion replica's half of both, from signed
+//! control-record publication through trust evaluation (plan Section 5;
+//! ID-006 — credentials must be revocable; EC-09 — propagation is
+//! bounded by the reader's trust cache).
 //!
 //! A revocation is two records, never one: the tenant-authority-signed
 //! [`RevocationRecord`] at the epoch-addressed key
@@ -15,27 +16,46 @@
 //! record is ever removed or edited (EC-12): relinking after revocation
 //! is a new, higher epoch with a new key.
 //!
-//! Three surfaces cover the replica's side of that workflow:
+//! A client key rotation is the same shape with the overlap where the
+//! permanence sits: the tenant-authority-signed [`RotationRecord`] at
+//! `tenants/<tenant>/v1/control/rotations/<client>/<epoch>.json` —
+//! both public halves, at the epoch the rotation establishes — is
+//! published together with the strictly higher-epoch pointer naming the
+//! new half, and that pointer bump is what keeps the authorization
+//! epochs monotonic. For [`ROTATION_OVERLAP_SECONDS`] from the record's
+//! `signed_at` (24 hours, plan Section 5), an attempt at the *current*
+//! epoch may sign with either half of that rotation — the window
+//! widens which key may sign, never which epoch is current — so a
+//! retry of an already-frozen spool envelope re-authorizes with fresh
+//! per-attempt state under either half instead of stranding there
+//! (plan Section 5; EC-12). Past the window only the new half verifies;
+//! the old half survives in the record precisely so a stateless replica
+//! can verify an old-key attempt inside the window without any
+//! server-local key history.
 //!
-//! - [`RevocationRecord::verify`] and [`LinkedClientPointer::verify`]
-//!   are the evidence gate. Both run the family's closed member set and
-//!   every VAL-002 cross-field check — the record must agree with the
-//!   address it was served at, the tenant with the pinned root, the
-//!   pointer's key ID with the pinned derivation of its own public
-//!   half — and then the signature, through
+//! Four surfaces cover the replica's side of that workflow:
+//!
+//! - [`RevocationRecord::verify`], [`LinkedClientPointer::verify`], and
+//!   [`RotationRecord::verify`] are the evidence gate. All three run the
+//!   family's closed member set and every VAL-002 cross-field check —
+//!   the record must agree with the address it was served at, the tenant
+//!   with the pinned root, the pointer's key ID with the pinned
+//!   derivation of its own public half, a rotation's two key IDs with
+//!   the derivations of their own halves and with each other's epoch —
+//!   and then the signature, through
 //!   [`crate::authority::verify_control_record`]'s fetch-verify-adopt
 //!   chain walk from the pinned root. Unverified bytes never become a
 //!   value of either type, so every downstream decision is over
 //!   authenticated evidence by construction.
 //! - [`ClientTrustView`] is the fold: one client's current pointer plus
-//!   its verified revocations, with the append-only epoch rules. A
-//!   revocation at an epoch the pointer has not reached is an
-//!   inconsistent view, two different revocations at one epoch are an
-//!   integrity conflict, and a re-delivered identical revocation is an
-//!   idempotent repair — mirroring the write classes the control store
-//!   already enforces, because a replica's view can be assembled from a
-//!   retrying reader just as a store's history can be assembled from a
-//!   retrying writer.
+//!   its verified revocations and rotations, with the append-only epoch
+//!   rules. A revocation or rotation at an epoch the pointer has not
+//!   reached is an inconsistent view, two different records at one epoch
+//!   are an integrity conflict, and a re-delivered identical record is
+//!   an idempotent repair — mirroring the write classes the control
+//!   store already enforces, because a replica's view can be assembled
+//!   from a retrying reader just as a store's history can be assembled
+//!   from a retrying writer.
 //! - [`ClientTrustView::evaluate`] is the runtime decision an attempt
 //!   authorization calls: the attempt's client, authorization epoch, and
 //!   key ID against the view, rejected
@@ -69,6 +89,18 @@
 //! ([`AttemptRejection::StaleEpoch`]) and the pointer's own half check
 //! ([`AttemptRejection::KeyEpochMismatch`]) apply. Every rejection path
 //! ends the attempt; nothing downgrades a rejection to a weaker class.
+//!
+//! [`ClientTrustView::evaluate_at`] is that same decision at an
+//! explicit instant, and the instant is where the rotation overlap
+//! lives: when the attempt's key is not the pointer's standing half,
+//! a folded rotation whose 24-hour window covers the instant admits
+//! either of its own halves at the pointer's epoch — and nothing else
+//! changes. Staleness is decided before the window is ever consulted,
+//! so an old epoch stays dead inside every window; a revocation still
+//! outranks the window (a dead key never reschedules itself); and
+//! [`ClientTrustView::evaluate`], which reads no clock, is exactly this
+//! decision with every window closed — the conservative rule a caller
+//! falls back to when it cannot name the instant it is deciding at.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -78,7 +110,9 @@ use archivist_protocol::vocabulary::{
     ClientId, Ed25519PublicKey, Ed25519Signature, KeyId, TenantId, Timestamp,
 };
 
-use crate::authority::{AuthorityChainError, PinnedAuthorityRoot, verify_control_record};
+use crate::authority::{
+    utc_instant, verify_control_record, AuthorityChainError, PinnedAuthorityRoot,
+};
 use crate::ed25519;
 
 /// The control trust namespace every record here is written in.
@@ -95,6 +129,21 @@ const CONTROL_NAMESPACE: &str = "archivist.control/v1";
 /// Past it, every healthy replica's refreshed view rejects the revoked
 /// key; the tests prove both halves.
 pub const REVOCATION_PROPAGATION_BOUND_SECONDS: u64 = 60;
+
+/// The overlap window one rotation record opens, in seconds: 24 hours
+/// from the record's `signed_at` (plan Section 5), the same dual-key
+/// window the authority chain pins as
+/// [`crate::authority::ROTATION_VERIFICATION_OVERLAP_HOURS`] and the
+/// rotation schema names `rotationVerificationOverlapHours`; the
+/// module's schema-gate test proves the three agree.
+///
+/// The window widens which key may sign at the *current* epoch — never
+/// which epoch is current — so a retry of an already-frozen spool
+/// envelope re-authorizes under either half instead of stranding there.
+/// Past it only the rotation's new half verifies, which is what
+/// [`ClientTrustView::evaluate_at`] decides and
+/// [`ClientTrustView::evaluate`] never admits.
+pub const ROTATION_OVERLAP_SECONDS: u64 = 24 * 60 * 60;
 
 /// The closed member set of a revocation record
 /// (`schemas/v1/control-revocation.json`; `additionalProperties: false`).
@@ -123,6 +172,29 @@ const LINKED_CLIENT_MEMBERS: [&str; 13] = [
     "key_algorithm",
     "public_key",
     "scopes",
+    "authorization_epoch",
+    "signed_at",
+    "authority_key_id",
+    "authority_signature",
+];
+
+/// The closed member set of a key-rotation record
+/// (`schemas/v1/control-rotation.json`; `additionalProperties: false`):
+/// the seven wrapper members every immutable control record carries plus
+/// the rotation payload — both public halves with their derivable
+/// identifiers and the two adjacent epochs.
+const ROTATION_MEMBERS: [&str; 15] = [
+    "schema",
+    "record_type",
+    "record_kind",
+    "tenant_id",
+    "client_id",
+    "previous_epoch",
+    "previous_public_key",
+    "previous_key_id",
+    "key_algorithm",
+    "public_key",
+    "key_id",
     "authorization_epoch",
     "signed_at",
     "authority_key_id",
@@ -434,17 +506,250 @@ impl LinkedClientPointer {
     }
 }
 
+/// One verified key-rotation record: the tenant authority's statement
+/// that `client_id`'s authorization moved from the half named by
+/// `previous_key_id` at `previous_epoch` to the half named by `key_id`
+/// at `epoch` — the epoch the rotation establishes, equal to the object
+/// key's epoch segment.
+///
+/// The record is where the previous public half survives: the
+/// current-pointer linked-client record retains no history once it
+/// moves, and a stateless replica verifying an old-key attempt inside
+/// the overlap window reads the half here, never from server-local
+/// state. Construction is [`RotationRecord::verify`] and nothing else;
+/// the type cannot hold unverified bytes. Every member is an identifier,
+/// a public half, a timestamp, or a signature — public material only,
+/// doubly so (SEC-006): both halves here are public by definition, and
+/// no private half exists in any record.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RotationRecord {
+    tenant_id: TenantId,
+    client_id: ClientId,
+    previous_epoch: u64,
+    previous_public_key: Ed25519PublicKey,
+    previous_key_id: KeyId,
+    epoch: u64,
+    public_key: Ed25519PublicKey,
+    key_id: KeyId,
+    signed_at: Timestamp,
+}
+
+impl RotationRecord {
+    /// Verify one key-rotation record served at the epoch-addressed key
+    /// `tenants/<tenant>/v1/control/rotations/<addressed_client>/
+    /// <addressed_epoch>.json`, where the epoch segment is the epoch the
+    /// rotation establishes.
+    ///
+    /// The family checks run before the signature: the closed member
+    /// set, the namespace and the `rotation`/`immutable` identity pair,
+    /// every member grammar, a calendar-valid `signed_at`, and the
+    /// VAL-002 cross-field checks — the record's client and established
+    /// epoch must equal the address it was served at, `previous_epoch`
+    /// must be exactly `authorization_epoch` − 1 (every pointer move
+    /// publishes the next epoch, so a rotation never skips one), and
+    /// both key IDs must be the pinned derivations of their own public
+    /// halves. Only then does the authority signature verify, through
+    /// the pinned root's chain walk.
+    ///
+    /// # Errors
+    /// [`RevocationError::MalformedRecord`] for any shape or grammar
+    /// failure, [`RevocationError::RecordDisagreement`] for a record
+    /// that disagrees with its namespace, class, tenant, address, epoch
+    /// adjacency, or key derivations, and
+    /// [`RevocationError::UntrustedAuthority`] when the signature does
+    /// not verify against the pinned root.
+    pub fn verify(
+        root: &PinnedAuthorityRoot,
+        envelope: &[u8],
+        fetch: impl FnMut(&KeyId) -> Option<Vec<u8>>,
+        addressed_client: &ClientId,
+        addressed_epoch: u64,
+    ) -> Result<Self, RevocationError> {
+        const MALFORMED: RevocationError = RevocationError::MalformedRecord;
+        let Value::Object(object) = json::parse(envelope).map_err(|_| MALFORMED)? else {
+            return Err(MALFORMED);
+        };
+        verify_member_set(&object, &ROTATION_MEMBERS)?;
+        if text_member(&object, "record_type") != Some("rotation")
+            || text_member(&object, "record_kind") != Some("immutable")
+            || text_member(&object, "schema") != Some(CONTROL_NAMESPACE)
+        {
+            return Err(RevocationError::RecordDisagreement);
+        }
+        let tenant = TenantId::parse(text_member(&object, "tenant_id").ok_or(MALFORMED)?)
+            .map_err(|_| MALFORMED)?;
+        if tenant != *root.tenant_id() {
+            return Err(RevocationError::RecordDisagreement);
+        }
+        let client = ClientId::parse(text_member(&object, "client_id").ok_or(MALFORMED)?)
+            .map_err(|_| MALFORMED)?;
+        if client != *addressed_client {
+            return Err(RevocationError::RecordDisagreement);
+        }
+        if text_member(&object, "key_algorithm") != Some("ed25519") {
+            return Err(RevocationError::RecordDisagreement);
+        }
+        let public_key =
+            Ed25519PublicKey::parse(text_member(&object, "public_key").ok_or(MALFORMED)?)
+                .map_err(|_| MALFORMED)?;
+        let key_id = KeyId::parse(text_member(&object, "key_id").ok_or(MALFORMED)?)
+            .map_err(|_| MALFORMED)?;
+        if key_id != KeyId::from_public_key(&public_key) {
+            // As with the pointer: a key ID is a derivation, not a
+            // label, on both halves.
+            return Err(RevocationError::RecordDisagreement);
+        }
+        let previous_public_key =
+            Ed25519PublicKey::parse(text_member(&object, "previous_public_key").ok_or(MALFORMED)?)
+                .map_err(|_| MALFORMED)?;
+        let previous_key_id =
+            KeyId::parse(text_member(&object, "previous_key_id").ok_or(MALFORMED)?)
+                .map_err(|_| MALFORMED)?;
+        if previous_key_id != KeyId::from_public_key(&previous_public_key) {
+            return Err(RevocationError::RecordDisagreement);
+        }
+        if previous_key_id == key_id {
+            // A same-key record is not a rotation: accepting it would
+            // create a second epoch without changing the authorization
+            // key and would make the overlap evidence ambiguous.
+            return Err(RevocationError::RecordDisagreement);
+        }
+        let epoch = epoch_member(&object)?;
+        if epoch != addressed_epoch {
+            // The established epoch is signed: a record cannot be
+            // re-dated to the address it was found at, and the overlap
+            // evidence for epoch E's key lives at exactly
+            // `rotations/<client>/E.json`.
+            return Err(RevocationError::RecordDisagreement);
+        }
+        let previous_epoch = epoch_member_named(&object, "previous_epoch")?;
+        if previous_epoch + 1 != epoch {
+            // Every pointer move publishes exactly the next epoch, so a
+            // rotation establishes exactly the adjacent one — a record
+            // that skips or re-dates the boundary is a torn or forged
+            // history, not a naming oddity.
+            return Err(RevocationError::RecordDisagreement);
+        }
+        let signed_at = Timestamp::parse(text_member(&object, "signed_at").ok_or(MALFORMED)?)
+            .map_err(|_| MALFORMED)?;
+        if !signed_at.calendar_valid() {
+            return Err(MALFORMED);
+        }
+        verify_control_record(root, envelope, fetch)?;
+        Ok(Self {
+            tenant_id: tenant,
+            client_id: client,
+            previous_epoch,
+            previous_public_key,
+            previous_key_id,
+            epoch,
+            public_key,
+            key_id,
+            signed_at,
+        })
+    }
+
+    /// The tenant whose authority signed the record.
+    #[must_use]
+    pub const fn tenant_id(&self) -> &TenantId {
+        &self.tenant_id
+    }
+
+    /// The rotating client.
+    #[must_use]
+    pub const fn client_id(&self) -> &ClientId {
+        &self.client_id
+    }
+
+    /// The epoch the rotation leaves — exactly `epoch` − 1, verified.
+    #[must_use]
+    pub const fn previous_epoch(&self) -> u64 {
+        self.previous_epoch
+    }
+
+    /// The public half that held at `previous_epoch` — the old half of
+    /// the overlap, which survives here precisely so a stateless replica
+    /// can verify an old-key attempt inside the window.
+    #[must_use]
+    pub const fn previous_public_key(&self) -> &Ed25519PublicKey {
+        &self.previous_public_key
+    }
+
+    /// The key ID that held at `previous_epoch`, under the pinned
+    /// derivation.
+    #[must_use]
+    pub const fn previous_key_id(&self) -> &KeyId {
+        &self.previous_key_id
+    }
+
+    /// The established authorization epoch, equal to the object key's
+    /// epoch segment.
+    #[must_use]
+    pub const fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// The new public half — the key of the epoch this rotation
+    /// establishes, the half the established epoch's linked-client
+    /// record carries.
+    #[must_use]
+    pub const fn public_key(&self) -> &Ed25519PublicKey {
+        &self.public_key
+    }
+
+    /// The key ID that holds at `epoch`, under the pinned derivation.
+    #[must_use]
+    pub const fn key_id(&self) -> &KeyId {
+        &self.key_id
+    }
+
+    /// The wall-clock instant the authority signed the rotation — the
+    /// anchor of the overlap window.
+    #[must_use]
+    pub const fn signed_at(&self) -> &Timestamp {
+        &self.signed_at
+    }
+
+    /// Whether the overlap window opened at `signed_at` covers `at`:
+    /// from the anchor instant through `signed_at` +
+    /// [`ROTATION_OVERLAP_SECONDS`], both ends inclusive — the same
+    /// boundary the authority chain's dual-key window draws, and never
+    /// on either side of it. Before the anchor the rotation has not
+    /// happened yet; past the close only the new half verifies.
+    ///
+    /// A calendar-invalid instant is covered by nothing: the question
+    /// fails closed.
+    #[must_use]
+    pub fn window_covers(&self, at: &Timestamp) -> bool {
+        if !at.calendar_valid() {
+            return false;
+        }
+        let (anchor_seconds, anchor_nanoseconds) = utc_instant(&self.signed_at);
+        // The constant is 86 400, far inside `i64`; the bound it is
+        // added to is a real calendar instant's seconds.
+        let close = (
+            anchor_seconds + i64::try_from(ROTATION_OVERLAP_SECONDS).unwrap_or(i64::MAX),
+            anchor_nanoseconds,
+        );
+        let at_instant = utc_instant(at);
+        (anchor_seconds, anchor_nanoseconds) <= at_instant && at_instant <= close
+    }
+}
+
 /// One client's revocation-governed trust view: the verified current
-/// pointer plus every verified revocation folded in ascending epoch
-/// order.
+/// pointer plus every verified revocation and rotation folded in
+/// ascending epoch order.
 ///
 /// The fold is append-only by construction. [`ClientTrustView::
 /// record_revocation`] accepts a re-delivered identical revocation as an
 /// idempotent repair and refuses everything else that would rewrite
 /// history: an epoch the pointer has not reached, a half the pointer does
 /// not hold at the current epoch, a second, different revocation at an
-/// occupied epoch. There is no method that removes a revocation, because
-/// the workflow has none (EC-12).
+/// occupied epoch. [`ClientTrustView::record_rotation`] folds a rotation
+/// under the same rules, with the rotation's new half standing in for
+/// the revoked one — the two records are the same workflow's two shapes.
+/// There is no method that removes a record, because neither workflow
+/// has one (EC-12).
 ///
 /// The view is a pure function of the verified records handed to it, so
 /// the 60-second trust cache composes in front of construction exactly as
@@ -456,6 +761,10 @@ pub struct ClientTrustView {
     pointer: LinkedClientPointer,
     /// Revoked epoch → the key ID that died there, ascending.
     revocations: BTreeMap<u64, KeyId>,
+    /// Established epoch → the verified rotation that established it,
+    /// ascending. At most one rotation per epoch: a second, different
+    /// one is an integrity conflict at the fold.
+    rotations: BTreeMap<u64, RotationRecord>,
 }
 
 impl ClientTrustView {
@@ -465,6 +774,7 @@ impl ClientTrustView {
         Self {
             pointer,
             revocations: BTreeMap::new(),
+            rotations: BTreeMap::new(),
         }
     }
 
@@ -524,6 +834,55 @@ impl ClientTrustView {
         self.revocations.iter().map(|(epoch, key)| (*epoch, key))
     }
 
+    /// Fold one verified key rotation into the view, append-only — the
+    /// same fold [`Self::record_revocation`] runs, with the rotation's
+    /// new half where the revocation's named half stands.
+    ///
+    /// # Errors
+    /// [`RevocationError::RecordDisagreement`] for a record naming
+    /// another client than the view's,
+    /// [`RevocationError::InconsistentView`] for an established epoch
+    /// the pointer has not reached, a rotation at the pointer's epoch
+    /// whose new half the pointer does not carry, or different rotation
+    /// bytes already folded at the same epoch. A re-delivered identical
+    /// rotation is idempotent success.
+    pub fn record_rotation(&mut self, record: &RotationRecord) -> Result<(), RevocationError> {
+        if record.client_id() != self.pointer.client_id() {
+            return Err(RevocationError::RecordDisagreement);
+        }
+        if record.epoch() > self.pointer.epoch() {
+            // One cannot pre-date a rotation for an epoch the client has
+            // not reached: a forward-dated rotation would arm its
+            // overlap window early (the schema's epoch rule).
+            return Err(RevocationError::InconsistentView);
+        }
+        if record.epoch() == self.pointer.epoch() && record.key_id() != self.pointer.key_id() {
+            // The rotation and the pointer bump that activates it are
+            // one administrative act, so at the current epoch the
+            // pointer must carry the rotation's new half.
+            return Err(RevocationError::InconsistentView);
+        }
+        match self.rotations.get(&record.epoch()) {
+            Some(existing) if existing == record => {
+                // The same rotation delivered twice — a retrying
+                // reader's idempotent repair, never an overwrite.
+                Ok(())
+            }
+            Some(_) => Err(RevocationError::InconsistentView),
+            None => {
+                self.rotations.insert(record.epoch(), record.clone());
+                Ok(())
+            }
+        }
+    }
+
+    /// Every folded rotation as `(established epoch, record)`, ascending.
+    pub fn rotations(&self) -> impl Iterator<Item = (u64, &RotationRecord)> {
+        self.rotations
+            .iter()
+            .map(|(epoch, record)| (*epoch, record))
+    }
+
     /// Evaluate one client attempt: may `attempt`'s key authorize at
     /// `attempt`'s epoch, given this view?
     ///
@@ -537,11 +896,67 @@ impl ClientTrustView {
     /// pointer would leave it accepted until the pointer propagates,
     /// which is exactly the bounded window the plan accepts.
     ///
+    /// This is [`Self::evaluate_at`] with every rotation window closed —
+    /// the conservative rule a caller falls back to when it cannot name
+    /// the instant it is deciding at.
+    ///
     /// # Errors
     /// The matching [`AttemptRejection`] class; `Ok(())` only when the
     /// attempt presents the pointer's own half at the pointer's own
     /// epoch and no revocation names that key at or below it.
     pub fn evaluate(&self, attempt: &AuthorizationAttempt) -> Result<(), AttemptRejection> {
+        self.standing(attempt)?;
+        if attempt.key_id == *self.pointer.key_id() {
+            return Ok(());
+        }
+        Err(AttemptRejection::KeyEpochMismatch)
+    }
+
+    /// Evaluate one client attempt at an explicit instant — the decision
+    /// [`Self::evaluate`] renders with the rotation overlap open, and
+    /// the instant is where the overlap lives.
+    ///
+    /// The shared prefix is the module's contract: client, epoch
+    /// reachability, revocation, staleness — staleness decided before
+    /// the window is ever consulted, so an old epoch stays dead inside
+    /// every window, and a revocation outranking the window, because a
+    /// dead key never reschedules itself. Past them, an attempt at the
+    /// pointer's epoch presenting a half the pointer does not hold is
+    /// admitted exactly when a rotation that established the current
+    /// epoch is folded, its 24-hour window
+    /// ([`RotationRecord::window_covers`]) covers `at`, and the half is
+    /// that rotation's previous one — the retry path of an
+    /// already-frozen spool envelope, which re-authorizes with fresh
+    /// per-attempt state under either half instead of stranding there
+    /// (plan Section 5; EC-12).
+    ///
+    /// # Errors
+    /// The matching [`AttemptRejection`] class, as [`Self::evaluate`];
+    /// `Ok(())` additionally admits the establishing rotation's previous
+    /// half inside its window.
+    pub fn evaluate_at(
+        &self,
+        attempt: &AuthorizationAttempt,
+        at: &Timestamp,
+    ) -> Result<(), AttemptRejection> {
+        self.standing(attempt)?;
+        if attempt.key_id == *self.pointer.key_id() {
+            return Ok(());
+        }
+        if let Some(rotation) = self.rotations.get(&self.pointer.epoch())
+            && rotation.window_covers(at)
+            && attempt.key_id == *rotation.previous_key_id()
+        {
+            return Ok(());
+        }
+        Err(AttemptRejection::KeyEpochMismatch)
+    }
+
+    /// The decision prefix both evaluations share: the client, the
+    /// epoch's reachability, revocation, staleness. `Ok(())` means the
+    /// attempt stands at the pointer's epoch, un-revoked — both
+    /// decisions then narrow on the half the attempt presents.
+    fn standing(&self, attempt: &AuthorizationAttempt) -> Result<(), AttemptRejection> {
         if attempt.client_id != *self.pointer.client_id() {
             return Err(AttemptRejection::ClientMismatch);
         }
@@ -566,10 +981,10 @@ impl ClientTrustView {
             }
         }
         if attempt.epoch < self.pointer.epoch() {
+            // Staleness is decided before any rotation window is
+            // consulted: the window widens which key may sign at the
+            // current epoch, never which epoch is current.
             return Err(AttemptRejection::StaleEpoch);
-        }
-        if attempt.key_id != *self.pointer.key_id() {
-            return Err(AttemptRejection::KeyEpochMismatch);
         }
         Ok(())
     }
@@ -625,8 +1040,9 @@ pub enum AttemptRejection {
     /// attempt's epoch: the key is dead, permanently.
     Revoked,
     /// The attempt's key does not match its epoch's authority — the
-    /// pointer's half at the current epoch, or the revocation's named
-    /// half at a revoked one.
+    /// pointer's half at the current epoch (or, inside its 24-hour
+    /// window, the establishing rotation's previous half), or the
+    /// revocation's named half at a revoked one.
     KeyEpochMismatch,
 }
 
@@ -709,6 +1125,30 @@ impl RevocationPublication {
     /// The object key
     /// `tenants/<tenant>/v1/control/revocations/<client>/<epoch>.json`
     /// the envelope is written to (plan Section 7.5).
+    #[must_use]
+    pub fn object_key(&self) -> &str {
+        &self.object_key
+    }
+}
+
+/// A published client-key rotation: the byte-exact canonical envelope and
+/// the epoch-addressed object key the offline store writes it to, in one
+/// value so the two cannot drift.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RotationPublication {
+    envelope: Vec<u8>,
+    object_key: String,
+}
+
+impl RotationPublication {
+    /// The canonical, authority-signed rotation record bytes.
+    #[must_use]
+    pub fn envelope(&self) -> &[u8] {
+        &self.envelope
+    }
+
+    /// The object key
+    /// `tenants/<tenant>/v1/control/rotations/<client>/<epoch>.json`.
     #[must_use]
     pub fn object_key(&self) -> &str {
         &self.object_key
@@ -800,6 +1240,91 @@ pub fn revocation_object_key(tenant: &TenantId, client: &ClientId, epoch: u64) -
     )
 }
 
+/// Publish one client-key rotation from the verified current pointer.
+///
+/// The pointer is the new epoch's already-signed current record: its epoch
+/// must be at least two, and its key ID must be the derivation of
+/// `public_key`. The rotation record then names the adjacent predecessor
+/// epoch and derives `previous_key_id` from `previous_public_key`. This
+/// keeps the publication's immutable evidence and the pointer it activates
+/// aligned while leaving the store's strictly-increasing pointer write as
+/// the final monotonicity gate.
+///
+/// The private halves never enter this function. The caller supplies only
+/// the two public halves; the tenant authority signs the resulting record.
+///
+/// # Errors
+/// [`PublicationError::MalformedInput`] for a first-epoch pointer or a
+/// calendar-invalid instant, and [`PublicationError::KeyIdMismatch`] when
+/// the new half does not match the pointer or the two halves are identical.
+pub fn publish_rotation(
+    authority_seed: &[u8; 32],
+    tenant: &TenantId,
+    client: &ClientId,
+    previous_public_key: &Ed25519PublicKey,
+    public_key: &Ed25519PublicKey,
+    pointer: &LinkedClientPointer,
+    signed_at: &Timestamp,
+) -> Result<RotationPublication, PublicationError> {
+    if pointer.epoch() < 2 || !signed_at.calendar_valid() {
+        return Err(PublicationError::MalformedInput);
+    }
+    if pointer.client_id() != client
+        || previous_public_key == public_key
+        || pointer.key_id() != &KeyId::from_public_key(public_key)
+    {
+        return Err(PublicationError::KeyIdMismatch);
+    }
+    let epoch = pointer.epoch();
+    let previous_epoch = epoch - 1;
+    let epoch_value = i64::try_from(epoch).map_err(|_| PublicationError::MalformedInput)?;
+    let previous_epoch_value =
+        i64::try_from(previous_epoch).map_err(|_| PublicationError::MalformedInput)?;
+    let authority_public = ed25519::public_key_from_seed(authority_seed);
+    let authority_key_id = KeyId::from_public_key(&Ed25519PublicKey::from_raw(authority_public));
+    let previous_key_id = KeyId::from_public_key(previous_public_key);
+    let key_id = KeyId::from_public_key(public_key);
+    let mut members = Object::new();
+    members.set("schema", text(CONTROL_NAMESPACE));
+    members.set("record_type", text("rotation"));
+    members.set("record_kind", text("immutable"));
+    members.set("tenant_id", text(tenant.as_str()));
+    members.set("client_id", text(client.as_str()));
+    members.set("previous_epoch", Value::Int(previous_epoch_value));
+    members.set("previous_public_key", text(&previous_public_key.to_hex()));
+    members.set("previous_key_id", text(&previous_key_id.to_hex()));
+    members.set("key_algorithm", text("ed25519"));
+    members.set("public_key", text(&public_key.to_hex()));
+    members.set("key_id", text(&key_id.to_hex()));
+    members.set("authorization_epoch", Value::Int(epoch_value));
+    members.set("signed_at", text(signed_at.as_str()));
+    members.set("authority_key_id", text(&authority_key_id.to_hex()));
+    let signature = ed25519::sign(
+        authority_seed,
+        &Value::Object(members.clone()).canonical_bytes(),
+    );
+    members.set(
+        "authority_signature",
+        text(&Ed25519Signature::from_raw(*signature.as_bytes()).to_hex()),
+    );
+    Ok(RotationPublication {
+        object_key: rotation_object_key(tenant, client, epoch),
+        envelope: Value::Object(members).canonical_bytes(),
+    })
+}
+
+/// The object key of one client-key rotation, addressed by the epoch it
+/// establishes.
+#[must_use]
+pub fn rotation_object_key(tenant: &TenantId, client: &ClientId, epoch: u64) -> String {
+    format!(
+        "tenants/{}/v1/control/rotations/{}/{}.json",
+        tenant.as_str(),
+        client.as_str(),
+        epoch
+    )
+}
+
 /// The object key of one client's linked-client pointer (plan Section
 /// 7.5): the current-pointer key no revocation ever occupies.
 #[must_use]
@@ -837,7 +1362,17 @@ fn text_member<'a>(object: &'a Object, name: &str) -> Option<&'a str> {
 /// Read the signed `authorization_epoch`: a positive integer inside the
 /// u64 range the 18-digit ceiling bounds.
 fn epoch_member(object: &Object) -> Result<u64, RevocationError> {
-    match object.get("authorization_epoch") {
+    epoch_member_named(object, "authorization_epoch")
+}
+
+/// Read one named epoch member — `authorization_epoch` or a rotation's
+/// `previous_epoch` — under the same one-based grammar: a positive
+/// integer inside the u64 range the 18-digit ceiling bounds. Every
+/// epoch a control record names was established by a linked-client
+/// record, and those epochs are one-based, so zero is outside every
+/// epoch member's grammar.
+fn epoch_member_named(object: &Object, name: &str) -> Result<u64, RevocationError> {
+    match object.get(name) {
         Some(Value::Int(value)) if *value >= 1 => {
             u64::try_from(*value).map_err(|_| RevocationError::MalformedRecord)
         }
@@ -890,6 +1425,7 @@ mod tests {
     const LINK_INSTANT: &str = "2026-09-13T00:00:00Z";
     const REVOKE_INSTANT: &str = "2026-09-13T02:00:00Z";
     const RELINK_INSTANT: &str = "2026-09-13T03:00:00Z";
+    const ROTATE_INSTANT: &str = "2026-09-14T01:00:00Z";
 
     /// The authority's seed and the three client keys, fixed by test
     /// vector so every record in this module's tests is reproducible.
@@ -1004,6 +1540,24 @@ mod tests {
         )
         .expect("the fixture revocation verifies");
         (pointer, record)
+    }
+
+    /// The signed rotation from the epoch-1 half to the epoch-2 half. The
+    /// epoch-2 pointer is the activation record the offline administrator
+    /// publishes alongside this immutable evidence.
+    fn rotation() -> Vec<u8> {
+        publish_rotation(
+            &AUTHORITY_SEED,
+            &tenant(),
+            &client(),
+            &public_half(&KEY1_SEED),
+            &public_half(&KEY2_SEED),
+            &pointer_at(2, &KEY2_SEED),
+            &instant(ROTATE_INSTANT),
+        )
+        .expect("the fixture rotation matches the epoch-2 pointer")
+        .envelope()
+        .to_vec()
     }
 
     #[test]
@@ -1354,6 +1908,153 @@ mod tests {
     }
 
     #[test]
+    fn rotation_publication_round_trips_and_is_epoch_addressed() {
+        let pointer = verified_pointer(&linked_client(2, &KEY2_SEED, RELINK_INSTANT));
+        let publication = publish_rotation(
+            &AUTHORITY_SEED,
+            &tenant(),
+            &client(),
+            &public_half(&KEY1_SEED),
+            &public_half(&KEY2_SEED),
+            &pointer,
+            &instant(ROTATE_INSTANT),
+        )
+        .expect("the new public half matches the pointer");
+        assert_eq!(
+            publication.object_key(),
+            rotation_object_key(&tenant(), &client(), 2)
+        );
+        assert_eq!(
+            publication.object_key(),
+            format!("tenants/{TENANT}/v1/control/rotations/{CLIENT}/2.json")
+        );
+        let record =
+            RotationRecord::verify(&root(), publication.envelope(), |_| None, &client(), 2)
+                .expect("the published rotation verifies");
+        assert_eq!(record.previous_epoch(), 1);
+        assert_eq!(record.previous_key_id(), &key_id(&KEY1_SEED));
+        assert_eq!(record.epoch(), 2);
+        assert_eq!(record.key_id(), &key_id(&KEY2_SEED));
+        assert_eq!(record.signed_at().as_str(), ROTATE_INSTANT);
+        assert_eq!(
+            Value::Object(match json::parse(publication.envelope()).expect("json") {
+                Value::Object(object) => object,
+                _ => panic!("object"),
+            })
+            .canonical_bytes(),
+            publication.envelope()
+        );
+    }
+
+    #[test]
+    fn rotation_overlap_keeps_current_epoch_retries_live_but_rejects_stale_epochs() {
+        let pointer = verified_pointer(&linked_client(2, &KEY2_SEED, RELINK_INSTANT));
+        let record = RotationRecord::verify(&root(), &rotation(), |_| None, &client(), 2)
+            .expect("the fixture rotation verifies");
+        let mut view = ClientTrustView::new(pointer);
+        view.record_rotation(&record)
+            .expect("the rotation matches the current pointer");
+
+        let old_key = AuthorizationAttempt::new(client(), 2, key_id(&KEY1_SEED))
+            .expect("current epoch with the old key");
+        let new_key = AuthorizationAttempt::new(client(), 2, key_id(&KEY2_SEED))
+            .expect("current epoch with the new key");
+        assert_eq!(
+            view.evaluate(&old_key),
+            Err(AttemptRejection::KeyEpochMismatch),
+            "clock-free evaluation never guesses that a rotation window is open"
+        );
+        assert_eq!(
+            view.evaluate_at(&old_key, &instant("2026-09-14T00:59:59Z")),
+            Err(AttemptRejection::KeyEpochMismatch),
+            "the old half is not valid before the signed rotation"
+        );
+        assert_eq!(
+            view.evaluate_at(&old_key, &instant("2026-09-14T13:00:00Z")),
+            Ok(()),
+            "a frozen envelope can receive fresh authorization under the old half"
+        );
+        assert_eq!(
+            view.evaluate_at(&old_key, &instant("2026-09-15T01:00:00Z")),
+            Ok(()),
+            "the documented 24-hour boundary is inclusive"
+        );
+        assert_eq!(
+            view.evaluate_at(&old_key, &instant("2026-09-15T01:00:01Z")),
+            Err(AttemptRejection::KeyEpochMismatch),
+            "the old half is rejected after the overlap"
+        );
+        assert_eq!(
+            view.evaluate_at(&new_key, &instant("2026-09-20T00:00:00Z")),
+            Ok(()),
+            "the new half remains valid after the overlap"
+        );
+
+        let stale_old = AuthorizationAttempt::new(client(), 1, key_id(&KEY1_SEED))
+            .expect("stale epoch with the old key");
+        let stale_new = AuthorizationAttempt::new(client(), 1, key_id(&KEY2_SEED))
+            .expect("stale epoch with the new key");
+        assert_eq!(
+            view.evaluate_at(&stale_old, &instant("2026-09-14T13:00:00Z")),
+            Err(AttemptRejection::StaleEpoch)
+        );
+        assert_eq!(
+            view.evaluate_at(&stale_new, &instant("2026-09-14T13:00:00Z")),
+            Err(AttemptRejection::StaleEpoch)
+        );
+    }
+
+    #[test]
+    fn rotation_record_rejects_non_adjacent_or_same_key_history() {
+        let good = rotation();
+        let rewritten = |edit: &dyn Fn(&mut Object)| {
+            let Value::Object(mut object) = json::parse(&good).expect("json") else {
+                panic!("object");
+            };
+            edit(&mut object);
+            signed(&AUTHORITY_SEED, object)
+        };
+
+        assert_eq!(
+            RotationRecord::verify(
+                &root(),
+                &rewritten(&|object| object.set("previous_epoch", Value::Int(3))),
+                |_| None,
+                &client(),
+                2,
+            )
+            .unwrap_err(),
+            RevocationError::RecordDisagreement
+        );
+        assert_eq!(
+            RotationRecord::verify(
+                &root(),
+                &rewritten(&|object| {
+                    object.set("previous_key_id", text(&key_id(&KEY2_SEED).to_hex()));
+                }),
+                |_| None,
+                &client(),
+                2,
+            )
+            .unwrap_err(),
+            RevocationError::RecordDisagreement
+        );
+        assert_eq!(
+            publish_rotation(
+                &AUTHORITY_SEED,
+                &tenant(),
+                &client(),
+                &public_half(&KEY2_SEED),
+                &public_half(&KEY2_SEED),
+                &pointer_at(2, &KEY2_SEED),
+                &instant(ROTATE_INSTANT),
+            )
+            .unwrap_err(),
+            PublicationError::KeyIdMismatch
+        );
+    }
+
+    #[test]
     fn evaluate_rejects_revoked_keys_fail_closed() {
         // The corpus's canonical history: link 1, revoke (1, K1),
         // relink at 2 with K2.
@@ -1529,29 +2230,25 @@ mod tests {
         // The accepted shape: the current half at the current epoch —
         // and a historical epoch below the pointer, whose half is the
         // administrator's own record.
-        assert!(
-            publish_revocation(
-                &AUTHORITY_SEED,
-                &tenant(),
-                &client(),
-                2,
-                &key_id(&KEY2_SEED),
-                &pointer,
-                &instant(REVOKE_INSTANT),
-            )
-            .is_ok()
-        );
-        assert!(
-            publish_revocation(
-                &AUTHORITY_SEED,
-                &tenant(),
-                &client(),
-                1,
-                &key_id(&KEY1_SEED),
-                &pointer,
-                &instant(REVOKE_INSTANT),
-            )
-            .is_ok()
-        );
+        assert!(publish_revocation(
+            &AUTHORITY_SEED,
+            &tenant(),
+            &client(),
+            2,
+            &key_id(&KEY2_SEED),
+            &pointer,
+            &instant(REVOKE_INSTANT),
+        )
+        .is_ok());
+        assert!(publish_revocation(
+            &AUTHORITY_SEED,
+            &tenant(),
+            &client(),
+            1,
+            &key_id(&KEY1_SEED),
+            &pointer,
+            &instant(REVOKE_INSTANT),
+        )
+        .is_ok());
     }
 }
