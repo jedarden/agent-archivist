@@ -18,12 +18,12 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use archivist_adapter_opencode::{
-    Cell, FieldValue, Json, ProjectedRow, Projection, ProjectionError, SchemaDivergence, Snapshot,
-    SnapshotError, StoreConnection, ALLOWED_TABLES,
+    ALLOWED_TABLES, Cell, FieldValue, Json, ProjectedRow, Projection, ProjectionError,
+    SchemaDivergence, Snapshot, SnapshotError, StoreConnection,
 };
 use archivist_adapter_sdk::ScanClassification;
-use rusqlite::types::ValueRef;
 use rusqlite::Connection;
+use rusqlite::types::ValueRef;
 
 /// A unique scratch directory, removed when the test ends either way.
 struct Scratch(PathBuf);

@@ -61,8 +61,8 @@ pub use canonical::{Json, Object};
 pub use projection::{FieldValue, ProjectedRow, Projection, ProjectionError};
 
 pub use schema::{
-    adapter_descriptor, detect, DetectError, SchemaDivergence, ALLOWED_TABLES, ALLOWED_VERSIONS,
-    PROJECTION_VERSION, SUPPORTED_FINGERPRINT,
+    ALLOWED_TABLES, ALLOWED_VERSIONS, DetectError, PROJECTION_VERSION, SUPPORTED_FINGERPRINT,
+    SchemaDivergence, adapter_descriptor, detect,
 };
 pub use snapshot::{Cell, Row, Snapshot, SnapshotError, TableSnapshot};
-pub use store_connection::{StoreConnection, StoreOpenError, BUSY_TIMEOUT};
+pub use store_connection::{BUSY_TIMEOUT, StoreConnection, StoreOpenError};
