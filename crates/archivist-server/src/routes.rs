@@ -708,7 +708,7 @@ impl Iterator for DrainChunks<'_, DigestingPayload<PayloadStream<BodyChannel>>> 
                     .finalize();
                 let digests = authorize::VerifiedDigests {
                     request_content: RequestContentDigest::from_raw(request_content),
-                    envelope: self.envelope_digest.clone(),
+                    envelope: self.envelope_digest,
                     payload_canonical: PayloadCanonicalDigest::from_raw(
                         self.canonical.clone().finalize(),
                     ),
