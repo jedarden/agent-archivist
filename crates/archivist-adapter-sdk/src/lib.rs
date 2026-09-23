@@ -32,6 +32,9 @@
 //!   (plan `EC-08`).
 //! - [`expected_inference`]: the expected-inference ledger adapters
 //!   publish so capture completeness is measurable.
+//! - [`inference_observer`]: the versioned exact-inference lifecycle around
+//!   a supported Rust transport boundary; it emits canonical protocol
+//!   artifacts without exposing provider SDK types.
 //! - [`capture_alignment`]: the join that aligns reconstructed provider
 //!   attempts with the ledger's coverage outcomes, so a bypassed exchange
 //!   can only ever resolve unobserved.
@@ -77,6 +80,7 @@ pub mod file_capture;
 pub mod file_generation;
 pub mod file_sidecar;
 pub mod fingerprint;
+pub mod inference_observer;
 pub mod lifecycle;
 pub mod session_identity;
 pub mod status;
@@ -114,6 +118,12 @@ pub use file_sidecar::{
 pub use fingerprint::{
     FingerprintAllowlist, FingerprintError, MAX_FINGERPRINTS, SourceFingerprint,
     UnsupportedFingerprint, unsupported_report,
+};
+pub use inference_observer::{
+    AttemptOutcome, CanonicalArtifact, FlushState, INFERENCE_OBSERVER_VERSION,
+    InferenceArtifactSink, InferenceObserver, InferenceObserverError, InferenceObserverV1,
+    LogicalInferenceClose, LogicalInferenceOutcome, LogicalInferenceStart, ObserverFailure,
+    RecordingArtifactSink, SinkFailure,
 };
 pub use lifecycle::{AdapterLifecycle, LifecycleState};
 pub use session_identity::{SessionIdentity, SessionIdentityError};
