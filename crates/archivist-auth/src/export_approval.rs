@@ -462,20 +462,20 @@ impl ExportApproval {
 
     /// Approved purpose.
     #[must_use]
-    pub const fn purpose(&self) -> &str {
-        &self.purpose
+    pub fn purpose(&self) -> &str {
+        self.purpose.as_str()
     }
 
     /// Approved destination class.
     #[must_use]
-    pub const fn destination_class(&self) -> &str {
-        &self.destination_class
+    pub fn destination_class(&self) -> &str {
+        self.destination_class.as_str()
     }
 
     /// Requesting operator.
     #[must_use]
-    pub const fn requester(&self) -> &str {
-        &self.requester
+    pub fn requester(&self) -> &str {
+        self.requester.as_str()
     }
 
     /// Policy version bound by the decision.
