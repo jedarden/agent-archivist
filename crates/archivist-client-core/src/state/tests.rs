@@ -74,8 +74,8 @@ fn object_count(store: &StateStore, kind: &str, name: &str) -> i64 {
 
 #[test]
 fn migration_list_is_contiguous_unique_and_reversible() {
-    assert_eq!(LATEST_SCHEMA_VERSION, 8);
-    assert_eq!(MIGRATIONS.len(), 8);
+    assert_eq!(LATEST_SCHEMA_VERSION, 9);
+    assert_eq!(MIGRATIONS.len(), 9);
     for (expected, step) in MIGRATIONS.iter().enumerate() {
         let expected_version = i64::try_from(expected).expect("index fits i64") + 1;
         assert_eq!(step.version, expected_version, "gap at index {expected}");
@@ -218,8 +218,27 @@ fn revert_one_steps_down_a_single_migration() {
     let mut store = migrated_in_memory();
     let at = store.revert_one().expect("revert one");
     assert_eq!(at, LATEST_SCHEMA_VERSION - 1);
-    assert_eq!(object_count(&store, "table", "adapter_health"), 0);
+    assert_eq!(object_count(&store, "table", "adapter_health"), 1);
     assert_eq!(object_count(&store, "table", "receipts"), 1);
+    let receipt_bytes_column: i64 = store
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('receipts') WHERE name = 'receipt_bytes'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("receipt evidence column query");
+    assert_eq!(receipt_bytes_column, 0);
+    let watermark_column: i64 = store
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('sources')
+             WHERE name = 'last_acknowledged_range_end'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("source watermark column query");
+    assert_eq!(watermark_column, 0);
     assert_eq!(
         store.schema_version().expect("version"),
         LATEST_SCHEMA_VERSION - 1

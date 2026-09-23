@@ -11,6 +11,7 @@ repository.workspace = true
 
 [dependencies]
 archivist-adapter-sdk = { path = "../archivist-adapter-sdk" }
+archivist-auth = { path = "../archivist-auth" }
 archivist-protocol = { path = "../archivist-protocol" }
 rusqlite.workspace = true
 # Filesystem free-space probing for the spool pressure floor (plan

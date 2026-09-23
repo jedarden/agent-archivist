@@ -384,6 +384,29 @@ const ADAPTER_HEALTH: Migration = Migration {
     ),
 };
 
+/// Migration 9: durable acknowledgement bookkeeping.
+///
+/// The canonical receipt bytes are retained so a receipt remains independently
+/// verifiable after the transport response and process that received it are
+/// gone. `last_acknowledged_range_end` is the numeric watermark paired with
+/// the source's opaque cursor: the acknowledgement transaction advances both
+/// only after inserting a verified receipt, and never lowers the watermark.
+const ACKNOWLEDGEMENT_STATE: Migration = Migration {
+    version: 9,
+    name: "add-durable-acknowledgement-state",
+    up: r"
+        ALTER TABLE receipts ADD COLUMN receipt_bytes BLOB;
+        ALTER TABLE sources ADD COLUMN last_acknowledged_range_end INTEGER
+            NOT NULL DEFAULT -1 CHECK (last_acknowledged_range_end >= -1);
+    ",
+    down: Some(
+        r"
+        ALTER TABLE sources DROP COLUMN last_acknowledged_range_end;
+        ALTER TABLE receipts DROP COLUMN receipt_bytes;
+    ",
+    ),
+};
+
 /// Every schema migration, oldest first. The runner refuses gaps, so this
 /// slice must stay contiguous from version 1.
 pub(crate) const MIGRATIONS: &[Migration] = &[
@@ -395,6 +418,7 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     UPLOAD_ATTESTATIONS,
     RECEIPTS,
     ADAPTER_HEALTH,
+    ACKNOWLEDGEMENT_STATE,
 ];
 
 /// Tables the schema is expected to contain once every migration is applied,

@@ -45,6 +45,7 @@
 //! not depend on the server, a concrete storage backend, or any specific
 //! harness adapter.
 
+pub mod acknowledgement;
 pub mod cli;
 pub mod config;
 pub mod inventory;

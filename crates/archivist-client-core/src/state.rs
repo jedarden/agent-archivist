@@ -336,6 +336,13 @@ impl StateStore {
         &self.conn
     }
 
+    /// The underlying mutable connection, for a state-machine operation that
+    /// must commit several related changes as one transaction.
+    #[must_use]
+    pub fn connection_mut(&mut self) -> &mut Connection {
+        &mut self.conn
+    }
+
     /// The applied schema version: the highest recorded migration, or 0
     /// before any migration.
     ///
