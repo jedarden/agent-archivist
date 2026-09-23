@@ -354,7 +354,13 @@ fn read_line(
                     return Ok(());
                 }
             }
-            Err(error) => return Err(TransportFailure::from_io(&error, Direction::Read, timeout_ms)),
+            Err(error) => {
+                return Err(TransportFailure::from_io(
+                    &error,
+                    Direction::Read,
+                    timeout_ms,
+                ));
+            }
         }
     }
 }
@@ -480,9 +486,7 @@ fn finish_response(
 
 enum ChunkedState {
     Size,
-    Data {
-        remaining: u64,
-    },
+    Data { remaining: u64 },
     DataCrlf,
     Trailers,
     Done,
@@ -518,15 +522,18 @@ impl BodyReader {
                 if *remaining == 0 {
                     return Ok(None);
                 }
-                let want = (*remaining)
-                    .min(READ_CHUNK_BYTES as u64)
-                    .min(cap_remaining as u64);
+                let want = usize::try_from(
+                    (*remaining)
+                        .min(READ_CHUNK_BYTES as u64)
+                        .min(cap_remaining as u64),
+                )
+                .map_err(|_| TransportFailure::of(TransportErrorClass::Other))?;
                 if want == 0 {
                     return Err(TransportFailure::of(TransportErrorClass::Other));
                 }
-                let mut chunk = vec![0_u8; want as usize];
+                let mut chunk = vec![0_u8; want];
                 read_exact(stream, &mut chunk)?;
-                *remaining -= want;
+                *remaining -= want as u64;
                 Ok(Some(chunk))
             }
             Self::Eof { stream, complete } => {
@@ -547,10 +554,9 @@ impl BodyReader {
                     ChunkedState::Size => {
                         let mut line = Vec::new();
                         read_chunk_line(stream, &mut line)?;
-                        let text = std::str::from_utf8(&line)
-                            .map_err(|_| {
-                                TransportFailure::of(TransportErrorClass::TransferDecode)
-                            })?;
+                        let text = std::str::from_utf8(&line).map_err(|_| {
+                            TransportFailure::of(TransportErrorClass::TransferDecode)
+                        })?;
                         let digits = text.split(';').next().unwrap_or("").trim();
                         let size = u64::from_str_radix(digits, 16).map_err(|_| {
                             TransportFailure::of(TransportErrorClass::TransferDecode)
@@ -562,15 +568,18 @@ impl BodyReader {
                         };
                     }
                     ChunkedState::Data { remaining } => {
-                        let want = (*remaining)
-                            .min(READ_CHUNK_BYTES as u64)
-                            .min(cap_remaining as u64);
+                        let want = usize::try_from(
+                            (*remaining)
+                                .min(READ_CHUNK_BYTES as u64)
+                                .min(cap_remaining as u64),
+                        )
+                        .map_err(|_| TransportFailure::of(TransportErrorClass::Other))?;
                         if want == 0 {
                             return Err(TransportFailure::of(TransportErrorClass::Other));
                         }
-                        let mut chunk = vec![0_u8; want as usize];
+                        let mut chunk = vec![0_u8; want];
                         read_exact(stream, &mut chunk)?;
-                        *remaining -= want;
+                        *remaining -= want as u64;
                         if *remaining == 0 {
                             *state = ChunkedState::DataCrlf;
                         }
@@ -709,7 +718,6 @@ impl EventStream {
 pub struct SseDecoder {
     buffer: Vec<u8>,
     data_lines: Vec<Vec<u8>>,
-    line: Vec<u8>,
     event_ready: bool,
 }
 
@@ -725,7 +733,10 @@ impl SseDecoder {
     pub fn feed(&mut self, chunk: &[u8]) {
         self.buffer.extend_from_slice(chunk);
         let mut consumed = 0_usize;
-        while let Some(newline) = self.buffer[consumed..].iter().position(|byte| *byte == b'\n') {
+        while let Some(newline) = self.buffer[consumed..]
+            .iter()
+            .position(|byte| *byte == b'\n')
+        {
             // The line is copied out before dispatch: `accept_line`
             // mutates the decoder the slice would borrow from.
             let line: Vec<u8> = self.buffer[consumed..consumed + newline].to_vec();
@@ -738,8 +749,8 @@ impl SseDecoder {
     /// The final event when the body ended mid-event with data lines
     /// pending; SSE framing otherwise drops it.
     pub fn finish(&mut self) -> Option<Vec<u8>> {
-        if !self.line.is_empty() {
-            let line = std::mem::take(&mut self.line);
+        if !self.buffer.is_empty() {
+            let line = std::mem::take(&mut self.buffer);
             self.accept_line(&line);
         }
         if self.data_lines.is_empty() {
@@ -807,7 +818,9 @@ mod tests {
         // after the colon keeps the value whole.
         decoder.feed(b"data: alpha\ndata:beta\ndata: \r\n\r\n");
         let event = decoder.take_complete_event().expect("second event");
-        assert_eq!(event, b"alpha\nbeta");
+        // Each data line contributes its newline (the empty line too);
+        // dispatch strips exactly one, so the payload keeps the last.
+        assert_eq!(event, b"alpha\nbeta\n");
 
         // A blank line with no pending data dispatches nothing.
         decoder.feed(b"event: ping\r\n\r\n");

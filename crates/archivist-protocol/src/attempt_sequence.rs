@@ -152,6 +152,13 @@ pub enum SequenceError {
     /// (VAL-002), so the record it would stamp would fail the protocol's
     /// own validation.
     InvalidCaptureTime,
+    /// The usage report's payload pairing contradicts its `usage_source`:
+    /// a stream-event report names its reporting event through the
+    /// payload member (the corpus's streamed-usage shape), and a
+    /// response-body report carries none — those bytes are already the
+    /// response artifact's payload, and the counters join through
+    /// `usage_source` and the attempt identity instead.
+    UsagePayloadMismatch,
 }
 
 impl std::fmt::Display for SequenceError {
@@ -197,6 +204,12 @@ impl std::fmt::Display for SequenceError {
                 f,
                 "attempt {attempt_ordinal}'s observation carries no decoded bytes; an \
                  empty body is the payload's absence"
+            ),
+            Self::UsagePayloadMismatch => write!(
+                f,
+                "the usage report's payload pairing contradicts its source; \
+                 a stream-event report names its reporting event by the \
+                 payload member, a response-body report carries none"
             ),
             Self::InvalidCaptureTime => f.write_str("capture_time is not a real calendar instant"),
         }
@@ -438,19 +451,26 @@ impl AttemptSequencer {
     /// protocol's own validation, so there is no way to emit a partial
     /// one.
     ///
-    /// The record carries no payload member of its own: the counters are
-    /// joined to the bytes they were read from through `usage_source` and
-    /// the attempt identity, not by copying the bytes.
+    /// The payload pairing is closed: a stream-event report carries the
+    /// reporting event's own bytes as its payload member, so the event is
+    /// identified by matching `payload_digest` within the attempt's
+    /// streaming-event artifacts (the corpus's streamed-usage shape),
+    /// and a response-body report carries none — those bytes are already
+    /// the response artifact's payload, and the counters join through
+    /// `usage_source` and the attempt identity instead.
     ///
     /// # Errors
     ///
     /// [`SequenceError::NoOpenAttempt`] before the first attempt,
     /// [`SequenceError::AttemptClosed`] once the attempt ended in its
-    /// transport-error record, [`SequenceError::InvalidCaptureTime`] for
-    /// a non-calendar instant.
+    /// transport-error record, [`SequenceError::UsagePayloadMismatch`]
+    /// when the payload pairing contradicts `usage_source`,
+    /// [`SequenceError::EmptyPayload`] for empty reporting bytes, and
+    /// [`SequenceError::InvalidCaptureTime`] for a non-calendar instant.
     pub fn usage(
         &mut self,
         usage_source: UsageSource,
+        reporting_bytes: Option<&[u8]>,
         input_tokens: u64,
         output_tokens: u64,
         total_tokens: u64,
@@ -459,6 +479,13 @@ impl AttemptSequencer {
         Self::checked_time(capture_time.as_ref())?;
         let track = self.current.as_ref().ok_or(SequenceError::NoOpenAttempt)?;
         track.ensure_open()?;
+        let payload = match (usage_source, reporting_bytes) {
+            (UsageSource::StreamEvent, Some(bytes)) => Some(Self::payload(bytes, track)?),
+            (UsageSource::ResponseBody, None) => None,
+            (UsageSource::StreamEvent, None) | (UsageSource::ResponseBody, Some(_)) => {
+                return Err(SequenceError::UsagePayloadMismatch);
+            }
+        };
         let metadata = Metadata {
             content_type: None,
             provider_request_id: None,
@@ -475,7 +502,7 @@ impl AttemptSequencer {
             &self.tenant_id,
             &self.origin_client_id,
             BoundaryEvent::Usage { usage_source },
-            None,
+            payload,
             Some(metadata),
             capture_time,
         ))
@@ -931,7 +958,7 @@ mod tests {
                     .stream_event(b"bytes", None, Some(time()))
                     .map(|_| ()),
                 "usage" => sequencer
-                    .usage(UsageSource::ResponseBody, 1, 1, 2, Some(time()))
+                    .usage(UsageSource::ResponseBody, None, 1, 1, 2, Some(time()))
                     .map(|_| ()),
                 _ => sequencer
                     .transport_error(TransportErrorClass::Other, None, Some(time()))
@@ -991,7 +1018,7 @@ mod tests {
             Err(SequenceError::NoOpenAttempt)
         );
         assert_eq!(
-            sequencer.usage(UsageSource::ResponseBody, 1, 2, 3, None),
+            sequencer.usage(UsageSource::ResponseBody, None, 1, 2, 3, None),
             Err(SequenceError::NoOpenAttempt)
         );
         assert_eq!(
@@ -1063,7 +1090,7 @@ mod tests {
         let mut sequencer = sequencer();
         let _first = sequencer.start_attempt().expect("first attempt");
         let artifact = sequencer
-            .usage(UsageSource::ResponseBody, 3, 5, 8, Some(time()))
+            .usage(UsageSource::ResponseBody, None, 3, 5, 8, Some(time()))
             .expect("usage");
         assert_eq!(artifact.kind(), InferenceArtifactKind::Usage);
         let metadata = artifact.metadata.as_ref().expect("usage metadata");
@@ -1072,6 +1099,65 @@ mod tests {
         assert_eq!(metadata.usage_total_tokens, Some(8));
         assert_eq!(artifact.payload, None);
         assert_round_trips(&artifact);
+    }
+
+    /// A stream-event usage report names its reporting event through the
+    /// payload member — the digest equals that event artifact's own — and
+    /// a pairing that contradicts the source is refused rather than
+    /// silently reshaped.
+    #[test]
+    fn stream_usage_names_its_reporting_event_and_mispairing_is_refused() {
+        let mut sequencer = sequencer();
+        let _first = sequencer.start_attempt().expect("first attempt");
+        sequencer
+            .provider_request(b"request", None, Some(time()))
+            .expect("request");
+        let reporting = b"{\"usage\":{\"prompt_tokens\":3}}";
+        let event = sequencer
+            .stream_event(reporting, None, Some(time()))
+            .expect("reporting event");
+        let usage = sequencer
+            .usage(
+                UsageSource::StreamEvent,
+                Some(reporting),
+                3,
+                5,
+                8,
+                Some(time()),
+            )
+            .expect("stream usage");
+        let event_payload = event.payload.as_ref().expect("event payload");
+        let usage_payload = usage.payload.as_ref().expect("usage payload");
+        assert_eq!(
+            usage_payload.payload_digest, event_payload.payload_digest,
+            "the usage digest names the reporting event"
+        );
+        assert_eq!(
+            usage_payload.payload_size,
+            u64::try_from(reporting.len()).unwrap()
+        );
+        assert_eq!(
+            usage.event,
+            BoundaryEvent::Usage {
+                usage_source: UsageSource::StreamEvent
+            }
+        );
+        assert_round_trips(&usage);
+        assert_eq!(
+            sequencer.usage(UsageSource::StreamEvent, None, 3, 5, 8, Some(time())),
+            Err(SequenceError::UsagePayloadMismatch)
+        );
+        assert_eq!(
+            sequencer.usage(
+                UsageSource::ResponseBody,
+                Some(b"response-bytes"),
+                3,
+                5,
+                8,
+                Some(time())
+            ),
+            Err(SequenceError::UsagePayloadMismatch)
+        );
     }
 
     /// The payload member is derived from the bytes the boundary

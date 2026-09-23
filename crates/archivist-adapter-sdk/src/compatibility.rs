@@ -91,10 +91,7 @@ impl fmt::Display for QualifiedRoute {
         write!(
             formatter,
             "{} integration={} lifecycle={} evidence={}",
-            self.route,
-            self.integration,
-            self.lifecycle_version,
-            self.evidence_digest
+            self.route, self.integration, self.lifecycle_version, self.evidence_digest
         )
     }
 }
@@ -158,7 +155,8 @@ impl CompatibilityMatrix {
             if existing == &qualification {
                 return Ok(());
             }
-            self.routes.retain(|route| route.route != qualification.route);
+            self.routes
+                .retain(|route| route.route != qualification.route);
         }
         self.routes.push(qualification);
         self.routes.sort_by_key(|route| route.route);

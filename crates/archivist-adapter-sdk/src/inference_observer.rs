@@ -585,7 +585,11 @@ impl<S> InferenceObserverV1<S> {
     ///
     /// This is an additive convenience over the required lifecycle methods;
     /// it emits the protocol's canonical `usage` artifact and retains no
-    /// provider-specific usage object.
+    /// provider-specific usage object. `reporting_bytes` carries the
+    /// reporting event's own bytes for a stream-sourced report — the
+    /// artifact names the event through its payload digest — and `None`
+    /// for a response-body report, whose bytes the response artifact
+    /// already carries.
     ///
     /// # Errors
     /// [`InferenceObserverError`] when the lifecycle, protocol, or sink
@@ -593,6 +597,7 @@ impl<S> InferenceObserverV1<S> {
     pub fn usage(
         &mut self,
         usage_source: UsageSource,
+        reporting_bytes: Option<&[u8]>,
         input_tokens: u64,
         output_tokens: u64,
         total_tokens: u64,
@@ -608,6 +613,7 @@ impl<S> InferenceObserverV1<S> {
             .ok_or(InferenceObserverError::NotStarted)?
             .usage(
                 usage_source,
+                reporting_bytes,
                 input_tokens,
                 output_tokens,
                 total_tokens,
@@ -957,7 +963,7 @@ mod tests {
             .expect("logical start");
         observer.start_provider_attempt().expect("attempt");
         observer
-            .usage(UsageSource::ResponseBody, 2, 3, 5, Some(time()))
+            .usage(UsageSource::ResponseBody, None, 2, 3, 5, Some(time()))
             .expect("usage");
         observer
             .attempt_outcome(AttemptOutcome::Incomplete, Some(time()))

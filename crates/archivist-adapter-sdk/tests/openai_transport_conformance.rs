@@ -36,12 +36,13 @@ struct Shared {
 /// drains, so no connection outlives its scene.
 struct LoopbackFixture {
     endpoint: WireEndpoint,
+    listener: Option<TcpListener>,
     shared: Arc<Shared>,
 }
 
 impl LoopbackFixture {
-    /// Bind a listener on an ephemeral loopback port and spawn its
-    /// server thread.
+    /// Bind a listener on an ephemeral loopback port; its server thread
+    /// starts with the first queued script (see [`Self::queue`]).
     fn new() -> std::io::Result<Self> {
         let listener = TcpListener::bind((LOOPBACK, 0))?;
         let port = listener.local_addr()?.port();
@@ -51,16 +52,18 @@ impl LoopbackFixture {
             scripts: Mutex::new(VecDeque::new()),
             received: Mutex::new(Vec::new()),
         });
-        let server_shared = Arc::clone(&shared);
-        std::thread::spawn(move || serve(listener, server_shared));
-        Ok(Self { endpoint, shared })
+        Ok(Self {
+            endpoint,
+            listener: Some(listener),
+            shared,
+        })
     }
 }
 
 /// Serve connections until the script queue drains. Each accepted
 /// connection reads one full request, records it, and executes the next
 /// script against the same socket the request arrived on.
-fn serve(listener: TcpListener, shared: Arc<Shared>) {
+fn serve(listener: &TcpListener, shared: &Shared) {
     loop {
         if shared.scripts.lock().expect("script lock").is_empty() {
             return;
@@ -139,6 +142,13 @@ impl OpenAiWireFixture for LoopbackFixture {
             .lock()
             .expect("script lock")
             .push_back(script);
+        // Spawn only once a script exists: the server's loop exits when
+        // the queue drains, so starting it earlier would race the
+        // scene's setup and drop the exchange on the floor.
+        if let Some(listener) = self.listener.take() {
+            let shared = Arc::clone(&self.shared);
+            std::thread::spawn(move || serve(&listener, &shared));
+        }
     }
 
     fn received(&self) -> Vec<ReceivedExchange> {

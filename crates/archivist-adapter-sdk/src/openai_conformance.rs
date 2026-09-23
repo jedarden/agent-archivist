@@ -50,15 +50,15 @@ use archivist_protocol::vocabulary::{
 };
 
 use crate::capture_alignment::align_attempts;
-use crate::compatibility::{QualifiedRoute, FIRST_PARTY_OPENAI_HTTP1};
+use crate::compatibility::{FIRST_PARTY_OPENAI_HTTP1, QualifiedRoute};
 use crate::expected_inference::{
     ExactOutcome, ExpectedInferenceLedger, ExpectedInferenceRecord,
     InferenceArtifactKind as LedgerKind, InferenceIdentity, ObservedArtifact, RoutePolicy,
 };
 use crate::inference_observer::{
-    AttemptOutcome, CanonicalArtifact, FlushState, InferenceArtifactSink, InferenceObserver,
-    InferenceObserverError, InferenceObserverV1, LogicalInferenceClose, LogicalInferenceOutcome,
-    ObserverFailure, SinkFailure, INFERENCE_OBSERVER_VERSION,
+    AttemptOutcome, CanonicalArtifact, FlushState, INFERENCE_OBSERVER_VERSION,
+    InferenceArtifactSink, InferenceObserver, InferenceObserverError, InferenceObserverV1,
+    LogicalInferenceClose, LogicalInferenceOutcome, ObserverFailure, SinkFailure,
 };
 use crate::openai_compat::{
     ChatMessage, ChatRequest, ChatRole, OpenAiEndpoint, OpenAiInference, RetryPolicy,
@@ -361,7 +361,9 @@ impl ConformanceReport {
     /// run qualified the route.
     #[must_use]
     pub fn evidence_digest(&self) -> Option<&str> {
-        self.qualification.as_ref().map(QualifiedRoute::evidence_digest)
+        self.qualification
+            .as_ref()
+            .map(QualifiedRoute::evidence_digest)
     }
 }
 
@@ -492,15 +494,10 @@ fn chat_request(streamed: bool) -> ChatRequest {
             ChatMessage::new(ChatRole::User, "probe"),
         ],
     );
-    let base = match base {
-        Ok(request) => request,
-        Err(_) => unreachable!("the conformance model and messages are valid consts"),
+    let Ok(base) = base else {
+        unreachable!("the conformance model and messages are valid consts")
     };
-    if streamed {
-        base.streamed()
-    } else {
-        base
-    }
+    if streamed { base.streamed() } else { base }
 }
 
 /// The request body every scene's client serializes.
@@ -658,6 +655,7 @@ fn scene_single_attempt(fixture: &mut dyn OpenAiWireFixture) -> SceneOutcome {
     checks.finish(artifacts)
 }
 
+#[allow(clippy::too_many_lines)] // one scripted scene, read top to bottom
 fn single_attempt(checks: &mut Checks, fixture: &mut dyn OpenAiWireFixture) -> SceneStep<usize> {
     let body = chat_body(false);
     fixture.queue(WireScript::Raw(success_response()));
@@ -671,7 +669,11 @@ fn single_attempt(checks: &mut Checks, fixture: &mut dyn OpenAiWireFixture) -> S
         checks,
         CheckId::FixtureReady,
     )?;
-    let report = step(client.complete(&chat_request(false)), checks, CheckId::ExchangeRan)?;
+    let report = step(
+        client.complete(&chat_request(false)),
+        checks,
+        CheckId::ExchangeRan,
+    )?;
     let sink = client.sink();
     let artifacts = sink.artifacts();
 
@@ -699,7 +701,9 @@ fn single_attempt(checks: &mut Checks, fixture: &mut dyn OpenAiWireFixture) -> S
         CheckId::ArtifactKinds,
     );
     checks.require(
-        artifacts.first().is_some_and(|artifact| payload_is(artifact, &body)),
+        artifacts
+            .first()
+            .is_some_and(|artifact| payload_is(artifact, &body)),
         CheckId::PayloadBytes,
     );
     checks.require(
@@ -766,6 +770,7 @@ fn scene_streamed_attempt(fixture: &mut dyn OpenAiWireFixture) -> SceneOutcome {
     checks.finish(artifacts)
 }
 
+#[allow(clippy::too_many_lines)] // one scripted scene, read top to bottom
 fn streamed_attempt(checks: &mut Checks, fixture: &mut dyn OpenAiWireFixture) -> SceneStep<usize> {
     let body = chat_body(true);
     let events: Vec<Vec<u8>> = vec![
@@ -789,7 +794,11 @@ fn streamed_attempt(checks: &mut Checks, fixture: &mut dyn OpenAiWireFixture) ->
         checks,
         CheckId::FixtureReady,
     )?;
-    let report = step(client.complete(&chat_request(true)), checks, CheckId::ExchangeRan)?;
+    let report = step(
+        client.complete(&chat_request(true)),
+        checks,
+        CheckId::ExchangeRan,
+    )?;
     let sink = client.sink();
     let artifacts = sink.artifacts();
 
@@ -813,7 +822,9 @@ fn streamed_attempt(checks: &mut Checks, fixture: &mut dyn OpenAiWireFixture) ->
         CheckId::ArtifactKinds,
     );
     checks.require(
-        artifacts.first().is_some_and(|artifact| payload_is(artifact, &body)),
+        artifacts
+            .first()
+            .is_some_and(|artifact| payload_is(artifact, &body)),
         CheckId::PayloadBytes,
     );
     // Every decoded event, in order, is exactly the data payload the
@@ -845,7 +856,9 @@ fn streamed_attempt(checks: &mut Checks, fixture: &mut dyn OpenAiWireFixture) ->
                         && metadata.provider_request_id.as_deref() == Some("req-conformance-2")
                         && metadata.http_status == Some(200)
                 })
-        }) && artifacts.get(2).is_some_and(|artifact| artifact.artifact().metadata.is_none()),
+        }) && artifacts
+            .get(2)
+            .is_some_and(|artifact| artifact.artifact().metadata.is_none()),
         CheckId::MetadataEntries,
     );
     // The usage record is joined to the reporting event's bytes.
@@ -855,18 +868,27 @@ fn streamed_attempt(checks: &mut Checks, fixture: &mut dyn OpenAiWireFixture) ->
                 == BoundaryEvent::Usage {
                     usage_source: UsageSource::StreamEvent,
                 }
-                && artifact.artifact().payload.as_ref().is_some_and(|payload| {
-                    payload.payload_digest == blob_digest(&events[2])
-                })
-                && artifact.artifact().metadata.as_ref().is_some_and(|metadata| {
-                    metadata.usage_input_tokens == Some(3)
-                        && metadata.usage_output_tokens == Some(5)
-                        && metadata.usage_total_tokens == Some(8)
-                })
+                && artifact
+                    .artifact()
+                    .payload
+                    .as_ref()
+                    .is_some_and(|payload| payload.payload_digest == blob_digest(&events[2]))
+                && artifact
+                    .artifact()
+                    .metadata
+                    .as_ref()
+                    .is_some_and(|metadata| {
+                        metadata.usage_input_tokens == Some(3)
+                            && metadata.usage_output_tokens == Some(5)
+                            && metadata.usage_total_tokens == Some(8)
+                    })
         }),
         CheckId::UsageCounters,
     );
-    checks.require(!kinds(sink).contains(&ArtifactKind::ProviderResponse), CheckId::ArtifactKinds);
+    checks.require(
+        !kinds(sink).contains(&ArtifactKind::ProviderResponse),
+        CheckId::ArtifactKinds,
+    );
     Ok(artifacts.len())
 }
 
@@ -897,12 +919,18 @@ fn stream_interrupted(
         checks,
         CheckId::FixtureReady,
     )?;
-    let report = step(client.complete(&chat_request(true)), checks, CheckId::ExchangeRan)?;
+    let report = step(
+        client.complete(&chat_request(true)),
+        checks,
+        CheckId::ExchangeRan,
+    )?;
     let sink = client.sink();
     let artifacts = sink.artifacts();
 
     checks.require(
-        report.attempts == 2 && report.attempt.succeeded && report.attempt.final_status == Some(200),
+        report.attempts == 2
+            && report.attempt.succeeded
+            && report.attempt.final_status == Some(200),
         CheckId::WireOutcome,
     );
     checks.require(
@@ -939,7 +967,8 @@ fn stream_interrupted(
     // The retry cites its closed predecessor with the stream-incomplete
     // reason, under the successor's identity.
     let retry = artifacts.iter().find(|artifact| {
-        artifact.artifact().attempt_ordinal == 1 && artifact.artifact().kind() == ArtifactKind::Retry
+        artifact.artifact().attempt_ordinal == 1
+            && artifact.artifact().kind() == ArtifactKind::Retry
     });
     checks.require(
         retry.is_some_and(|artifact| {
@@ -1001,12 +1030,18 @@ fn retried_after_reset(
         checks,
         CheckId::FixtureReady,
     )?;
-    let report = step(client.complete(&chat_request(false)), checks, CheckId::ExchangeRan)?;
+    let report = step(
+        client.complete(&chat_request(false)),
+        checks,
+        CheckId::ExchangeRan,
+    )?;
     let sink = client.sink();
     let artifacts = sink.artifacts();
 
     checks.require(
-        report.attempts == 2 && report.attempt.succeeded && report.attempt.final_status == Some(200),
+        report.attempts == 2
+            && report.attempt.succeeded
+            && report.attempt.final_status == Some(200),
         CheckId::WireOutcome,
     );
     checks.require(
@@ -1027,7 +1062,9 @@ fn retried_after_reset(
         }),
         CheckId::EventOrdering,
     );
-    let retry = artifacts.iter().find(|artifact| artifact.artifact().kind() == ArtifactKind::Retry);
+    let retry = artifacts
+        .iter()
+        .find(|artifact| artifact.artifact().kind() == ArtifactKind::Retry);
     checks.require(
         retry.is_some_and(|artifact| {
             artifact.artifact().attempt_ordinal == 1
@@ -1056,7 +1093,13 @@ fn retried_after_reset(
     let request_digests: Vec<_> = artifacts
         .iter()
         .filter(|artifact| artifact.artifact().kind() == ArtifactKind::ProviderRequest)
-        .map(|artifact| artifact.artifact().payload.as_ref().map(|payload| payload.payload_digest))
+        .map(|artifact| {
+            artifact
+                .artifact()
+                .payload
+                .as_ref()
+                .map(|payload| payload.payload_digest)
+        })
         .collect();
     checks.require(
         request_digests.len() == 2
@@ -1099,18 +1142,28 @@ fn rate_limit_retry(checks: &mut Checks, fixture: &mut dyn OpenAiWireFixture) ->
         checks,
         CheckId::FixtureReady,
     )?;
-    let report = step(client.complete(&chat_request(false)), checks, CheckId::ExchangeRan)?;
+    let report = step(
+        client.complete(&chat_request(false)),
+        checks,
+        CheckId::ExchangeRan,
+    )?;
     let sink = client.sink();
     let artifacts = sink.artifacts();
 
     checks.require(
-        report.attempts == 2 && report.attempt.succeeded && report.attempt.final_status == Some(200),
+        report.attempts == 2
+            && report.attempt.succeeded
+            && report.attempt.final_status == Some(200),
         CheckId::WireOutcome,
     );
     // The decoded failure response was captured first: a 429 with its
     // payload is evidence, not silence.
     checks.require(
-        kinds_at(sink, 0) == [ArtifactKind::ProviderRequest, ArtifactKind::ProviderResponse],
+        kinds_at(sink, 0)
+            == [
+                ArtifactKind::ProviderRequest,
+                ArtifactKind::ProviderResponse,
+            ],
         CheckId::ArtifactKinds,
     );
     checks.require(
@@ -1123,7 +1176,9 @@ fn rate_limit_retry(checks: &mut Checks, fixture: &mut dyn OpenAiWireFixture) ->
         }),
         CheckId::MetadataEntries,
     );
-    let retry = artifacts.iter().find(|artifact| artifact.artifact().kind() == ArtifactKind::Retry);
+    let retry = artifacts
+        .iter()
+        .find(|artifact| artifact.artifact().kind() == ArtifactKind::Retry);
     checks.require(
         retry.is_some_and(|artifact| {
             artifact.artifact().attempt_ordinal == 1
@@ -1175,7 +1230,11 @@ fn exhausted_failures(
         checks,
         CheckId::FixtureReady,
     )?;
-    let report = step(client.complete(&chat_request(false)), checks, CheckId::ExchangeRan)?;
+    let report = step(
+        client.complete(&chat_request(false)),
+        checks,
+        CheckId::ExchangeRan,
+    )?;
     let sink = client.sink();
     let artifacts = sink.artifacts();
 
@@ -1218,7 +1277,10 @@ fn exhausted_failures(
             BoundaryEvent::Retry {
                 retry_of_attempt_ordinal,
                 ..
-            } => Some((artifact.artifact().attempt_ordinal, retry_of_attempt_ordinal)),
+            } => Some((
+                artifact.artifact().attempt_ordinal,
+                retry_of_attempt_ordinal,
+            )),
             _ => None,
         })
         .collect();
@@ -1250,7 +1312,11 @@ fn read_timeout(checks: &mut Checks, fixture: &mut dyn OpenAiWireFixture) -> Sce
         checks,
         CheckId::FixtureReady,
     )?;
-    let report = step(client.complete(&chat_request(false)), checks, CheckId::ExchangeRan)?;
+    let report = step(
+        client.complete(&chat_request(false)),
+        checks,
+        CheckId::ExchangeRan,
+    )?;
     let sink = client.sink();
     let artifacts = sink.artifacts();
 
@@ -1315,7 +1381,11 @@ fn credentials_excluded(
         checks,
         CheckId::FixtureReady,
     )?;
-    let report = step(client.complete(&chat_request(false)), checks, CheckId::ExchangeRan)?;
+    let report = step(
+        client.complete(&chat_request(false)),
+        checks,
+        CheckId::ExchangeRan,
+    )?;
     let sink = client.sink();
     let artifacts = sink.artifacts();
 
@@ -1323,7 +1393,9 @@ fn credentials_excluded(
     checks.require(
         fixture.received().first().is_some_and(|exchange| {
             let (head, _) = split_request(&exchange.raw_request);
-            let head = String::from_utf8_lossy(head);
+            // Header names and auth schemes are case-insensitive on the
+            // wire; the credential value itself is not.
+            let head = String::from_utf8_lossy(head).to_ascii_lowercase();
             head.contains(&format!("authorization: bearer {CONFORMANCE_CREDENTIAL}"))
         }),
         CheckId::RequestOnWire,
@@ -1339,9 +1411,11 @@ fn credentials_excluded(
         b"www-authenticate",
     ];
     checks.require(
-        !artifacts
-            .iter()
-            .any(|artifact| forbidden.iter().any(|needle| canonical_contains(artifact, needle))),
+        !artifacts.iter().any(|artifact| {
+            forbidden
+                .iter()
+                .any(|needle| canonical_contains(artifact, needle))
+        }),
         CheckId::CredentialExcluded,
     );
     checks.require(
@@ -1372,7 +1446,11 @@ fn observation_failure(
         checks,
         CheckId::FixtureReady,
     )?;
-    let report = step(client.complete(&chat_request(false)), checks, CheckId::ExchangeRan)?;
+    let report = step(
+        client.complete(&chat_request(false)),
+        checks,
+        CheckId::ExchangeRan,
+    )?;
     let sink = client.sink();
 
     // The wire exchange itself succeeded — the failure is the
@@ -1410,7 +1488,11 @@ fn incomplete_flush(checks: &mut Checks, fixture: &mut dyn OpenAiWireFixture) ->
         checks,
         CheckId::FixtureReady,
     )?;
-    let report = step(client.complete(&chat_request(false)), checks, CheckId::ExchangeRan)?;
+    let report = step(
+        client.complete(&chat_request(false)),
+        checks,
+        CheckId::ExchangeRan,
+    )?;
     let sink = client.sink();
 
     // Every emission was accepted; teardown still refuses to claim a
@@ -1473,8 +1555,10 @@ fn hook_negatives_ambient(
 ) -> SceneStep<()> {
     let mut ledger = ExpectedInferenceLedger::new();
     let inference = OrchestratorOperation::new().start_inference();
-    let identity =
-        InferenceIdentity::new(inference.trace_id().clone(), inference.inference_request_id().clone());
+    let identity = InferenceIdentity::new(
+        inference.trace_id().clone(),
+        inference.inference_request_id().clone(),
+    );
     let time = step(expectation_time(), checks, CheckId::FixtureReady)?;
     step(
         ledger.freeze(ExpectedInferenceRecord::new(
@@ -1498,9 +1582,17 @@ fn hook_negatives_ambient(
     );
     checks.require(ambient.is_ok(), CheckId::FixtureReady);
     if let Ok(alignment) = align_attempts(&mut ledger, &[]) {
-        // The ambient exchange minted nothing: nothing aligned.
+        // The ambient exchange minted nothing: no artifact was left
+        // unmatched and the expectation appears with zero evidence —
+        // zero attempts reconstructed, nothing projected or recorded —
+        // never as an absence and never with a fabricated attempt.
         checks.require(
-            alignment.unmatched_artifacts == 0 && alignment.inferences.is_empty(),
+            alignment.unmatched_artifacts == 0
+                && alignment.inferences.get(&identity).is_some_and(|entry| {
+                    entry.reconstructed_attempts == 0
+                        && entry.projected_artifacts == 0
+                        && entry.recorded_artifacts == 0
+                }),
             CheckId::LedgerOutcome,
         );
     } else {
@@ -1520,9 +1612,15 @@ fn hook_negatives_missed_event(checks: &mut Checks, session: &OpaqueId) -> Scene
     let tenant_id = step(tenant(), checks, CheckId::FixtureReady)?;
     let origin_id = step(origin(), checks, CheckId::FixtureReady)?;
     let mut observer = InferenceObserverV1::new(tenant_id, origin_id, ConformanceSink::new());
-    let start = step(observer.start_logical_inference(None), checks, CheckId::ExchangeRan)?;
-    let missing_identity =
-        InferenceIdentity::new(start.trace_id().clone(), start.inference_request_id().clone());
+    let start = step(
+        observer.start_logical_inference(None),
+        checks,
+        CheckId::ExchangeRan,
+    )?;
+    let missing_identity = InferenceIdentity::new(
+        start.trace_id().clone(),
+        start.inference_request_id().clone(),
+    );
     let mut ledger = ExpectedInferenceLedger::new();
     let time = step(expectation_time(), checks, CheckId::FixtureReady)?;
     step(
@@ -1570,7 +1668,11 @@ fn hook_negatives_missed_event(checks: &mut Checks, session: &OpaqueId) -> Scene
                 ArtifactKind::TransportError => LedgerKind::TransportError,
             },
         );
-        step(ledger.record_artifact(entry), checks, CheckId::LedgerOutcome)?;
+        step(
+            ledger.record_artifact(entry),
+            checks,
+            CheckId::LedgerOutcome,
+        )?;
     }
     checks.require(
         ledger.close_completed(&missing_identity) == Ok(ExactOutcome::Partial),
@@ -1597,7 +1699,12 @@ mod tests {
 
     #[test]
     fn raw_response_carries_exact_body_under_content_length() {
-        let response = raw_response(200, "OK", &[("x-request-id", "r1")], COMPLETION_BODY.as_bytes());
+        let response = raw_response(
+            200,
+            "OK",
+            &[("x-request-id", "r1")],
+            COMPLETION_BODY.as_bytes(),
+        );
         let text = String::from_utf8(response).expect("utf-8 response");
         let declared = format!("content-length: {}", COMPLETION_BODY.len());
         assert!(text.contains(&declared));
@@ -1617,9 +1724,20 @@ mod tests {
     fn the_conformance_credential_never_appears_in_metadata() {
         let metadata = response_metadata(
             200,
-            &[("authorization".to_owned(), format!("Bearer {CONFORMANCE_CREDENTIAL}"))],
+            &[(
+                "authorization".to_owned(),
+                format!("Bearer {CONFORMANCE_CREDENTIAL}"),
+            )],
         );
-        assert!(metadata.is_empty());
+        // The closed allowlist has no field the credential could ride:
+        // nothing derived from the unlisted header renders anywhere.
+        assert!(!format!("{metadata:?}").contains(CONFORMANCE_CREDENTIAL));
+        assert!(metadata.content_type.is_none());
+        assert!(metadata.provider_request_id.is_none());
+        assert!(metadata.rate_limit_limit.is_none());
+        assert!(metadata.rate_limit_remaining.is_none());
+        assert!(metadata.rate_limit_reset.is_none());
+        assert_eq!(metadata.http_status, Some(200));
         let _ = Direction::Read;
         let _ = DEFAULT_MAX_BODY_BYTES;
     }

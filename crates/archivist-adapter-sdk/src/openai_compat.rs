@@ -66,11 +66,7 @@ impl OpenAiEndpoint {
     /// path fails its bounded grammar. The credential is retained by the
     /// endpoint and rendered only into the request's `authorization`
     /// header; it has no accessor and its [`fmt::Debug`] is redacted.
-    pub fn new(
-        host: String,
-        port: u16,
-        credential: String,
-    ) -> Result<Self, EndpointError> {
+    pub fn new(host: String, port: u16, credential: String) -> Result<Self, EndpointError> {
         let wire = WireEndpoint::new(host, port).map_err(|_| EndpointError::InvalidHost)?;
         Self::assemble(wire, "/v1/chat/completions".to_owned(), credential)
     }
@@ -104,9 +100,7 @@ impl OpenAiEndpoint {
     fn checked_path(path: &str) -> Result<(), EndpointError> {
         let valid = path.len() <= 2048
             && path.starts_with('/')
-            && path
-                .bytes()
-                .all(|byte| (0x21..=0x7e).contains(&byte));
+            && path.bytes().all(|byte| (0x21..=0x7e).contains(&byte));
         if valid {
             Ok(())
         } else {
@@ -117,9 +111,7 @@ impl OpenAiEndpoint {
     fn checked_credential(credential: &str) -> Result<(), EndpointError> {
         let valid = !credential.is_empty()
             && credential.len() <= 4096
-            && credential
-                .bytes()
-                .all(|byte| (0x21..=0x7e).contains(&byte));
+            && credential.bytes().all(|byte| (0x21..=0x7e).contains(&byte));
         if valid {
             Ok(())
         } else {
@@ -247,7 +239,10 @@ impl ChatRequest {
     /// [`ChatRequestError::InvalidModel`] when the model is empty or
     /// longer than 256 bytes, or [`ChatRequestError::NoMessages`] when
     /// `messages` is empty.
-    pub fn new(model: impl Into<String>, messages: Vec<ChatMessage>) -> Result<Self, ChatRequestError> {
+    pub fn new(
+        model: impl Into<String>,
+        messages: Vec<ChatMessage>,
+    ) -> Result<Self, ChatRequestError> {
         let model = model.into();
         if model.is_empty() || model.len() > 256 {
             return Err(ChatRequestError::InvalidModel);
@@ -298,10 +293,7 @@ impl ChatRequest {
             let _ = object.insert("stream", Value::Bool(true));
         }
         if let Some(max_tokens) = self.max_tokens {
-            let _ = object.insert(
-                "max_tokens",
-                Value::Int(i64::from(max_tokens)),
-            );
+            let _ = object.insert("max_tokens", Value::Int(i64::from(max_tokens)));
         }
         Value::Object(object).canonical_bytes()
     }
@@ -488,6 +480,12 @@ impl<S: crate::inference_observer::InferenceArtifactSink> OpenAiInference<S> {
     /// # Errors
     /// [`InferenceObserverError::AlreadyStarted`] when this client
     /// already ran its one logical inference.
+    ///
+    /// # Panics
+    /// Only if retry bookkeeping is corrupted: a retry pass starts
+    /// with no pending retry decision. The loop records a decision
+    /// before every non-terminal pass, so this is unreachable by
+    /// construction.
     pub fn complete(
         &mut self,
         request: &ChatRequest,
@@ -495,7 +493,7 @@ impl<S: crate::inference_observer::InferenceArtifactSink> OpenAiInference<S> {
         let start = self.observer.start_logical_inference(now())?;
         let body = request.body_bytes();
         let max_attempts = u64::from(self.policy.max_attempts.max(1));
-        let mut summary = AttemptSummary::default();
+        let mut summary;
         let mut pending_retry: Option<(RetryReason, u64)> = None;
         let mut attempts = 0_u64;
         let mut observation_error: Option<InferenceObserverError> = None;
@@ -506,59 +504,56 @@ impl<S: crate::inference_observer::InferenceArtifactSink> OpenAiInference<S> {
             } else {
                 let (reason, backoff_ms) =
                     pending_retry.take().expect("a retry decision is pending");
-                self.rest(backoff_ms);
+                Self::rest(backoff_ms);
                 self.observer
                     .start_retry_attempt(reason, Some(backoff_ms), now())
             };
-            if let Err(error) = step {
+            // A refused attempt transition is an observation failure:
+            // noted, never a gate on the wire exchange that follows.
+            if let Err(error) = step
+                && observation_error.is_none()
+            {
                 observation_error = Some(error);
-                break;
             }
             attempts += 1;
             summary = AttemptSummary::default();
 
-            let emitted = self
-                .observer
-                .decoded_request_bytes(&body, None, now())
-                .map(|_| ());
-            if let Err(error) = emitted {
-                observation_error = Some(error);
-                break;
-            }
+            note_observation(
+                &mut observation_error,
+                self.observer.decoded_request_bytes(&body, None, now()),
+            );
 
             let response = self.send(&body);
             match response {
                 Err(failure) => {
                     summary.final_failure = Some(failure);
-                    let recorded = self.observer.attempt_outcome(
-                        AttemptOutcome::TransportError {
-                            error_class: failure.class,
-                            timeout_ms: failure.timeout_ms,
-                        },
-                        now(),
+                    note_observation(
+                        &mut observation_error,
+                        self.observer.attempt_outcome(
+                            AttemptOutcome::TransportError {
+                                error_class: failure.class,
+                                timeout_ms: failure.timeout_ms,
+                            },
+                            now(),
+                        ),
                     );
-                    if let Err(error) = recorded {
-                        observation_error = Some(error);
-                        break;
-                    }
                     if attempts >= max_attempts {
                         break;
                     }
                     pending_retry = Some((RetryReason::TransportError, self.policy.backoff_ms));
                 }
-                Ok(response) => match self.record_response(response, &mut summary) {
-                    Ok(Some((reason, backoff_ms))) => {
+                Ok(response) => {
+                    if let Some((reason, backoff_ms)) =
+                        self.record_response(response, &mut summary, &mut observation_error)
+                    {
                         if attempts >= max_attempts {
                             break;
                         }
                         pending_retry = Some((reason, backoff_ms));
-                    }
-                    Ok(None) => break,
-                    Err(error) => {
-                        observation_error = Some(error);
+                    } else {
                         break;
                     }
-                },
+                }
             }
         }
 
@@ -586,10 +581,7 @@ impl<S: crate::inference_observer::InferenceArtifactSink> OpenAiInference<S> {
         let request = WireRequest {
             path: self.endpoint.path().to_owned(),
             headers: vec![
-                (
-                    "content-type".to_owned(),
-                    "application/json".to_owned(),
-                ),
+                ("content-type".to_owned(), "application/json".to_owned()),
                 (
                     "authorization".to_owned(),
                     format!("Bearer {}", self.endpoint.credential),
@@ -605,12 +597,15 @@ impl<S: crate::inference_observer::InferenceArtifactSink> OpenAiInference<S> {
     /// or every ordered stream event, usage when reported, the attempt
     /// outcome, and the retry decision the status implies.
     ///
-    /// `Ok(Some(..))` names the retry to start; `Ok(None)` is terminal.
+    /// Observation failures are noted into `observation_error` and never
+    /// gate the wire outcome. `Some(..)` names the retry to start;
+    /// `None` is terminal.
     fn record_response(
         &mut self,
         response: WireResponse,
         summary: &mut AttemptSummary,
-    ) -> Result<Option<(RetryReason, u64)>, InferenceObserverError> {
+        observation_error: &mut Option<InferenceObserverError>,
+    ) -> Option<(RetryReason, u64)> {
         let status = response.status;
         summary.final_status = Some(status);
         let retry_after = retry_after_seconds(&response);
@@ -618,20 +613,30 @@ impl<S: crate::inference_observer::InferenceArtifactSink> OpenAiInference<S> {
 
         match response.body {
             WireBody::Full(bytes) => {
-                self.observer
-                    .decoded_response_bytes(&bytes, Some(metadata), now())?;
+                note_observation(
+                    observation_error,
+                    self.observer
+                        .decoded_response_bytes(&bytes, Some(metadata), now()),
+                );
                 if let Some(usage) = usage_from_bytes(&bytes) {
-                    self.observer.usage(
+                    let recorded = self.observer.usage(
                         UsageSource::ResponseBody,
+                        None,
                         usage.input_tokens,
                         usage.output_tokens,
                         usage.total_tokens,
                         now(),
-                    )?;
+                    );
+                    note_observation(observation_error, recorded);
                 }
             }
             WireBody::Stream(mut stream) => {
                 let mut first_event = true;
+                // The usage artifact names its reporting event through
+                // the payload member and is recorded once the stream has
+                // drained — the corpus's events-then-usage shape, never
+                // an inline record between the events themselves.
+                let mut stream_usage: Option<(UsageCounters, Vec<u8>)> = None;
                 loop {
                     match stream.next_event() {
                         Ok(Some(event)) => {
@@ -641,16 +646,12 @@ impl<S: crate::inference_observer::InferenceArtifactSink> OpenAiInference<S> {
                             } else {
                                 None
                             };
-                            self.observer
-                                .decoded_response_event(&event, event_metadata, now())?;
+                            let recorded =
+                                self.observer
+                                    .decoded_response_event(&event, event_metadata, now());
+                            note_observation(observation_error, recorded);
                             if let Some(usage) = usage_from_bytes(&event) {
-                                self.observer.usage(
-                                    UsageSource::StreamEvent,
-                                    usage.input_tokens,
-                                    usage.output_tokens,
-                                    usage.total_tokens,
-                                    now(),
-                                )?;
+                                stream_usage = Some((usage, event.clone()));
                             }
                         }
                         Ok(None) => break,
@@ -671,19 +672,33 @@ impl<S: crate::inference_observer::InferenceArtifactSink> OpenAiInference<S> {
                             });
                             summary.final_status = None;
                             summary.succeeded = false;
-                            self.observer.attempt_outcome(
-                                AttemptOutcome::TransportError {
-                                    error_class: class,
-                                    timeout_ms: failure.timeout_ms,
-                                },
-                                now(),
-                            )?;
-                            return Ok(Some((
+                            note_observation(
+                                observation_error,
+                                self.observer.attempt_outcome(
+                                    AttemptOutcome::TransportError {
+                                        error_class: class,
+                                        timeout_ms: failure.timeout_ms,
+                                    },
+                                    now(),
+                                ),
+                            );
+                            return Some((
                                 RetryReason::StreamIncomplete,
                                 self.effective_backoff(retry_after),
-                            )));
+                            ));
                         }
                     }
+                }
+                if let Some((usage, reporting_bytes)) = stream_usage {
+                    let recorded = self.observer.usage(
+                        UsageSource::StreamEvent,
+                        Some(&reporting_bytes),
+                        usage.input_tokens,
+                        usage.output_tokens,
+                        usage.total_tokens,
+                        now(),
+                    );
+                    note_observation(observation_error, recorded);
                 }
             }
         }
@@ -692,8 +707,11 @@ impl<S: crate::inference_observer::InferenceArtifactSink> OpenAiInference<S> {
         // `Completed` whether the status is success or a decoded
         // provider error.
         summary.succeeded = (200..300).contains(&status);
-        self.observer
-            .attempt_outcome(AttemptOutcome::Completed, now())?;
+        note_observation(
+            observation_error,
+            self.observer
+                .attempt_outcome(AttemptOutcome::Completed, now()),
+        );
         let reason = if status == RATE_LIMIT_STATUS {
             Some(RetryReason::RateLimit)
         } else if status >= 500 {
@@ -701,7 +719,7 @@ impl<S: crate::inference_observer::InferenceArtifactSink> OpenAiInference<S> {
         } else {
             None
         };
-        Ok(reason.map(|reason| (reason, self.effective_backoff(retry_after))))
+        reason.map(|reason| (reason, self.effective_backoff(retry_after)))
     }
 
     fn effective_backoff(&self, retry_after: Option<u64>) -> u64 {
@@ -710,7 +728,7 @@ impl<S: crate::inference_observer::InferenceArtifactSink> OpenAiInference<S> {
             .min(MAX_BACKOFF_MS)
     }
 
-    fn rest(&self, backoff_ms: u64) {
+    fn rest(backoff_ms: u64) {
         if backoff_ms > 0 {
             std::thread::sleep(Duration::from_millis(backoff_ms));
         }
@@ -753,11 +771,7 @@ fn civil_from_days(days: i64) -> Option<(i64, u32, u32)> {
     if !(0..=9999).contains(&year) {
         return None;
     }
-    Some((
-        year,
-        u32::try_from(month).ok()?,
-        u32::try_from(day).ok()?,
-    ))
+    Some((year, u32::try_from(month).ok()?, u32::try_from(day).ok()?))
 }
 
 /// The first header value for lowercase `name`.
@@ -791,10 +805,7 @@ pub fn response_metadata(status: u16, headers: &[(String, String)]) -> Metadata 
         http_status: Some(u64::from(status)),
         rate_limit_limit: first_integer_header(
             headers,
-            &[
-                "x-ratelimit-limit-requests",
-                "x-ratelimit-limit-tokens",
-            ],
+            &["x-ratelimit-limit-requests", "x-ratelimit-limit-tokens"],
         ),
         rate_limit_remaining: first_integer_header(
             headers,
@@ -815,7 +826,9 @@ pub fn response_metadata(status: u16, headers: &[(String, String)]) -> Metadata 
 
 /// The `retry-after` header as whole seconds, when it is one.
 fn retry_after_seconds(response: &WireResponse) -> Option<u64> {
-    response.header("retry-after").and_then(|value| value.parse::<u64>().ok())
+    response
+        .header("retry-after")
+        .and_then(|value| value.parse::<u64>().ok())
 }
 
 /// Extract the OpenAI-compatible usage object from decoded bytes, when
@@ -841,6 +854,21 @@ pub fn usage_from_bytes(bytes: &[u8]) -> Option<UsageCounters> {
         output_tokens: counter("completion_tokens")?,
         total_tokens: counter("total_tokens")?,
     })
+}
+
+/// Record the first observation failure and keep the exchange running:
+/// observation never gates inference, but its failure stays visible in
+/// the completion report rather than being swallowed or aborting the
+/// wire exchange it was observing.
+fn note_observation(
+    observation_error: &mut Option<InferenceObserverError>,
+    result: Result<(), InferenceObserverError>,
+) {
+    if let Err(error) = result
+        && observation_error.is_none()
+    {
+        *observation_error = Some(error);
+    }
 }
 
 #[cfg(test)]
@@ -877,8 +905,8 @@ mod tests {
         let error = OpenAiEndpoint::new("h".to_owned(), 1, "bad\r\ninject".to_owned())
             .expect_err("control bytes refused");
         assert_eq!(error, EndpointError::InvalidCredential);
-        let error = OpenAiEndpoint::new("h".to_owned(), 1, String::new())
-            .expect_err("empty refused");
+        let error =
+            OpenAiEndpoint::new("h".to_owned(), 1, String::new()).expect_err("empty refused");
         assert_eq!(error, EndpointError::InvalidCredential);
     }
 
@@ -899,14 +927,8 @@ mod tests {
         let headers = vec![
             ("content-type".to_owned(), "application/json".to_owned()),
             ("x-request-id".to_owned(), "req-7".to_owned()),
-            (
-                "x-ratelimit-limit-requests".to_owned(),
-                "60".to_owned(),
-            ),
-            (
-                "x-ratelimit-remaining-requests".to_owned(),
-                "59".to_owned(),
-            ),
+            ("x-ratelimit-limit-requests".to_owned(), "60".to_owned()),
+            ("x-ratelimit-remaining-requests".to_owned(), "59".to_owned()),
             // Non-integer reset values stay out of the archive.
             ("x-ratelimit-reset-requests".to_owned(), "1s".to_owned()),
             // Hostile and merely-unlisted headers never enter metadata.
@@ -940,7 +962,9 @@ mod tests {
         assert_eq!(usage_from_bytes(b"{}"), None);
         // Negative counters are refused rather than truncated.
         assert_eq!(
-            usage_from_bytes(br#"{"usage":{"prompt_tokens":-1,"completion_tokens":5,"total_tokens":4}}"#),
+            usage_from_bytes(
+                br#"{"usage":{"prompt_tokens":-1,"completion_tokens":5,"total_tokens":4}}"#
+            ),
             None
         );
     }
@@ -954,7 +978,8 @@ mod tests {
         assert!(rendered.ends_with('Z'));
         // The civil conversion agrees with known instants.
         assert_eq!(civil_from_days(0), Some((1970, 1, 1)));
-        assert_eq!(civil_from_days(19_723), Some((2023, 12, 31)));
+        assert_eq!(civil_from_days(19_722), Some((2023, 12, 31)));
+        assert_eq!(civil_from_days(19_723), Some((2024, 1, 1)));
     }
 
     #[test]
