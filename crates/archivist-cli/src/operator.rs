@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! The Phase 5 operator command surface: the read-only `status`,
-//! `verify-state`, and `inventory` reports, and the `run --once` and
-//! `daemon` mutators that lock the state directory, migrate, reconcile
-//! the spool, evaluate pressure, and plan the round.
+//! The Phase 5 operator command surface: the read-only `doctor`, `status`,
+//! `verify-state`, and `inventory` reports, and the `run --once` and `daemon`
+//! mutators that lock the state directory, migrate, reconcile the spool,
+//! evaluate pressure, and plan the round.
 //!
 //! Every handler is the same shape [`crate::approve`] documents: a plain
 //! function pointer the binary registers for its command's joined path
@@ -36,6 +36,7 @@
 //! and leave stdout empty: the router writes the diagnostic to stderr.
 
 use std::path::Path;
+use std::time::Duration;
 
 use archivist_adapter_sdk::status::SourceScan;
 use archivist_client_core::cli::{CliError, CommandHandler, Invocation, now_rfc3339};
@@ -43,6 +44,7 @@ use archivist_client_core::config::{ConfigError, ConfigSources, ResolvedConfig};
 use archivist_client_core::daemon::{
     Cancel, LoopReport, LoopStop, ScheduleConfig, ScheduleConfigError, Sleeper, ThreadSleeper,
 };
+use archivist_client_core::doctor::{DoctorError, Finding};
 use archivist_client_core::inventory::InventoryOptions;
 use archivist_client_core::report::{
     cycle_document, inventory_document, status_report, verification_report,
@@ -83,13 +85,14 @@ const INTERNAL: &str = "client.internal_error";
 /// proves the pair still names registered commands with a shipped
 /// output kind.
 #[must_use]
-pub fn handlers() -> [(&'static str, CommandHandler); 5] {
+pub fn handlers() -> [(&'static str, CommandHandler); 6] {
     [
         ("daemon", daemon as CommandHandler),
         ("run", run_once as CommandHandler),
         ("inventory", inventory as CommandHandler),
         ("status", status as CommandHandler),
         ("verify-state", verify_state as CommandHandler),
+        ("doctor", doctor as CommandHandler),
     ]
 }
 
@@ -141,6 +144,42 @@ pub fn verify_state_over(resolved: &ResolvedConfig) -> Result<Value, CliError> {
     let report = verification_report(&snapshot, resolved.state_dir(), &now_timestamp())
         .map_err(|error| state_fault(&error))?;
     Ok(report.to_document())
+}
+
+/// The `doctor` command: a non-mutating local health examination plus one
+/// readiness request to the configured ingestion endpoint. Configuration is
+/// resolved before this function runs, so configuration faults retain the
+/// ordinary non-interactive exit-64 surface and no secret is resolved.
+pub fn doctor(invocation: &Invocation) -> Result<Value, CliError> {
+    let resolved = resolve(invocation)?;
+    let server_ready = probe_server_readiness(resolved.ingest_endpoint_url());
+    doctor_over(&resolved, &[], server_ready)
+}
+
+/// Perform `doctor` over an already-resolved configuration. The readiness
+/// boolean is an explicit seam for synthetic tests and for callers that have
+/// already performed the one permitted readiness request.
+///
+/// # Errors
+/// Returns the registered code for the most severe action-required finding;
+/// a failed doctor emits no result document, as required by CLI-019.
+pub fn doctor_over(
+    resolved: &ResolvedConfig,
+    scans: &[SourceScan],
+    server_ready: bool,
+) -> Result<Value, CliError> {
+    let result =
+        archivist_client_core::doctor::inspect(resolved, scans, server_ready, &now_timestamp())
+            .map_err(doctor_state_fault)?;
+    let Some(finding) = result
+        .findings()
+        .iter()
+        .copied()
+        .max_by_key(finding_severity)
+    else {
+        return Ok(result.to_document());
+    };
+    Err(CliError::registered(finding_code(finding)))
 }
 
 /// The `inventory` command: the per-scope coverage statuses and fleet
@@ -463,6 +502,76 @@ fn now_timestamp() -> Timestamp {
 /// Map a configuration refusal onto its registered code.
 fn config_fault(error: &ConfigError) -> CliError {
     CliError::registered(error.code().token())
+}
+
+fn doctor_state_fault(error: DoctorError) -> CliError {
+    match error {
+        DoctorError::StateUnavailable => CliError::registered(STATE_IO),
+    }
+}
+
+fn finding_code(finding: Finding) -> &'static str {
+    match finding {
+        Finding::Permissions => "client.permissions",
+        Finding::SqliteIntegrity => STATE_CORRUPT,
+        Finding::SourceReadability => "client.source_unreadable",
+        Finding::SpoolSpace => "client.disk_floor",
+        Finding::ClockSanity => "client.clock_skew",
+        Finding::ServerReadiness => "server.unavailable",
+        Finding::ClientLinkage => "auth.unlinked",
+    }
+}
+
+fn finding_severity(finding: &Finding) -> u8 {
+    match finding {
+        Finding::ClientLinkage => 4,
+        Finding::ServerReadiness | Finding::SpoolSpace => 3,
+        Finding::Permissions
+        | Finding::SqliteIntegrity
+        | Finding::SourceReadability
+        | Finding::ClockSanity => 2,
+    }
+}
+
+/// Probe the server's read-only readiness endpoint. The probe deliberately
+/// has no diagnostic return value: endpoint text, DNS names, and transport
+/// errors must never reach the JSON error stream. Both HTTP and HTTPS are
+/// supported, with a bounded timeout and no response body inspection.
+fn probe_server_readiness(endpoint: &str) -> bool {
+    if endpoint
+        .bytes()
+        .any(|byte| byte.is_ascii_whitespace() || byte == b'\r' || byte == b'\n')
+    {
+        return false;
+    }
+    if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
+        return false;
+    }
+    let target = format!("{}/health/ready", endpoint.trim_end_matches('/'));
+    let Ok(uri) = target.parse::<hyper::Uri>() else {
+        return false;
+    };
+    let connector = hyper_rustls::HttpsConnectorBuilder::new()
+        .with_webpki_roots()
+        .https_or_http()
+        .enable_http1()
+        .build();
+    let client: hyper_util::client::legacy::Client<_, http_body_util::Empty<bytes::Bytes>> =
+        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+            .build(connector);
+    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        return false;
+    };
+    runtime.block_on(async move {
+        tokio::time::timeout(Duration::from_secs(2), client.get(uri))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .is_some_and(|response| response.status() == hyper::StatusCode::OK)
+    })
 }
 
 /// Map a state-layer refusal onto its registered code: the lock-held

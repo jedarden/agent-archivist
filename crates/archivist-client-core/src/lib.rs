@@ -67,6 +67,7 @@ pub mod acknowledgement;
 pub mod cli;
 pub mod config;
 pub mod daemon;
+pub mod doctor;
 pub mod inventory;
 pub mod report;
 pub mod scheduler;

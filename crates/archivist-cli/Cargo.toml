@@ -35,6 +35,12 @@ archivist-protocol = { path = "../archivist-protocol" }
 archivist-server = { path = "../archivist-server" }
 archivist-storage = { path = "../archivist-storage" }
 archivist-storage-s3 = { path = "../archivist-storage-s3" }
+bytes.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-rustls.workspace = true
+hyper-util.workspace = true
 # Drives the two async control-plane acts of `admin approve` — the
 # authority-rotation chain fetch and the publication — over the
 # administration store's backend seam; the workspace's own runtime pin,

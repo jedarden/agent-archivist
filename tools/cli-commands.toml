@@ -118,6 +118,14 @@ stdout = "document"
 operand = "none"
 stdin = "none"
 keys = ["client.state_dir", "ingest.endpoint_url"]
+# A healthy examination is the only stdout result. Action-required findings
+# are registered error bodies on stderr, so the command exits nonzero without
+# emitting a partial or misleading document (CLI-019).
+# The emitted document is the healthy report only (CLI-019): any finding
+# needing operator action fails the command through the error surface, so
+# the document's check verdicts are pinned to ok. Pinned by
+# `schemas/v1/cli-doctor.json`.
+result_schema = "schemas/v1/cli-doctor.json"
 
 # ---------------------------------------------------------------------------
 # Ingestion server (plan Phase 4) — owner archivist-server

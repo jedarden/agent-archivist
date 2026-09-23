@@ -1,0 +1,309 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:cli-doctor",
+  "title": "Agent Archivist doctor result (archivist.cli-result/v1)",
+  "description": "The result document of the `doctor` command (plan Phase 5; CLI-019): one non-mutating health examination of the client — configuration resolution, filesystem permissions, SQLite integrity, lock ownership, source readability, spool free space, clock sanity, server readiness, and client-key linkage. The document is the healthy report only: a command that found anything needing operator action fails (ERR-029), emits its findings as `archivist.error/v1` diagnostics on stderr (ERR-030), and exits with the most severe finding's registered class, so every check verdict here is `ok` and can never be anything else within v1. Every field is a content-free counter, a mode literal, or a closed-vocabulary token; no field carries a path, an identifier, a transcript body, or a secret value or reference string (SEC-004, CFG-027). The examination never mutates: it opens state read-only, probes the lock without creating or retaining ownership, and touches the network only with one readiness connection.",
+  "type": "object",
+  "x-archivist": {
+    "namespace": "archivist.cli-result/v1",
+    "namespaceField": "schema",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "compatibility": "member additions are additive within v1 per plan Section 7.1 (CLI-015); redefining or removing a member, or a new namespace, is a v2 event"
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "generated_at",
+    "verdict",
+    "checks",
+    "evidence"
+  ],
+  "properties": {
+    "schema": {
+      "const": "archivist.cli-result/v1",
+      "description": "The CLI result namespace. Present in every result document so a consumer always knows which contract it is reading before anything else (VAL-001); an unknown namespace is not this format and fails closed.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "generated_at": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "The instant the examination ran (plan Section 7.3).",
+      "x-archivist": {
+        "bearing": "provenance",
+        "compat": "required-v1"
+      }
+    },
+    "verdict": {
+      "enum": [
+        "ok"
+      ],
+      "description": "The overall verdict. Pinned to `ok`: a doctor run that found anything needing action is a failed command that emits no stdout document (ERR-029, CLI-019), so a document with any other verdict cannot exist within v1.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "checks": {
+      "$ref": "#/$defs/check-verdicts",
+      "description": "One verdict per named check the plan's doctor deliverable pins.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "evidence": {
+      "$ref": "#/$defs/evidence",
+      "description": "The content-free evidence figures behind the check verdicts: modes, counters, and clock bounds. Reporting is by property, never by content (CFG-023).",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    }
+  },
+  "$defs": {
+    "check-verdicts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "configuration",
+        "permissions",
+        "sqlite_integrity",
+        "lock_ownership",
+        "source_readability",
+        "spool_space",
+        "clock_sanity",
+        "server_readiness",
+        "client_linkage"
+      ],
+      "properties": {
+        "configuration": {
+          "enum": [
+            "ok"
+          ],
+          "description": "Every configuration key resolved from its declared sources. A resolution failure fails the command before this document exists.",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        },
+        "permissions": {
+          "enum": [
+            "ok"
+          ],
+          "description": "The state directory and present state files carry the pinned modes (directories 0700, files 0600; CFG-023).",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        },
+        "sqlite_integrity": {
+          "enum": [
+            "ok"
+          ],
+          "description": "The read-only snapshot's automated integrity, foreign-key, and schema-object checks passed (CLI-009).",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        },
+        "lock_ownership": {
+          "enum": [
+            "ok"
+          ],
+          "description": "The state directory lock is in a healthy state — free, or held by the one mutator the design allows (CLI-007). A held daemon lock is healthy, so this check never fails; the document records which state it found.",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        },
+        "source_readability": {
+          "enum": [
+            "ok"
+          ],
+          "description": "Every adapter scan the composition supplied classified its source readable; no scan was forced to the failed coverage state.",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        },
+        "spool_space": {
+          "enum": [
+            "ok"
+          ],
+          "description": "Free space on the state filesystem is at or above the configured floor (OPS-003).",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        },
+        "clock_sanity": {
+          "enum": [
+            "ok"
+          ],
+          "description": "The local clock is within the accepted skew window of the freshest recorded event (plan Section 5: 5-minute allowance).",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        },
+        "server_readiness": {
+          "enum": [
+            "ok"
+          ],
+          "description": "One readiness connection to the ingest endpoint succeeded.",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        },
+        "client_linkage": {
+          "enum": [
+            "ok"
+          ],
+          "description": "Local state holds a server-issued receipt, the durable evidence this client was linked. No receipt is a diagnosis to link, not corruption.",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        }
+      },
+      "description": "The named checks and their verdicts.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state_dir_mode",
+        "spool_dir_mode",
+        "state_db_mode",
+        "lock_file_mode",
+        "lock",
+        "free_bytes",
+        "free_floor_bytes",
+        "schema_version",
+        "enrolled_sources",
+        "scanned_sources",
+        "unreadable_sources",
+        "receipt_count",
+        "freshest_event_at"
+      ],
+      "properties": {
+        "state_dir_mode": {
+          "$ref": "#/$defs/mode-literal",
+          "description": "The state directory's permission bits as a four-digit octal literal (expected 0700; CFG-023). The mode, never the path."
+        },
+        "spool_dir_mode": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/mode-literal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The spool directory's mode, or null when the directory does not exist yet — a fresh installation's expected state, not corruption."
+        },
+        "state_db_mode": {
+          "$ref": "#/$defs/mode-literal",
+          "description": "The state database file's mode (expected 0600; CFG-023)."
+        },
+        "lock_file_mode": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/mode-literal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The mutator lock file's mode, or null when no lock file exists — the state of a directory no mutator has ever run in."
+        },
+        "lock": {
+          "enum": [
+            "free",
+            "held"
+          ],
+          "description": "Whether the state directory lock was held at examination time. Held by the daemon is the healthy single-mutator state (CLI-007).",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        },
+        "free_bytes": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Free space on the state filesystem at examination time."
+        },
+        "free_floor_bytes": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "The configured spool free-space floor the figure above is compared against."
+        },
+        "schema_version": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "The state schema version the snapshot reported."
+        },
+        "enrolled_sources": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Sources enrolled in local state."
+        },
+        "scanned_sources": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Sources the supplied adapter scans covered."
+        },
+        "unreadable_sources": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Scans whose classification forced the failed coverage state: read, permission, or transport failures."
+        },
+        "receipt_count": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Server-issued receipts in local state — the durable linkage evidence."
+        },
+        "freshest_event_at": {
+          "oneOf": [
+            {
+              "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The freshest event timestamp local state records, the clock-sanity reference; null when state holds no timed rows."
+        }
+      },
+      "description": "The evidence figures behind the check verdicts.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "mode-literal": {
+      "type": "string",
+      "pattern": "^0[0-7]{3}$",
+      "maxLength": 4,
+      "description": "A permission mode as a four-digit octal literal.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    }
+  }
+}

@@ -14,7 +14,8 @@
 //! parser and router from [`archivist_client_core::cli`] and attaches the
 //! implemented phases' handlers at this composition point. The Phase 5
 //! operator surface is attached: the `daemon`, `run --once`, `inventory`,
-//! `status`, and `verify-state` commands the operator module composes.
+//! `status`, `verify-state`, and `doctor` commands the operator module
+//! composes.
 //! A registered command whose phase has not attached a handler is
 //! rejected as not shipped when invoked, rather than being represented
 //! by placeholder behavior.

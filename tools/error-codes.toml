@@ -317,3 +317,18 @@ description = "A secret reference target failed its existence, protection, reada
 class = "internal"
 message = "An internal invariant was violated; report this as a bug with the correlation identifier."
 description = "Client-side invariant failure; a defect rather than an operational condition."
+
+[codes."client.permissions"]
+class = "local_state"
+message = "State directory or file permissions are outside the pinned policy; correct the modes before mutating state."
+description = "The non-mutating doctor found filesystem permissions outside the pinned mode check (CFG-023)."
+
+[codes."client.disk_floor"]
+class = "resource_exhausted"
+message = "Free space on the state filesystem fell below the configured floor; uploading pauses until it is restored."
+description = "The non-mutating doctor found state filesystem free space below the spool.free_floor_bytes floor (OPS-003)."
+
+[codes."client.source_unreadable"]
+class = "local_state"
+message = "A configured source could not be read by its adapter; check adapter health before capturing."
+description = "The non-mutating doctor found an adapter scan classified a source as unreadable (read, permission, or transport failure)."

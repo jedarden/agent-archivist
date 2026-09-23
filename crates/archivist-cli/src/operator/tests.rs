@@ -19,8 +19,8 @@ use archivist_protocol::json::Value;
 use rusqlite::params;
 
 use super::{
-    INTERNAL, LOCK_HELD, daemon_loop, handlers, inventory_over, run_once_over, status_over,
-    verify_state_over,
+    INTERNAL, LOCK_HELD, daemon_loop, doctor_over, handlers, inventory_over, run_once_over,
+    status_over, verify_state_over,
 };
 
 /// Render a composed document to canonical text for member assertions.
@@ -204,6 +204,17 @@ fn status_stays_available_while_the_daemon_holds_the_lock() {
     // never touches it (CLI-007), so the report still composes.
     let _held = StateDirLock::acquire(dir.path()).expect("acquire the daemon's lock");
     assert!(status_over(&resolved_for(&dir)).is_ok());
+}
+
+#[test]
+fn doctor_returns_the_most_severe_registered_finding_without_sensitive_text() {
+    let dir = TempDir::new("doctor-findings");
+    let _store = seeded_store(&dir);
+    let error = doctor_over(&resolved_for(&dir), &[], false).expect_err("unhealthy fixture");
+    assert_eq!(error.code(), "auth.unlinked");
+    let body = String::from_utf8(error.body_bytes()).expect("diagnostic utf-8");
+    assert!(!body.contains(dir.path().to_string_lossy().as_ref()));
+    assert!(!body.contains("upstream-session"));
 }
 
 #[test]
