@@ -90,8 +90,7 @@ impl TrustCacheClock for SystemClock {
     fn now_seconds(&self) -> u64 {
         SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|since_epoch| since_epoch.as_secs())
-            .unwrap_or(0)
+            .map_or(0, |since_epoch| since_epoch.as_secs())
     }
 }
 
