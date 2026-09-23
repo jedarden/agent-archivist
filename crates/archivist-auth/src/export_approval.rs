@@ -4,7 +4,7 @@
 //!
 //! Raw export is deliberately a different authority from derived-content
 //! use.  This module therefore has no connection to the consumption-policy
-//! or agent-use approval types: an export approval names one UUIDv7 export
+//! or agent-use approval types: an export approval names one `UUIDv7` export
 //! request, one frozen `inventory-v1` digest, one selected-occurrence-set
 //! digest, one purpose, one destination class, one requester, one policy
 //! version, and one short expiry.  It contains no storage credential, object
@@ -42,7 +42,7 @@ pub const EXPORT_APPROVAL_RECORD_TYPE: &str = "export-approval-v1";
 /// Immutable record type that permanently revokes an export approval.
 pub const EXPORT_APPROVAL_REVOCATION_RECORD_TYPE: &str = "export-approval-revocation-v1";
 /// The maximum export approval lifetime, inclusive of the 24-hour boundary.
-pub const MAX_EXPORT_APPROVAL_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
+pub const MAX_EXPORT_APPROVAL_LIFETIME: Duration = Duration::from_hours(24);
 
 const APPROVAL_MEMBERS: [&str; 15] = [
     "authority_key_id",
@@ -81,7 +81,7 @@ const REVOCATION_MEMBER_NAMES: [&str; 9] = [
 pub struct ExportApprovalSpec {
     /// Tenant whose raw archive may be exported.
     pub tenant_id: TenantId,
-    /// UUIDv7 handle for exactly one frozen export request.
+    /// `UUIDv7` handle for exactly one frozen export request.
     pub export_request_id: RequestId,
     /// Digest of the frozen `inventory-v1` evidence.
     pub inventory_digest: BlobDigest,
@@ -265,6 +265,10 @@ impl TenantExportAuthority {
 }
 
 /// Issue an approval through a tenant export authority.
+///
+/// # Errors
+/// Returns [`ExportApprovalError`] when the scope, bounds, authority chain,
+/// or signing identity is not accepted.
 pub fn issue_export_approval(
     authority: &TenantExportAuthority,
     root: &PinnedAuthorityRoot,
@@ -375,6 +379,10 @@ impl ExportApproval {
     /// only when its authority signature verifies at the record's own issue
     /// instant.  A `use-approval` or governance signature cannot parse as
     /// this record type.
+    ///
+    /// # Errors
+    /// Returns [`ExportApprovalError`] when the closed shape, scope, bounds,
+    /// authority chain, or signature is invalid.
     pub fn verify(
         root: &PinnedAuthorityRoot,
         envelope: &[u8],
@@ -524,6 +532,10 @@ pub struct ExportApprovalRevocation {
 
 impl ExportApprovalRevocation {
     /// Verify a revocation against the pinned tenant authority chain.
+    ///
+    /// # Errors
+    /// Returns [`ExportApprovalError`] when the closed shape, scope,
+    /// authority chain, or signature is invalid.
     pub fn verify(
         root: &PinnedAuthorityRoot,
         envelope: &[u8],
@@ -743,6 +755,11 @@ impl ExportApprovalRepository for MemoryExportApprovalRepository {
 }
 
 /// Verify and store a signed approval through the approval-only repository.
+///
+/// # Errors
+/// Returns [`ExportApprovalError`] when the record or publication disagrees,
+/// the authority signature fails, or the repository rejects the immutable
+/// write.
 pub async fn publish_export_approval<R: ExportApprovalRepository>(
     repository: &mut R,
     root: &PinnedAuthorityRoot,
@@ -761,7 +778,11 @@ pub async fn publish_export_approval<R: ExportApprovalRepository>(
 }
 
 /// Verify and append a signed revocation, requiring its target approval to
-/// exist and its copied UUIDv7 request to match.
+/// exist and its copied `UUIDv7` request to match.
+///
+/// # Errors
+/// Returns [`ExportApprovalError`] when the target is missing, either signed
+/// record is invalid, the records disagree, or the append is a conflict.
 pub async fn publish_export_approval_revocation<R: ExportApprovalRepository>(
     repository: &mut R,
     root: &PinnedAuthorityRoot,
@@ -790,6 +811,10 @@ pub async fn publish_export_approval_revocation<R: ExportApprovalRepository>(
 }
 
 /// Read, verify, and classify one approval and its optional revocation.
+///
+/// # Errors
+/// Returns [`ExportApprovalError`] when the approval is missing or either
+/// stored record fails verification or cross-record consistency checks.
 pub async fn inspect_export_approval<R: ExportApprovalRepository>(
     repository: &R,
     root: &PinnedAuthorityRoot,
@@ -835,6 +860,10 @@ pub async fn inspect_export_approval<R: ExportApprovalRepository>(
 
 /// Issue and append a revocation for an approval already stored in the
 /// repository.
+///
+/// # Errors
+/// Returns [`ExportApprovalError`] when the approval is missing or invalid,
+/// the authority cannot sign at the requested instant, or the append fails.
 pub async fn revoke_export_approval<R: ExportApprovalRepository>(
     repository: &mut R,
     authority: &TenantExportAuthority,
@@ -1021,10 +1050,7 @@ fn valid_token(value: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._-".contains(byte))
 }
 
-fn parse_closed_object<'a>(
-    envelope: &'a [u8],
-    members: &[&str],
-) -> Result<Object, ExportApprovalError> {
+fn parse_closed_object(envelope: &[u8], members: &[&str]) -> Result<Object, ExportApprovalError> {
     let Value::Object(object) = archivist_protocol::json::parse(envelope)
         .map_err(|_| ExportApprovalError::MalformedRecord)?
     else {
@@ -1129,7 +1155,9 @@ fn timestamp_value(timestamp: &Timestamp) -> Result<i128, ExportApprovalError> {
         let value = raw
             .iter()
             .fold(0_i128, |value, byte| value * 10 + i128::from(byte - b'0'));
-        value * 10_i128.pow((9 - raw.len()) as u32)
+        let exponent =
+            u32::try_from(9 - raw.len()).map_err(|_| ExportApprovalError::InvalidBounds)?;
+        value * 10_i128.pow(exponent)
     } else {
         0
     };
@@ -1276,7 +1304,7 @@ mod tests {
         .expect("inspection verifies both records");
         assert_eq!(inspected.status(), ExportApprovalStatus::Revoked);
         assert_eq!(inspected.revocation().unwrap().digest(), revoked.digest());
-        assert!(inspected.is_active() == false);
+        assert!(!inspected.is_active());
     }
 
     #[test]
