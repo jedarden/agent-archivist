@@ -30,8 +30,10 @@ use archivist_protocol::object_key::{BlobObjectKey, OccurrenceObjectKey};
 use archivist_protocol::sha256;
 use archivist_protocol::vocabulary::{OccurrenceId, TenantId, Timestamp};
 
-use crate::audit_restore::{FrozenInventory, InventoryEntry, InventoryScope, ObjectMetadata};
-use crate::error::StorageError;
+use crate::audit_restore::{
+    FrozenInventory, InventoryDigest, InventoryEntry, InventoryScope, ObjectMetadata,
+};
+use crate::error::{StorageError, StorageErrorKind};
 
 /// The schema-pinned tombstone grace period.
 pub const DELETION_GRACE_DAYS: u64 = 30;
@@ -50,10 +52,22 @@ const UNKNOWN_RAW_KEY: &str = "reference scan inventory contains an unknown raw 
 const REFERENCE_ABSENT: &str = "occurrence reference is absent from its frozen inventory";
 const DUPLICATE_OCCURRENCE: &str = "reference scan contains a duplicate occurrence";
 const RETENTION_CONFLICT: &str = "retention view contains conflicting occurrence references";
+const AUDIT_PLAN_MISMATCH: &str = "collection audit event belongs to another plan";
+const AUDIT_SEQUENCE: &str = "collection audit event sequence is not contiguous";
+const AUDIT_CHAIN: &str = "collection audit event chain is not immutable";
+const AUDIT_UNKNOWN_CANDIDATE: &str = "collection audit event names an unknown candidate";
 
 /// Why collection cannot delete one blob.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DecisionReason {
+    /// The blob was not present in the first complete inventory.
+    ///
+    /// A candidate must be identified by the same committed metadata in both
+    /// inventories.  Presence in only one inventory is therefore evidence of
+    /// an incomplete or changing view, never evidence for deletion.
+    MissingFromFirstScan,
+    /// The blob was not present in the second complete inventory.
+    MissingFromSecondScan,
     /// A retained occurrence in the first complete scan names this blob.
     RetainedReferenceFirstScan,
     /// A retained occurrence in the second complete scan names this blob.
@@ -73,6 +87,8 @@ impl DecisionReason {
     #[must_use]
     pub const fn token(self) -> &'static str {
         match self {
+            Self::MissingFromFirstScan => "missing-from-first-scan",
+            Self::MissingFromSecondScan => "missing-from-second-scan",
             Self::RetainedReferenceFirstScan => "retained-reference-first-scan",
             Self::RetainedReferenceSecondScan => "retained-reference-second-scan",
             Self::RetainedReferenceOutsideScans => "retained-reference-outside-scans",
@@ -89,6 +105,13 @@ pub enum ActionOutcome {
     WouldDelete,
     /// Collection was disabled, so no delete call occurred.
     Disabled,
+    /// An immutable audit record was written immediately before deletion.
+    ///
+    /// This is an internal journal state.  It is deliberately distinct from
+    /// `deleted`: if a worker dies between the conditional delete and its
+    /// completion record, a later run can re-HEAD the object and continue
+    /// without treating an unrecorded delete as a fresh candidate.
+    DeletePending,
     /// The immediate HEAD-style observation disagreed with the frozen scan.
     ChangedBeforeDelete,
     /// The immediate observation could not be obtained.
@@ -106,6 +129,7 @@ impl ActionOutcome {
         match self {
             Self::WouldDelete => "would-delete",
             Self::Disabled => "disabled",
+            Self::DeletePending => "delete-pending",
             Self::ChangedBeforeDelete => "changed-before-delete",
             Self::UnreadableBeforeDelete => "unreadable-before-delete",
             Self::DeleteFailed => "delete-failed",
@@ -636,6 +660,14 @@ impl CollectionPlan {
         let mut decisions = Vec::with_capacity(all_blobs.len());
         for key in all_blobs {
             let mut reasons = Vec::new();
+            let first_entry = first.observation_for(&key);
+            let second_entry = second.observation_for(&key);
+            if first_entry.is_none() {
+                reasons.push(DecisionReason::MissingFromFirstScan);
+            }
+            if second_entry.is_none() {
+                reasons.push(DecisionReason::MissingFromSecondScan);
+            }
             let first_reference = first.references().any(|reference| {
                 reference.blob_key() == &key
                     && retention_by_occurrence
@@ -657,17 +689,13 @@ impl CollectionPlan {
             if retained_blobs.contains(&key) && !first_reference && !second_reference {
                 reasons.push(DecisionReason::RetainedReferenceOutsideScans);
             }
-            match (first.observation_for(&key), second.observation_for(&key)) {
+            match (first_entry, second_entry) {
                 (Some(left), Some(right)) if !stable_metadata_equal(left, right) => {
                     reasons.push(DecisionReason::ChangedBetweenScans);
-                }
-                (Some(entry), None) | (None, Some(entry)) if !has_commitment(entry) => {
-                    reasons.push(DecisionReason::UnstableObservation);
                 }
                 (Some(left), Some(right)) if !has_commitment(left) || !has_commitment(right) => {
                     reasons.push(DecisionReason::UnstableObservation);
                 }
-                (None, None) => reasons.push(DecisionReason::UnstableObservation),
                 _ => {}
             }
             decisions.push(BlobDecision { key, reasons });
@@ -693,6 +721,17 @@ impl CollectionPlan {
     #[must_use]
     pub const fn evaluated_at(&self) -> &Timestamp {
         &self.evaluated_at
+    }
+
+    /// The stable identity of this complete collection plan.
+    ///
+    /// The identity covers both frozen inventories, their completion times,
+    /// and every mark decision.  It is independent of execution outcomes, so
+    /// a worker can find and resume the same plan after a partial run without
+    /// rewriting the evidence of the run that preceded it.
+    #[must_use]
+    pub fn plan_digest(&self) -> InventoryDigest {
+        plan_digest(self)
     }
 
     /// The first complete scan.
@@ -740,6 +779,13 @@ pub trait BlobCollectionStore {
     ) -> impl Future<Output = Result<ObjectMetadata, StorageError>> + Send;
 
     /// Delete one candidate conditional on the just-observed metadata.
+    ///
+    /// The implementation MUST make this condition part of the destructive
+    /// operation itself (for example with a storage version or an atomic
+    /// compare-and-delete primitive).  A best-effort HEAD followed by an
+    /// unconditional delete is not a valid implementation: a concurrent
+    /// rewrite between the two calls must return
+    /// [`StorageErrorKind::IntegrityConflict`] and leave the object alive.
     fn delete_blob(
         &self,
         key: &BlobObjectKey,
@@ -752,6 +798,7 @@ pub trait BlobCollectionStore {
 pub struct CollectionEvidence {
     bytes: Vec<u8>,
     digest: archivist_protocol::vocabulary::BlobDigest,
+    plan_digest: InventoryDigest,
     mode: &'static str,
 }
 
@@ -766,6 +813,12 @@ impl CollectionEvidence {
     #[must_use]
     pub const fn digest(&self) -> &archivist_protocol::vocabulary::BlobDigest {
         &self.digest
+    }
+
+    /// The stable collection-plan identity covered by this evidence.
+    #[must_use]
+    pub const fn plan_digest(&self) -> &InventoryDigest {
+        &self.plan_digest
     }
 
     /// `simulation` or `execution`.
@@ -794,6 +847,125 @@ impl CollectionReport {
     pub fn deleted(&self) -> &[BlobObjectKey] {
         &self.deleted
     }
+}
+
+/// One immutable, append-only journal entry for a collection attempt.
+///
+/// The journal is separate from the final report because deletion is a
+/// multi-step operation.  A `delete-pending` entry is committed before the
+/// conditional delete call; the completion entry follows it.  If a worker
+/// stops between those entries, a subsequent worker can validate the chain,
+/// re-HEAD the object, and continue without losing the fact that an attempt
+/// was already in flight.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollectionAuditEvent {
+    plan_digest: InventoryDigest,
+    sequence: u64,
+    previous_digest: Option<archivist_protocol::vocabulary::BlobDigest>,
+    key: BlobObjectKey,
+    outcome: ActionOutcome,
+}
+
+impl CollectionAuditEvent {
+    /// Create an immutable journal entry.
+    #[must_use]
+    pub fn new(
+        plan_digest: InventoryDigest,
+        sequence: u64,
+        previous_digest: Option<archivist_protocol::vocabulary::BlobDigest>,
+        key: BlobObjectKey,
+        outcome: ActionOutcome,
+    ) -> Self {
+        Self {
+            plan_digest,
+            sequence,
+            previous_digest,
+            key,
+            outcome,
+        }
+    }
+
+    /// The stable identity of the collection plan this event belongs to.
+    #[must_use]
+    pub const fn plan_digest(&self) -> &InventoryDigest {
+        &self.plan_digest
+    }
+
+    /// The append-only sequence number.
+    #[must_use]
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    /// The preceding event's digest, if this is not the first event.
+    #[must_use]
+    pub const fn previous_digest(&self) -> Option<&archivist_protocol::vocabulary::BlobDigest> {
+        self.previous_digest.as_ref()
+    }
+
+    /// The scoped blob key named by this event.
+    #[must_use]
+    pub const fn key(&self) -> &BlobObjectKey {
+        &self.key
+    }
+
+    /// The action outcome recorded by this event.
+    #[must_use]
+    pub const fn outcome(&self) -> ActionOutcome {
+        self.outcome
+    }
+
+    /// The canonical immutable `archivist.collection-audit/v1` bytes.
+    #[must_use]
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let mut object = Object::new();
+        object.set(
+            "schema",
+            Value::Text("archivist.collection-audit/v1".to_owned()),
+        );
+        object.set("plan_digest", Value::Text(self.plan_digest.to_hex()));
+        object.set(
+            "sequence",
+            Value::Int(i64::try_from(self.sequence).unwrap_or(i64::MAX)),
+        );
+        object.set(
+            "previous_digest",
+            self.previous_digest
+                .as_ref()
+                .map_or(Value::Null, |digest| Value::Text(digest.to_hex())),
+        );
+        object.set("blob_key", Value::Text(self.key.as_str().to_owned()));
+        object.set("outcome", Value::Text(self.outcome.token().to_owned()));
+        Value::Object(object).canonical_bytes()
+    }
+
+    /// The content-addressed digest of the immutable event.
+    #[must_use]
+    pub fn digest(&self) -> archivist_protocol::vocabulary::BlobDigest {
+        archivist_protocol::vocabulary::BlobDigest::from_raw(sha256::digest(
+            &self.canonical_bytes(),
+        ))
+    }
+}
+
+/// The append-only audit identity used by resumable collection execution.
+///
+/// Implementations must persist events at immutable, derived keys and reject
+/// a conflicting replay of an occupied sequence.  The collector validates
+/// the returned chain before it performs any HEAD or delete operation, so an
+/// unavailable, truncated, reordered, or conflicting journal fails closed.
+pub trait CollectionAuditStore {
+    /// Load the immutable event chain for one plan.
+    fn events(
+        &self,
+        plan_digest: &InventoryDigest,
+    ) -> impl Future<Output = Result<Vec<CollectionAuditEvent>, StorageError>> + Send;
+
+    /// Append one event without replacing an existing event.
+    fn append_event(
+        &self,
+        event: &CollectionAuditEvent,
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
 }
 
 /// The two-pass blob collector.
@@ -884,12 +1056,163 @@ impl BlobCollector {
                     deleted.push(decision.key.clone());
                     outcomes.push((decision.key.clone(), ActionOutcome::Deleted));
                 }
+                Err(error) if error.kind() == StorageErrorKind::IntegrityConflict => {
+                    outcomes.push((decision.key.clone(), ActionOutcome::ChangedBeforeDelete));
+                }
                 Err(_) => outcomes.push((decision.key.clone(), ActionOutcome::DeleteFailed)),
             }
         }
         let mut report = self.report(plan, "execution", &outcomes);
         report.deleted = deleted;
         report
+    }
+
+    /// Execute with an immutable journal and resume only the unfinished part
+    /// of a previous attempt.
+    ///
+    /// The journal is read and validated before the first storage operation.
+    /// Each enabled candidate gets a `delete-pending` event after its final
+    /// HEAD succeeds and before the conditional delete is called.  A worker
+    /// that stops after that event can safely resume: a later HEAD decides
+    /// whether the object is still the same candidate, and a prior `deleted`
+    /// event suppresses a duplicate delete call.  Audit read/write failures
+    /// are returned before or between actions; they never turn into an
+    /// unrecorded destructive operation.
+    ///
+    /// # Errors
+    /// Returns the audit store's content-safe storage error when the journal
+    /// cannot be read or an immutable event cannot be appended, or when the
+    /// previously persisted journal fails its chain validation.
+    #[allow(clippy::too_many_lines)]
+    pub async fn execute_resumable<S, A>(
+        &self,
+        plan: &CollectionPlan,
+        store: &S,
+        audit: &A,
+    ) -> Result<CollectionReport, StorageError>
+    where
+        S: BlobCollectionStore + Sync,
+        A: CollectionAuditStore + Sync,
+    {
+        let plan_digest = plan.plan_digest();
+        let mut events = audit.events(&plan_digest).await?;
+        validate_audit_chain(plan, &plan_digest, &events)?;
+
+        let mut next_sequence = u64::try_from(events.len()).unwrap_or(u64::MAX);
+        let mut previous_digest = events.last().map(CollectionAuditEvent::digest);
+        let completed = events
+            .iter()
+            .filter(|event| event.outcome() == ActionOutcome::Deleted)
+            .map(|event| event.key().clone())
+            .collect::<BTreeSet<_>>();
+        let mut outcomes = Vec::new();
+        let mut deleted = completed.iter().cloned().collect::<Vec<_>>();
+
+        for decision in plan.decisions.iter().filter(|decision| decision.eligible()) {
+            if completed.contains(&decision.key) {
+                outcomes.push((decision.key.clone(), ActionOutcome::Deleted));
+                continue;
+            }
+
+            if !self.config.is_enabled() {
+                let outcome = ActionOutcome::Disabled;
+                append_audit_event(
+                    audit,
+                    &mut events,
+                    &plan_digest,
+                    &mut next_sequence,
+                    &mut previous_digest,
+                    decision.key.clone(),
+                    outcome,
+                )
+                .await?;
+                outcomes.push((decision.key.clone(), outcome));
+                continue;
+            }
+
+            let Some(expected) = plan.expected_metadata(&decision.key) else {
+                let outcome = ActionOutcome::UnreadableBeforeDelete;
+                append_audit_event(
+                    audit,
+                    &mut events,
+                    &plan_digest,
+                    &mut next_sequence,
+                    &mut previous_digest,
+                    decision.key.clone(),
+                    outcome,
+                )
+                .await?;
+                outcomes.push((decision.key.clone(), outcome));
+                continue;
+            };
+            let Ok(observed) = store.inspect_blob(&decision.key).await else {
+                let outcome = ActionOutcome::UnreadableBeforeDelete;
+                append_audit_event(
+                    audit,
+                    &mut events,
+                    &plan_digest,
+                    &mut next_sequence,
+                    &mut previous_digest,
+                    decision.key.clone(),
+                    outcome,
+                )
+                .await?;
+                outcomes.push((decision.key.clone(), outcome));
+                continue;
+            };
+            if !metadata_matches(&expected, &observed) {
+                let outcome = ActionOutcome::ChangedBeforeDelete;
+                append_audit_event(
+                    audit,
+                    &mut events,
+                    &plan_digest,
+                    &mut next_sequence,
+                    &mut previous_digest,
+                    decision.key.clone(),
+                    outcome,
+                )
+                .await?;
+                outcomes.push((decision.key.clone(), outcome));
+                continue;
+            }
+
+            append_audit_event(
+                audit,
+                &mut events,
+                &plan_digest,
+                &mut next_sequence,
+                &mut previous_digest,
+                decision.key.clone(),
+                ActionOutcome::DeletePending,
+            )
+            .await?;
+
+            let outcome = match store.delete_blob(&decision.key, &observed).await {
+                Ok(()) => {
+                    deleted.push(decision.key.clone());
+                    ActionOutcome::Deleted
+                }
+                Err(error) if error.kind() == StorageErrorKind::IntegrityConflict => {
+                    ActionOutcome::ChangedBeforeDelete
+                }
+                Err(_) => ActionOutcome::DeleteFailed,
+            };
+            append_audit_event(
+                audit,
+                &mut events,
+                &plan_digest,
+                &mut next_sequence,
+                &mut previous_digest,
+                decision.key.clone(),
+                outcome,
+            )
+            .await?;
+            outcomes.push((decision.key.clone(), outcome));
+        }
+
+        let mut report = self.report(plan, "execution", &outcomes);
+        report.deleted = deleted;
+        Ok(report)
     }
 
     fn report(
@@ -932,6 +1255,7 @@ fn render_evidence(
     root.set("schema", Value::Text(EVIDENCE_SCHEMA.to_owned()));
     root.set("mode", Value::Text(mode.to_owned()));
     root.set("enabled", Value::Bool(enabled));
+    root.set("plan_digest", Value::Text(plan.plan_digest().to_hex()));
     root.set("tenant_id", Value::Text(plan.tenant.as_str().to_owned()));
     root.set(
         "evaluated_at",
@@ -977,12 +1301,108 @@ fn render_evidence(
     CollectionEvidence {
         bytes,
         digest,
+        plan_digest: plan.plan_digest(),
         mode,
     }
 }
 
 fn count_value(value: usize) -> Value {
     Value::Int(i64::try_from(value).unwrap_or(i64::MAX))
+}
+
+fn plan_digest(plan: &CollectionPlan) -> InventoryDigest {
+    let mut frame = archivist_protocol::derivation::FrameBuilder::new("collection-plan-v1");
+    frame.push_text(plan.tenant.as_str());
+    frame.push_text(plan.evaluated_at.as_str());
+    frame.push_text(plan.first.completed_at().as_str());
+    frame.push_digest32(plan.first.inventory_digest().as_raw());
+    frame.push_text(plan.second.completed_at().as_str());
+    frame.push_digest32(plan.second.inventory_digest().as_raw());
+    frame.push_u63(plan.decisions.len() as u64);
+    for decision in &plan.decisions {
+        frame.push_text(decision.key.as_str());
+        frame.push_u63(decision.reasons.len() as u64);
+        for reason in &decision.reasons {
+            frame.push_text(reason.token());
+        }
+    }
+    InventoryDigest::from_raw(frame.finish())
+}
+
+fn validate_audit_chain(
+    plan: &CollectionPlan,
+    plan_digest: &InventoryDigest,
+    events: &[CollectionAuditEvent],
+) -> Result<(), StorageError> {
+    let mut previous = None;
+    for (index, event) in events.iter().enumerate() {
+        if event.plan_digest() != plan_digest {
+            return Err(StorageError::new(
+                StorageErrorKind::InventoryFault,
+                AUDIT_PLAN_MISMATCH,
+            ));
+        }
+        if event.sequence() != u64::try_from(index).unwrap_or(u64::MAX) {
+            return Err(StorageError::new(
+                StorageErrorKind::InventoryFault,
+                AUDIT_SEQUENCE,
+            ));
+        }
+        if event.previous_digest() != previous.as_ref() {
+            return Err(StorageError::new(
+                StorageErrorKind::InventoryFault,
+                AUDIT_CHAIN,
+            ));
+        }
+        let Some(decision) = plan
+            .decisions
+            .iter()
+            .find(|decision| decision.key == *event.key())
+        else {
+            return Err(StorageError::new(
+                StorageErrorKind::InventoryFault,
+                AUDIT_UNKNOWN_CANDIDATE,
+            ));
+        };
+        if !decision.eligible()
+            && matches!(
+                event.outcome(),
+                ActionOutcome::DeletePending
+                    | ActionOutcome::Deleted
+                    | ActionOutcome::ChangedBeforeDelete
+                    | ActionOutcome::UnreadableBeforeDelete
+                    | ActionOutcome::DeleteFailed
+            )
+        {
+            return Err(StorageError::new(
+                StorageErrorKind::InventoryFault,
+                AUDIT_UNKNOWN_CANDIDATE,
+            ));
+        }
+        previous = Some(event.digest());
+    }
+    Ok(())
+}
+
+async fn append_audit_event<A>(
+    audit: &A,
+    events: &mut Vec<CollectionAuditEvent>,
+    plan_digest: &InventoryDigest,
+    next_sequence: &mut u64,
+    previous_digest: &mut Option<archivist_protocol::vocabulary::BlobDigest>,
+    key: BlobObjectKey,
+    outcome: ActionOutcome,
+) -> Result<(), StorageError>
+where
+    A: CollectionAuditStore + Sync,
+{
+    let event =
+        CollectionAuditEvent::new(*plan_digest, *next_sequence, *previous_digest, key, outcome);
+    audit.append_event(&event).await?;
+    *previous_digest = Some(event.digest());
+    *next_sequence = next_sequence.saturating_add(1);
+    events.push(event);
+    Ok(())
 }
 
 fn has_commitment(entry: &InventoryEntry) -> bool {
@@ -1433,5 +1853,228 @@ mod tests {
             result.unwrap_err().kind(),
             CollectionErrorKind::InvalidInput
         );
+    }
+
+    #[test]
+    fn a_candidate_must_have_the_same_identity_in_both_inventories() {
+        let plan = BlobCollector::default()
+            .plan(
+                empty_scan("2026-09-01T00:00:00Z"),
+                scan("2026-09-02T00:00:00Z", &[(KEY_A, "a")], Vec::new()),
+                Vec::<OccurrenceRetention>::new(),
+                Timestamp::parse("2026-10-01T00:00:00Z").unwrap(),
+            )
+            .unwrap();
+        let present = plan
+            .decisions()
+            .iter()
+            .find(|decision| decision.key().as_str() == KEY_A)
+            .unwrap();
+        assert!(present.eligible());
+        let absent = plan
+            .decisions()
+            .iter()
+            .find(|decision| decision.key().as_str() == KEY_B)
+            .unwrap();
+        assert!(!absent.eligible());
+        assert!(
+            absent
+                .reasons()
+                .contains(&DecisionReason::MissingFromSecondScan)
+        );
+    }
+
+    #[test]
+    fn changed_identity_between_scans_survives_without_a_delete_attempt() {
+        let plan = BlobCollector::default()
+            .plan(
+                empty_scan("2026-09-01T00:00:00Z"),
+                scan(
+                    "2026-09-02T00:00:00Z",
+                    &[(KEY_A, "changed"), (KEY_B, "b")],
+                    Vec::new(),
+                ),
+                Vec::<OccurrenceRetention>::new(),
+                Timestamp::parse("2026-10-01T00:00:00Z").unwrap(),
+            )
+            .unwrap();
+        let changed = plan
+            .decisions()
+            .iter()
+            .find(|decision| decision.key().as_str() == KEY_A)
+            .unwrap();
+        assert!(!changed.eligible());
+        assert!(
+            changed
+                .reasons()
+                .contains(&DecisionReason::ChangedBetweenScans)
+        );
+    }
+
+    struct FailingCollectionStore {
+        inspections: AtomicUsize,
+        deletions: AtomicUsize,
+        inspect_error: bool,
+        concurrent_mutation: bool,
+    }
+
+    impl BlobCollectionStore for FailingCollectionStore {
+        async fn inspect_blob(&self, key: &BlobObjectKey) -> Result<ObjectMetadata, StorageError> {
+            self.inspections.fetch_add(1, Ordering::SeqCst);
+            if self.inspect_error {
+                return Err(StorageError::of_kind(StorageErrorKind::Unavailable));
+            }
+            Ok(MockCollectionStore::observed(key))
+        }
+
+        async fn delete_blob(
+            &self,
+            _key: &BlobObjectKey,
+            _observed: &ObjectMetadata,
+        ) -> Result<(), StorageError> {
+            self.deletions.fetch_add(1, Ordering::SeqCst);
+            if self.concurrent_mutation {
+                return Err(StorageError::of_kind(StorageErrorKind::IntegrityConflict));
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn unreadable_and_concurrently_changed_candidates_survive() {
+        let plan = BlobCollector::default()
+            .plan(
+                empty_scan("2026-09-01T00:00:00Z"),
+                empty_scan("2026-09-02T00:00:00Z"),
+                Vec::<OccurrenceRetention>::new(),
+                Timestamp::parse("2026-10-01T00:00:00Z").unwrap(),
+            )
+            .unwrap();
+        let unreadable = FailingCollectionStore {
+            inspections: AtomicUsize::new(0),
+            deletions: AtomicUsize::new(0),
+            inspect_error: true,
+            concurrent_mutation: false,
+        };
+        let report =
+            block_on(BlobCollector::new(CollectionConfig::enabled()).execute(&plan, &unreadable));
+        assert!(report.deleted().is_empty());
+        assert_eq!(unreadable.deletions.load(Ordering::SeqCst), 0);
+
+        let changed = FailingCollectionStore {
+            inspections: AtomicUsize::new(0),
+            deletions: AtomicUsize::new(0),
+            inspect_error: false,
+            concurrent_mutation: true,
+        };
+        let report =
+            block_on(BlobCollector::new(CollectionConfig::enabled()).execute(&plan, &changed));
+        assert!(report.deleted().is_empty());
+        assert_eq!(changed.deletions.load(Ordering::SeqCst), 2);
+        assert!(
+            report
+                .evidence()
+                .canonical_bytes()
+                .windows(b"changed-before-delete".len())
+                .any(|window| window == b"changed-before-delete")
+        );
+    }
+
+    struct InMemoryAudit {
+        events: std::sync::Mutex<Vec<CollectionAuditEvent>>,
+        fail_reads: bool,
+        fail_appends: bool,
+    }
+
+    impl CollectionAuditStore for InMemoryAudit {
+        async fn events(
+            &self,
+            _plan_digest: &InventoryDigest,
+        ) -> Result<Vec<CollectionAuditEvent>, StorageError> {
+            if self.fail_reads {
+                return Err(StorageError::of_kind(StorageErrorKind::Unavailable));
+            }
+            Ok(self.events.lock().expect("audit lock").clone())
+        }
+
+        async fn append_event(&self, event: &CollectionAuditEvent) -> Result<(), StorageError> {
+            if self.fail_appends {
+                return Err(StorageError::of_kind(StorageErrorKind::Unavailable));
+            }
+            self.events.lock().expect("audit lock").push(event.clone());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn resumable_execution_uses_immutable_events_to_skip_completed_work() {
+        let plan = BlobCollector::default()
+            .plan(
+                empty_scan("2026-09-01T00:00:00Z"),
+                empty_scan("2026-09-02T00:00:00Z"),
+                Vec::<OccurrenceRetention>::new(),
+                Timestamp::parse("2026-10-01T00:00:00Z").unwrap(),
+            )
+            .unwrap();
+        let audit = InMemoryAudit {
+            events: std::sync::Mutex::new(Vec::new()),
+            fail_reads: false,
+            fail_appends: false,
+        };
+        let store = MockCollectionStore {
+            inspections: AtomicUsize::new(0),
+            deletions: AtomicUsize::new(0),
+        };
+        let first = block_on(
+            BlobCollector::new(CollectionConfig::enabled())
+                .execute_resumable(&plan, &store, &audit),
+        )
+        .unwrap();
+        assert_eq!(first.deleted().len(), 2);
+        let first_delete_count = store.deletions.load(Ordering::SeqCst);
+        let events = audit.events.lock().expect("audit lock").clone();
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[0].outcome(), ActionOutcome::DeletePending);
+        assert_eq!(events[1].outcome(), ActionOutcome::Deleted);
+        assert_eq!(events[1].previous_digest(), Some(&events[0].digest()));
+        assert_eq!(first.evidence().plan_digest(), &plan.plan_digest());
+
+        let second = block_on(
+            BlobCollector::new(CollectionConfig::enabled())
+                .execute_resumable(&plan, &store, &audit),
+        )
+        .unwrap();
+        assert_eq!(second.deleted().len(), 2);
+        assert_eq!(store.deletions.load(Ordering::SeqCst), first_delete_count);
+    }
+
+    #[test]
+    fn audit_read_failure_is_fail_closed_before_head_or_delete() {
+        let plan = BlobCollector::default()
+            .plan(
+                empty_scan("2026-09-01T00:00:00Z"),
+                empty_scan("2026-09-02T00:00:00Z"),
+                Vec::<OccurrenceRetention>::new(),
+                Timestamp::parse("2026-10-01T00:00:00Z").unwrap(),
+            )
+            .unwrap();
+        let audit = InMemoryAudit {
+            events: std::sync::Mutex::new(Vec::new()),
+            fail_reads: true,
+            fail_appends: false,
+        };
+        let store = MockCollectionStore {
+            inspections: AtomicUsize::new(0),
+            deletions: AtomicUsize::new(0),
+        };
+        assert!(
+            block_on(
+                BlobCollector::new(CollectionConfig::enabled())
+                    .execute_resumable(&plan, &store, &audit)
+            )
+            .is_err()
+        );
+        assert_eq!(store.inspections.load(Ordering::SeqCst), 0);
+        assert_eq!(store.deletions.load(Ordering::SeqCst), 0);
     }
 }
