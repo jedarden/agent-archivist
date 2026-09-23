@@ -111,7 +111,7 @@ use archivist_protocol::vocabulary::{
 };
 
 use crate::authority::{
-    utc_instant, verify_control_record, AuthorityChainError, PinnedAuthorityRoot,
+    AuthorityChainError, PinnedAuthorityRoot, utc_instant, verify_control_record,
 };
 use crate::ed25519;
 
@@ -2230,25 +2230,29 @@ mod tests {
         // The accepted shape: the current half at the current epoch —
         // and a historical epoch below the pointer, whose half is the
         // administrator's own record.
-        assert!(publish_revocation(
-            &AUTHORITY_SEED,
-            &tenant(),
-            &client(),
-            2,
-            &key_id(&KEY2_SEED),
-            &pointer,
-            &instant(REVOKE_INSTANT),
-        )
-        .is_ok());
-        assert!(publish_revocation(
-            &AUTHORITY_SEED,
-            &tenant(),
-            &client(),
-            1,
-            &key_id(&KEY1_SEED),
-            &pointer,
-            &instant(REVOKE_INSTANT),
-        )
-        .is_ok());
+        assert!(
+            publish_revocation(
+                &AUTHORITY_SEED,
+                &tenant(),
+                &client(),
+                2,
+                &key_id(&KEY2_SEED),
+                &pointer,
+                &instant(REVOKE_INSTANT),
+            )
+            .is_ok()
+        );
+        assert!(
+            publish_revocation(
+                &AUTHORITY_SEED,
+                &tenant(),
+                &client(),
+                1,
+                &key_id(&KEY1_SEED),
+                &pointer,
+                &instant(REVOKE_INSTANT),
+            )
+            .is_ok()
+        );
     }
 }
