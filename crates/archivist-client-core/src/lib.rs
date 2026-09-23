@@ -39,7 +39,13 @@
 //! from one second to a 15-minute cap with no attempt limit, and the locked
 //! Section 7.8 error matrix's quarantine survives a restart — turns a
 //! materialized bundle into a retried, re-authorized upload promise; see
-//! [`upload`]. The registry-driven
+//! [`upload`]. The nonoverlapping daemon loop — [`daemon::run`] starts the
+//! first cycle immediately and each later cycle one uniformly jittered delay
+//! (fifteen minutes, up to ten percent) after the previous cycle *returned*,
+//! times every wait on the monotonic clock a wall-clock step cannot bend,
+//! and stops only on cancellation or a dead jitter source while holding two
+//! words of state — is the shell the collection engine attaches to at the
+//! composition root; see [`daemon`]. The registry-driven
 //! command parser, output envelope, error diagnostics, and handler router
 //! live in [`cli`]; command behavior remains in the implementing library
 //! crates and is attached by the composition root. The remaining surfaces
@@ -55,6 +61,7 @@
 pub mod acknowledgement;
 pub mod cli;
 pub mod config;
+pub mod daemon;
 pub mod inventory;
 pub mod scheduler;
 pub mod spool;
