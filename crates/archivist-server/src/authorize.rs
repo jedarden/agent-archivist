@@ -312,14 +312,16 @@ pub fn now_timestamp() -> Timestamp {
 #[must_use]
 pub fn classify(rejection: RequestRejection) -> AuthRejection {
     match rejection {
+        RequestRejection::UnlinkedUploader => AuthRejection::Unlinked,
+        // The revoked arm must precede the trust catch-all: the rest of
+        // the trust family is a proof that does not hold.
+        RequestRejection::Trust(AttemptRejection::Revoked) => AuthRejection::Revoked,
         RequestRejection::MalformedAuthorization
         | RequestRejection::AlteredRequest
         | RequestRejection::ExpiredAuthorization
         | RequestRejection::PrematureAuthorization
-        | RequestRejection::InvalidSignature => AuthRejection::ProofRejected,
-        RequestRejection::UnlinkedUploader => AuthRejection::Unlinked,
-        RequestRejection::Trust(AttemptRejection::Revoked) => AuthRejection::Revoked,
-        RequestRejection::Trust(_) => AuthRejection::ProofRejected,
+        | RequestRejection::InvalidSignature
+        | RequestRejection::Trust(_) => AuthRejection::ProofRejected,
         RequestRejection::CrossTenant
         | RequestRejection::ScopeNotGranted
         | RequestRejection::DelegationMissing
@@ -333,7 +335,7 @@ pub fn classify(rejection: RequestRejection) -> AuthRejection {
 /// are deliberately unread — the decision's digest members come from
 /// [`VerifiedDigests`] alone.
 #[must_use]
-pub fn presented_request(envelope: &Envelope, digests: VerifiedDigests) -> PresentedRequest {
+pub fn presented_request(envelope: &Envelope, digests: &VerifiedDigests) -> PresentedRequest {
     PresentedRequest {
         tenant_id: envelope.tenant_id.clone(),
         uploader_client_id: envelope.uploader_client_id.clone(),
@@ -507,9 +509,8 @@ where
     // constructor re-checks the half against the pointer's key ID —
     // a consistency only a defect here could break, but checked rather
     // than assumed.
-    let object = match json::parse(served.envelope()) {
-        Ok(Value::Object(object)) => object,
-        _ => return Err(EvidenceRejection::RegistryUnavailable),
+    let Ok(Value::Object(object)) = json::parse(served.envelope()) else {
+        return Err(EvidenceRejection::RegistryUnavailable);
     };
     let public_key = member_public_key(&object)?;
     let scopes = member_scopes(&object)?;
@@ -678,9 +679,8 @@ fn member_public_key(object: &Object) -> Result<Ed25519PublicKey, EvidenceReject
 /// pointer verification has already held each member's shape, so a
 /// failure here is a registry condition, not a wire condition.
 fn member_scopes(object: &Object) -> Result<LinkedClientScopes, EvidenceRejection> {
-    let scopes = match object.get("scopes") {
-        Some(Value::Object(scopes)) => scopes,
-        _ => return Err(EvidenceRejection::RegistryUnavailable),
+    let Some(Value::Object(scopes)) = object.get("scopes") else {
+        return Err(EvidenceRejection::RegistryUnavailable);
     };
     let harnesses = allowlist(scopes, "harnesses")?;
     let mut harness_ids = Vec::with_capacity(harnesses.len());
@@ -791,8 +791,8 @@ mod tests {
         let record = fixture_record();
         let covered = record.content_type().as_str();
         let stamp = at("2026-09-11T17:59:57Z");
-        let window = i64::from(request_verification::AUTHORIZATION_WINDOW_SECONDS);
-        let skew = i64::from(request_verification::CLOCK_SKEW_ALLOWANCE_SECONDS);
+        let window = request_verification::AUTHORIZATION_WINDOW_SECONDS;
+        let skew = request_verification::CLOCK_SKEW_ALLOWANCE_SECONDS;
         let shift = |seconds: i64| {
             let shifted = whole_seconds(&stamp) + seconds;
             let (year, month, day) = civil_from_days(shifted.div_euclid(86_400));

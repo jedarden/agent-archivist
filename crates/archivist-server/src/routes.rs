@@ -201,6 +201,10 @@ fn failure_response(failure: ServerFailure, request_id: Option<RequestId>) -> Re
 /// is reached only after complete signed-request verification produces an
 /// authorization capability; this slice deliberately fails closed while
 /// the streaming digest handoff is not yet available.
+///
+/// The stages deliberately stay in one function: the ordering guarantees
+/// above are legible only when a whole attempt reads top to bottom.
+#[allow(clippy::too_many_lines)]
 async fn attempt_pipeline<W, C>(
     state: &Arc<ServerState<W, C>>,
     request: Request,
@@ -340,7 +344,7 @@ where
                         failure_response(failure, Some(envelope.request_id)),
                     ),
                     Ok(digests) => {
-                        let presented = authorize::presented_request(&envelope, digests);
+                        let presented = authorize::presented_request(&envelope, &digests);
                         match authorize::authorize_attempt(
                             &record,
                             &presented,
@@ -522,9 +526,8 @@ where
         // The pledge is the envelope's declared canonical extent — the
         // declaration the whole stream is held to; the encoder enforces
         // it, and a rejection here is a build or version drift.
-        let encoder = match ZstdV1Encoder::new(expectation.uncompressed_bytes()) {
-            Ok(encoder) => encoder,
-            Err(_) => return ServerFailure::Internal,
+        let Ok(encoder) = ZstdV1Encoder::new(expectation.uncompressed_bytes()) else {
+            return ServerFailure::Internal;
         };
         // The drain's verdict gates the commit: until the drain has
         // verified the declared size, the encoder refuses its epilogue,
@@ -591,17 +594,16 @@ fn decode_failure(error: TransportDecodeError) -> ServerFailure {
     match error.payload_limit() {
         Some(limit) => ServerFailure::PayloadLimit(limit),
         None => match error {
-            // A decoder that could not be built is a build or version
-            // drift, not a wire condition.
-            TransportDecodeError::CodecSetup => ServerFailure::Internal,
             TransportDecodeError::MalformedFrame { .. } | TransportDecodeError::SourceRead(_) => {
                 framing_invalid()
             }
-            // Unreachable — the limit classes always carry a payload
-            // limit, answered above; a rerender here would mean the
-            // classification drifted, and internal is the fail-closed
-            // answer for that too.
-            TransportDecodeError::RecordTooLarge { .. }
+            // A decoder that could not be built is a build or version
+            // drift, not a wire condition. Unreachable too — the limit
+            // classes always carry a payload limit, answered above; a
+            // rerender here would mean the classification drifted, and
+            // internal is the fail-closed answer for all three.
+            TransportDecodeError::CodecSetup
+            | TransportDecodeError::RecordTooLarge { .. }
             | TransportDecodeError::ExpansionRatioExceeded { .. } => ServerFailure::Internal,
         },
     }
@@ -1488,10 +1490,12 @@ mod tests {
 
     /// The SHA-256 of `bytes` as the envelope's hex digest text.
     fn sha256_hex(bytes: &[u8]) -> String {
-        archivist_protocol::sha256::digest(bytes)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
+        use std::fmt::Write as _;
+        let mut hex = String::with_capacity(64);
+        for byte in archivist_protocol::sha256::digest(bytes) {
+            let _ = write!(hex, "{byte:02x}");
+        }
+        hex
     }
 
     /// The scenario's envelope rewritten over `canonical`'s transport
@@ -2965,6 +2969,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn hostile_request_bytes_never_reach_a_live_failure_or_the_metric_labels() {
         use crate::metrics::IngestOutcome;
         let state = test_state();
