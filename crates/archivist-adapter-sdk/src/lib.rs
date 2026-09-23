@@ -32,6 +32,9 @@
 //!   (plan `EC-08`).
 //! - [`expected_inference`]: the expected-inference ledger adapters
 //!   publish so capture completeness is measurable.
+//! - [`capture_alignment`]: the join that aligns reconstructed provider
+//!   attempts with the ledger's coverage outcomes, so a bypassed exchange
+//!   can only ever resolve unobserved.
 //! - [`file_capture`]: the file-source capture core's complete-JSONL
 //!   boundary selection (CAP-003, plan `EC-01`): the torn tail is
 //!   measured, never captured, and re-measured on the next pass (AC-02).
@@ -65,6 +68,7 @@
 
 pub mod artifact;
 pub mod capability;
+pub mod capture_alignment;
 pub mod conformance;
 pub mod descriptor;
 pub mod discovery;
@@ -84,6 +88,7 @@ pub mod status;
 pub use archivist_protocol::vocabulary::{AdapterId, VersionToken};
 
 pub use capability::{AdapterCapability, CapabilitySet, MAX_CAPABILITIES};
+pub use capture_alignment::{AlignmentError, CaptureAlignment, InferenceAlignment, align_attempts};
 pub use conformance::{
     CORPUS_RELATIVE, ConformanceAdapter, ConformanceSuite, CorpusError, GenerationContinuity,
     MountError, PassError, PassReport, SOURCE_FILE_NAME, Scenario, ScenarioOutcome,
