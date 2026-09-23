@@ -150,6 +150,12 @@ pub fn verify_state_over(resolved: &ResolvedConfig) -> Result<Value, CliError> {
 /// readiness request to the configured ingestion endpoint. Configuration is
 /// resolved before this function runs, so configuration faults retain the
 /// ordinary non-interactive exit-64 surface and no secret is resolved.
+///
+/// # Errors
+/// Returns configuration-fault codes from resolution, `client.state_io`
+/// when the state cannot be examined read-only, and the registered code for
+/// the most severe action-required finding; a failed doctor emits no result
+/// document, as required by CLI-019.
 pub fn doctor(invocation: &Invocation) -> Result<Value, CliError> {
     let resolved = resolve(invocation)?;
     let server_ready = probe_server_readiness(resolved.ingest_endpoint_url());
@@ -175,7 +181,7 @@ pub fn doctor_over(
         .findings()
         .iter()
         .copied()
-        .max_by_key(finding_severity)
+        .max_by_key(|finding| finding_severity(*finding))
     else {
         return Ok(result.to_document());
     };
@@ -522,7 +528,7 @@ fn finding_code(finding: Finding) -> &'static str {
     }
 }
 
-fn finding_severity(finding: &Finding) -> u8 {
+fn finding_severity(finding: Finding) -> u8 {
     match finding {
         Finding::ClientLinkage => 4,
         Finding::ServerReadiness | Finding::SpoolSpace => 3,
