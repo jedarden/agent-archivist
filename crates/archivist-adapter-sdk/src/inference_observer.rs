@@ -548,6 +548,15 @@ impl<S> InferenceObserverV1<S> {
         &self.sink
     }
 
+    /// Mutably borrow the sink, for integrations that own its delivery
+    /// controls (fault injection, delivery toggles, post-close draining)
+    /// and drive them between lifecycle calls without wrapping the whole
+    /// observer.
+    #[must_use]
+    pub const fn sink_mut(&mut self) -> &mut S {
+        &mut self.sink
+    }
+
     /// The active logical-inference start record, when started.
     #[must_use]
     pub const fn logical_inference(&self) -> Option<&LogicalInferenceStart> {

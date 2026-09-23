@@ -38,6 +38,21 @@
 //! - [`capture_alignment`]: the join that aligns reconstructed provider
 //!   attempts with the ledger's coverage outcomes, so a bypassed exchange
 //!   can only ever resolve unobserved.
+//! - [`openai_http1`]: the first-party HTTP/1.1 wire transport — the
+//!   actual transport boundary the exact-capture lifecycle wraps
+//!   (plan Phase 9). Standard-library sockets only; no third-party
+//!   client, no provider SDK.
+//! - [`openai_compat`]: the OpenAI-compatible first-party client built
+//!   on that transport, driving the versioned observer lifecycle around
+//!   every real exchange: decoded request, response or ordered stream
+//!   events, usage, retry, transport error, teardown — credentials on
+//!   the wire only, never in an artifact.
+//! - [`openai_conformance`]: the exact-capture conformance suite that
+//!   proves those properties at the real loopback boundary; the only
+//!   producer of a compatibility claim.
+//! - [`compatibility`]: the compatibility matrix — the registry of
+//!   routes whose exact-capture claim conformance evidence backs. A
+//!   route earns a row or the project does not claim it.
 //! - [`file_capture`]: the file-source capture core's complete-JSONL
 //!   boundary selection (CAP-003, plan `EC-01`): the torn tail is
 //!   measured, never captured, and re-measured on the next pass (AC-02).
@@ -72,6 +87,7 @@
 pub mod artifact;
 pub mod capability;
 pub mod capture_alignment;
+pub mod compatibility;
 pub mod conformance;
 pub mod descriptor;
 pub mod discovery;
@@ -82,6 +98,9 @@ pub mod file_sidecar;
 pub mod fingerprint;
 pub mod inference_observer;
 pub mod lifecycle;
+pub mod openai_compat;
+pub mod openai_conformance;
+pub mod openai_http1;
 pub mod session_identity;
 pub mod status;
 
@@ -124,6 +143,13 @@ pub use inference_observer::{
     InferenceArtifactSink, InferenceObserver, InferenceObserverError, InferenceObserverV1,
     LogicalInferenceClose, LogicalInferenceOutcome, LogicalInferenceStart, ObserverFailure,
     RecordingArtifactSink, SinkFailure,
+};
+pub use compatibility::{
+    CompatibilityMatrix, MatrixError, QualifiedRoute, FIRST_PARTY_OPENAI_HTTP1,
+};
+pub use openai_conformance::{
+    CheckId, ConformanceError, ConformanceReport, ConformanceSink, ReceivedExchange, SceneId,
+    SceneOutcome, TransportConformance, CONFORMANCE_CREDENTIAL, OpenAiWireFixture, WireScript,
 };
 pub use lifecycle::{AdapterLifecycle, LifecycleState};
 pub use session_identity::{SessionIdentity, SessionIdentityError};
