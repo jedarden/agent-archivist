@@ -84,6 +84,7 @@ use archivist_protocol::vocabulary::{
 };
 
 use crate::audit_restore::{AuditRestoreStore, FrozenInventory, InventoryKey, ObjectBody};
+use crate::collection::OccurrenceReference;
 use crate::error::{StorageError, StorageErrorKind};
 use crate::manifests::Delegation;
 
@@ -1001,6 +1002,25 @@ impl RawCatalogSource {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.prepared.is_empty()
+    }
+
+    /// Return the validated occurrence-to-blob edges prepared by the source.
+    ///
+    /// The returned order is the same canonical occurrence-key order used by
+    /// [`Self::next_occurrence`]. A caller building a two-pass collection
+    /// scan can pass these edges to [`crate::collection::ReferenceScan`]
+    /// without reading blob bodies a second time.
+    #[must_use]
+    pub fn references(&self) -> Vec<OccurrenceReference> {
+        self.prepared
+            .iter()
+            .map(|prepared| {
+                OccurrenceReference::new(
+                    *prepared.manifest.occurrence_id(),
+                    prepared.blob_key.clone(),
+                )
+            })
+            .collect()
     }
 }
 

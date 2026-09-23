@@ -74,6 +74,9 @@
 //!   validating iteration over a frozen tenant raw prefix (occurrences,
 //!   attestations, referenced blobs) for offline catalog rebuild and
 //!   reference scans; reachable only through the audit/restore identity.
+//! - [`collection`] — the disabled-by-default two-pass blob collector:
+//!   retention-aware reference planning, simulation, pre-delete metadata
+//!   revalidation, and canonical audit evidence.
 //! - [`ingest`] — the composition of the two ingest identities, proving the
 //!   authority boundary at the type level.
 //! - [`scoped_write`] — the Phase 10 scoped writers: catalog checkpoints
@@ -112,6 +115,7 @@ pub mod audit_restore;
 pub mod blob;
 pub mod capability;
 pub mod catalog_source;
+pub mod collection;
 pub mod commit;
 pub mod control;
 pub mod error;
