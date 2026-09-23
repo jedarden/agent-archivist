@@ -83,6 +83,19 @@
 //! coordinate, encoding, size, schema — onto a frozen registry code with
 //! the pinned message template rendered content-free, before any commit.
 //!
+//! The **bounded transport-decode stage** is implemented: [`transport`]
+//! turns part two's declared `TransportEncoding` — identity
+//! pass-through, or one Zstandard frame through the storage profile's
+//! window-capped decoder — into bounded canonical chunks, enforcing the
+//! 256 MiB single-record cap and the 100:1 expansion ratio mid-stream
+//! against the bytes actually produced, so a violating attempt fails
+//! before anything commits; once failed, the stage is closed — it
+//! re-yields that first failure on every later call and never reads the
+//! source again. Memory follows the chunk and concurrency buffers,
+//! never the body. The route wiring that drives the stage — and the
+//! store-side abort its failures demand — lands on the ingest route
+//! next.
+//!
 //! The Phase 4 bootstrap surface is complete: configuration, trust
 //! anchors, replica state, metrics, the routes, the serve lifecycle, and
 //! the request resource guards. The ingestion pipeline (bounded parsing,
@@ -106,4 +119,5 @@ pub mod parse;
 pub mod routes;
 pub mod serve;
 pub mod state;
+pub mod transport;
 pub mod trust;
