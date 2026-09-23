@@ -25,10 +25,17 @@
 //! gates on the schema allowlist and reads the five allowlisted tables
 //! inside one read transaction, with deterministic ordering, per-cell
 //! presence bits, raw field bytes, and shape-only debug output. The
-//! allowlisted projection and the parity oracle — the adapter producing
-//! records identical to the snapshot's allowlisted keys, row counts,
-//! null/presence bits, and per-field digests — arrive with the remaining
-//! Phase 6B work. The assembled-reader fault suite (`tests/
+//! allowlisted projection is implemented: [`Projection::project`] renders
+//! the snapshot as one RFC 8785 canonical JSON record per allowlisted row
+//! — the table, its ordered key tuple, and every allowlisted field with
+//! `null` where the cell is NULL — and a cell with no faithful canonical
+//! form (a blob, invalid UTF-8, a non-finite float) fails the projection
+//! closed, so no partial export exists to mistake for complete. The
+//! parity evidence (`tests/projection.rs`) reconciles the Phase 6 parity
+//! tuple — keys, order, row counts, null/presence bits, and per-field
+//! digests — against direct database reads and verifies large fields
+//! byte-exactly, so export truncation cannot pass silently. The
+//! assembled-reader fault suite (`tests/
 //! database_faults.rs`) lands the "database-contention-faults" gate-row
 //! evidence: unknown schemas, locks held past the busy window, store bytes
 //! that vanish mid-scan, and permission denials all classify into the
@@ -44,13 +51,18 @@
 //! bundled `rusqlite` driver is the crate's one external dependency, kept
 //! inside the adapter per docs/notes/crate-ownership.md rule 3.
 
+mod canonical;
+mod projection;
 mod schema;
 mod snapshot;
 mod store_connection;
 
+pub use canonical::{Json, Object};
+pub use projection::{FieldValue, ProjectedRow, Projection, ProjectionError};
+
 pub use schema::{
-    ALLOWED_TABLES, ALLOWED_VERSIONS, DetectError, PROJECTION_VERSION, SUPPORTED_FINGERPRINT,
-    SchemaDivergence, adapter_descriptor, detect,
+    adapter_descriptor, detect, DetectError, SchemaDivergence, ALLOWED_TABLES, ALLOWED_VERSIONS,
+    PROJECTION_VERSION, SUPPORTED_FINGERPRINT,
 };
 pub use snapshot::{Cell, Row, Snapshot, SnapshotError, TableSnapshot};
-pub use store_connection::{BUSY_TIMEOUT, StoreConnection, StoreOpenError};
+pub use store_connection::{StoreConnection, StoreOpenError, BUSY_TIMEOUT};
