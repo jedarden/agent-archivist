@@ -32,7 +32,14 @@
 //! largest-backlog-first under a 256 MiB per-source quantum, with
 //! deterministic simulations proving largest histories progress first
 //! while small and low-volume sources stay starvation-bounded — plans the
-//! cycle from that inventory; see [`scheduler`]. The registry-driven
+//! cycle from that inventory; see [`scheduler`]. The immutable upload
+//! retry state — [`upload::freeze_upload`] freezes the identity at spool
+//! creation (request, occurrence, and upload-attestation), while each claim
+//! receives fresh per-attempt authorization, the full-jitter schedule runs
+//! from one second to a 15-minute cap with no attempt limit, and the locked
+//! Section 7.8 error matrix's quarantine survives a restart — turns a
+//! materialized bundle into a retried, re-authorized upload promise; see
+//! [`upload`]. The registry-driven
 //! command parser, output envelope, error diagnostics, and handler router
 //! live in [`cli`]; command behavior remains in the implementing library
 //! crates and is attached by the composition root. The remaining surfaces
@@ -52,3 +59,4 @@ pub mod inventory;
 pub mod scheduler;
 pub mod spool;
 pub mod state;
+pub mod upload;

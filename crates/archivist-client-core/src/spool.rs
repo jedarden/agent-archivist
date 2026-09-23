@@ -102,6 +102,9 @@ pub const SPOOL_DIR_NAME: &str = "spool";
 /// `<spool_entry_id>.bundle`.
 pub const BUNDLE_SUFFIX: &str = ".bundle";
 
+/// `UUIDv7`'s random tail is ten bytes after its 48-bit millisecond prefix.
+const UUIDV7_RANDOM_BYTES: usize = 10;
+
 /// The staging-name suffix of a bundle whose bytes are still being
 /// written: `<spool_entry_id>.staging`. It becomes a bundle only by
 /// atomic rename.
@@ -662,7 +665,7 @@ impl Spool {
         crash: InjectedCrash,
     ) -> Result<MaterializedBundle, SpoolError> {
         let size_bytes = recordable_size(payload)?;
-        let spool_entry_id = mint_spool_entry_id()?;
+        let spool_entry_id = mint_uuid_v7()?;
         let bundle_name = format!("{}{BUNDLE_SUFFIX}", spool_entry_id.as_str());
         let staging_path = self
             .dir
@@ -863,25 +866,27 @@ fn recordable_size(payload: &[u8]) -> Result<i64, SpoolError> {
         .map_err(|_| unavailable("bundle exceeds the size the state schema can record"))
 }
 
-/// Mint a spool entry identity: a canonical lowercase `UUIDv7` (plan
-/// Section 7.4), time-ordered so a directory listing reads in capture
-/// order, from 48 bits of wall-clock milliseconds and 74 bits of host
-/// randomness (RFC 9562). Re-validated through the protocol's own
-/// grammar so a formatting regression cannot ship.
+/// Mint one canonical lowercase `UUIDv7` identifier (plan Section 7.4),
+/// time-ordered so listings read in creation order, from 48 bits of
+/// wall-clock milliseconds and 74 bits of host randomness (RFC 9562).
+/// Re-validated through the protocol's own grammar so a formatting
+/// regression cannot ship. Shared with the upload module: the spool
+/// entry identity and the frozen upload-request identity are minted
+/// from the same construction, once each, at spool creation.
 ///
 /// # Errors
 ///
 /// [`SpoolErrorKind::Unavailable`] when host randomness cannot be
-/// read: a spool entry identity drawn from anything weaker could
-/// collide with a concurrent process's bundle name, so materialization
-/// refuses rather than guess.
+/// read: an identity drawn from anything weaker could collide with a
+/// concurrent process's identifier, so both callers refuse rather than
+/// guess.
 ///
 /// # Panics
 ///
 /// Never in practice: the minted text is constructed in canonical form
 /// and re-validated as a belt-and-braces check.
-fn mint_spool_entry_id() -> Result<RequestId, SpoolError> {
-    let mut random = [0u8; 10];
+pub(crate) fn mint_uuid_v7() -> Result<RequestId, SpoolError> {
+    let mut random = [0u8; UUIDV7_RANDOM_BYTES];
     File::open("/dev/urandom")
         .and_then(|mut file| file.read_exact(&mut random))
         .map_err(|_| unavailable("spool entry identity could not be minted"))?;

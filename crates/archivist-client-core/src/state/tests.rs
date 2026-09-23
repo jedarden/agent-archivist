@@ -74,8 +74,8 @@ fn object_count(store: &StateStore, kind: &str, name: &str) -> i64 {
 
 #[test]
 fn migration_list_is_contiguous_unique_and_reversible() {
-    assert_eq!(LATEST_SCHEMA_VERSION, 9);
-    assert_eq!(MIGRATIONS.len(), 9);
+    assert_eq!(LATEST_SCHEMA_VERSION, 10);
+    assert_eq!(MIGRATIONS.len(), 10);
     for (expected, step) in MIGRATIONS.iter().enumerate() {
         let expected_version = i64::try_from(expected).expect("index fits i64") + 1;
         assert_eq!(step.version, expected_version, "gap at index {expected}");
@@ -127,6 +127,7 @@ fn migrate_fresh_reaches_latest_with_expected_objects() {
     for index in EXPECTED_INDEXES {
         assert_eq!(object_count(&store, "index", index), 1, "index {index}");
     }
+    assert_eq!(object_count(&store, "table", "quarantined_uploads"), 1);
 
     let history: i64 = store
         .connection()
@@ -220,6 +221,10 @@ fn revert_one_steps_down_a_single_migration() {
     assert_eq!(at, LATEST_SCHEMA_VERSION - 1);
     assert_eq!(object_count(&store, "table", "adapter_health"), 1);
     assert_eq!(object_count(&store, "table", "receipts"), 1);
+    // Stepping down from the quarantine migration removes exactly the
+    // quarantine table; the acknowledgement migration's objects below
+    // it are untouched.
+    assert_eq!(object_count(&store, "table", "quarantined_uploads"), 0);
     let receipt_bytes_column: i64 = store
         .connection()
         .query_row(
@@ -228,7 +233,7 @@ fn revert_one_steps_down_a_single_migration() {
             |row| row.get(0),
         )
         .expect("receipt evidence column query");
-    assert_eq!(receipt_bytes_column, 0);
+    assert_eq!(receipt_bytes_column, 1);
     let watermark_column: i64 = store
         .connection()
         .query_row(
@@ -238,7 +243,7 @@ fn revert_one_steps_down_a_single_migration() {
             |row| row.get(0),
         )
         .expect("source watermark column query");
-    assert_eq!(watermark_column, 0);
+    assert_eq!(watermark_column, 1);
     assert_eq!(
         store.schema_version().expect("version"),
         LATEST_SCHEMA_VERSION - 1

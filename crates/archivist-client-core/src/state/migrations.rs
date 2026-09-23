@@ -407,8 +407,44 @@ const ACKNOWLEDGEMENT_STATE: Migration = Migration {
     ),
 };
 
+/// Migration 10: durable upload quarantine.
+///
+/// One row per spool entry the Section 7.8 matrix removed from the retry
+/// set — poison input (`request_invalid`) and unsplittable oversized
+/// records (`payload_limit_unsplittable`). The row is what makes the
+/// matrix's "quarantine artifact; continue other sources" survive a
+/// restart: without it, a poisoned bundle would be re-attempted after
+/// every crash and storm the service with malformed history forever.
+/// The bundle itself is retained (its bytes still occupy the spool and
+/// count against the pressure cap) so an operator can inspect the
+/// artifact and report the coverage gap; removal is an explicit
+/// operator action, never a retry-path side effect.
+const QUARANTINED_UPLOADS: Migration = Migration {
+    version: 10,
+    name: "create-quarantined-uploads",
+    up: r"
+        CREATE TABLE quarantined_uploads (
+            spool_entry_id TEXT PRIMARY KEY NOT NULL
+                CHECK (length(spool_entry_id) = 36)
+                REFERENCES spool_entries (spool_entry_id) ON DELETE CASCADE,
+            reason TEXT NOT NULL CHECK (
+                reason IN ('request_invalid', 'payload_limit_unsplittable')
+            ),
+            quarantined_at TEXT NOT NULL
+                CHECK (length(quarantined_at) BETWEEN 20 AND 35)
+        );
+    ",
+    down: Some(
+        r"
+        DROP TABLE quarantined_uploads;
+    ",
+    ),
+};
+
 /// Every schema migration, oldest first. The runner refuses gaps, so this
-/// slice must stay contiguous from version 1.
+/// slice must stay contiguous from version 1. Upload quarantine is additive:
+/// older state databases keep every existing frozen request and spool row,
+/// then gain the durable exclusion table on their next migration.
 pub(crate) const MIGRATIONS: &[Migration] = &[
     SOURCES,
     GENERATIONS,
@@ -419,6 +455,7 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     RECEIPTS,
     ADAPTER_HEALTH,
     ACKNOWLEDGEMENT_STATE,
+    QUARANTINED_UPLOADS,
 ];
 
 /// Tables the schema is expected to contain once every migration is applied,
@@ -433,6 +470,7 @@ pub(crate) const EXPECTED_TABLES: &[&str] = &[
     "upload_attestations",
     "receipts",
     "adapter_health",
+    "quarantined_uploads",
 ];
 
 /// Named indexes the schema is expected to contain once every migration is
