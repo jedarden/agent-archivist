@@ -107,6 +107,9 @@ fn resolved_for(dir: &TempDir) -> ResolvedConfig {
 /// reconciler only indexes a bundle whose stem parses as a request
 /// identity — a fixture identifier outside that grammar is debris, not
 /// a row.
+// The casts are the point: a fixture identity is the hash's own low
+// bits sliced into the grammar's field widths, never a conversion.
+#[allow(clippy::cast_possible_truncation)]
 fn uid(tag: &str) -> String {
     let n = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let seed = seed_of(tag);
@@ -327,6 +330,16 @@ impl Jitter for DeadJitter {
     }
 }
 
+/// A sleeper that never waits: entropy fails after the first cycle
+/// returns, and the loop must stop before drawing a delay.
+struct NoSleep;
+
+impl Sleeper for NoSleep {
+    fn sleep(&mut self, _cancel: &Cancel, _delay: Duration) -> bool {
+        panic!("the loop never waits when entropy is unavailable")
+    }
+}
+
 /// The schedule and cancelled stop the loop tests drive.
 fn loop_seams(
     dir: &TempDir,
@@ -371,14 +384,6 @@ fn daemon_runs_one_cycle_and_stops_at_the_supervisor_signal() {
 fn daemon_reports_entropy_exhaustion_instead_of_looping_unjittered() {
     let dir = TempDir::new("daemon-entropy");
     let (resolved, schedule, cancel) = loop_seams(&dir);
-    // The sleep never happens: entropy fails after the first cycle
-    // returns, and the loop stops before drawing a delay.
-    struct NoSleep;
-    impl Sleeper for NoSleep {
-        fn sleep(&mut self, _cancel: &Cancel, _delay: Duration) -> bool {
-            panic!("the loop never waits when entropy is unavailable")
-        }
-    }
     let mut jitter = DeadJitter;
     let mut sleeper = NoSleep;
     let error = daemon_loop(
