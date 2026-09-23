@@ -30,7 +30,10 @@ use std::time::Instant;
 
 use archivist_protocol::envelope::{Envelope, EnvelopeError};
 use archivist_protocol::json::{Object, Value};
-use archivist_protocol::vocabulary::RequestId;
+use archivist_protocol::sha256::Sha256;
+use archivist_protocol::vocabulary::{
+    EnvelopeDigest, PayloadCanonicalDigest, PayloadTransportDigest, RequestContentDigest, RequestId,
+};
 use archivist_storage::blob::{BlobEncoder, BlobExpectation, commit_blob};
 use archivist_storage::control::ControlReadStore;
 use archivist_storage::error::{StorageError, StorageErrorKind};
@@ -244,6 +247,7 @@ where
     // known the stream is dropped, the feeder's sends fail, and the
     // (possibly huge) unread tail of the body is simply abandoned; the
     // connection layer owns that path.
+    let request_hasher = Arc::new(Mutex::new(Sha256::new()));
     let (sender, receiver) = mpsc::channel(PARSE_BRIDGE_CHUNKS);
     let mut body = request.into_body();
     tokio::spawn(async move {
@@ -261,6 +265,7 @@ where
     });
 
     let envelope_cap = state.config().envelope_max_bytes();
+    let parse_hasher = Arc::clone(&request_hasher);
     let parse = tokio::task::spawn_blocking(move || {
         parse_ingest_with_cap(
             &framing,
@@ -268,6 +273,7 @@ where
                 receiver,
                 chunk: Vec::new(),
                 cursor: 0,
+                request_hasher: parse_hasher,
             },
             envelope_cap,
         )
@@ -318,20 +324,48 @@ where
             .await;
 
             let result = match evidence {
-                Ok(_evidence) => {
-                    // The payload digest pair is produced by the streaming
-                    // decoder/encoder below. Until those actual-byte
-                    // digests are available, no AuthorizedAttempt exists,
-                    // so the commit path is deliberately unreachable. This
-                    // is the fail-closed half of the middleware: an
-                    // apparently linked key cannot authorize a write by
-                    // itself.
-                    let failure = ServerFailure::Unavailable;
-                    (
+                Ok(evidence) => match preflight_digests(
+                    &envelope,
+                    stream,
+                    request_hasher,
+                    DecodeLimits::new(
+                        state.config().record_max_bytes(),
+                        u64::from(state.config().max_expansion_ratio()),
+                    ),
+                )
+                .await
+                {
+                    Err(failure) => (
                         failure.outcome(),
                         failure_response(failure, Some(envelope.request_id)),
-                    )
-                }
+                    ),
+                    Ok(digests) => {
+                        let presented = authorize::presented_request(&envelope, digests);
+                        match authorize::authorize_attempt(
+                            &record,
+                            &presented,
+                            &evidence,
+                            &authorize::now_timestamp(),
+                        ) {
+                            Err(rejection) => {
+                                authorization_refusal(rejection, Some(envelope.request_id))
+                            }
+                            Ok(_authorized) => {
+                                // The preflight consumed the one-shot body.
+                                // A storage commit therefore remains behind
+                                // the explicit replay handoff; most
+                                // importantly, no AuthorizedAttempt is ever
+                                // mistaken for permission to write before
+                                // that handoff exists.
+                                let failure = ServerFailure::Unavailable;
+                                (
+                                    failure.outcome(),
+                                    failure_response(failure, Some(envelope.request_id)),
+                                )
+                            }
+                        }
+                    }
+                },
                 Err(EvidenceRejection::Unlinked) => {
                     authorization_refusal(AuthRejection::Unlinked, Some(envelope.request_id))
                 }
@@ -347,7 +381,6 @@ where
                 }
             };
             drop(client_admission);
-            let _ = stream;
             result
         }
     }
@@ -360,6 +393,67 @@ fn authorization_refusal(
 ) -> (IngestOutcome, Response) {
     let failure = ServerFailure::Authorization(rejection);
     (failure.outcome(), failure_response(failure, request_id))
+}
+
+/// Drain and hash the received payload before the commit path can be
+/// considered. The decoder and framing source stay bounded; this pass
+/// retains only digest state, so an altered body is rejected by the signed
+/// request verifier before a multipart session is opened.
+async fn preflight_digests(
+    envelope: &Envelope,
+    stream: PayloadStream<BodyChannel>,
+    request_hasher: Arc<Mutex<Sha256>>,
+    limits: DecodeLimits,
+) -> Result<authorize::VerifiedDigests, ServerFailure> {
+    let envelope = envelope.clone();
+    tokio::task::spawn_blocking(move || {
+        let source = DigestingPayload {
+            inner: stream,
+            transport: Sha256::new(),
+        };
+        let mut decoder = TransportDecoder::new(envelope.transport_encoding, source, limits)
+            .map_err(decode_failure)?;
+        let mut canonical = Sha256::new();
+        while let Some(chunk) = decoder.next_chunk().map_err(decode_failure)? {
+            canonical.update(chunk);
+        }
+        let source = decoder.into_source();
+        source
+            .inner
+            .finish()
+            .map_err(|error| ServerFailure::Parse(IngestParseError::Framing(error)))?;
+
+        let request_content = request_hasher
+            .lock()
+            .expect("request digest lock")
+            .clone()
+            .finalize();
+        Ok(authorize::VerifiedDigests {
+            request_content: RequestContentDigest::from_raw(request_content),
+            envelope: EnvelopeDigest::from_raw(envelope.envelope_digest().as_raw().to_owned()),
+            payload_canonical: PayloadCanonicalDigest::from_raw(canonical.finalize()),
+            payload_transport: PayloadTransportDigest::from_raw(source.transport.finalize()),
+        })
+    })
+    .await
+    .map_err(|_| ServerFailure::Internal)?
+}
+
+/// A one-pass payload reader that records the bytes as transported while
+/// the bounded decoder produces canonical chunks.
+struct DigestingPayload<R> {
+    inner: R,
+    transport: Sha256,
+}
+
+impl<R: io::Read> io::Read for DigestingPayload<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let read = self.inner.read(buffer)?;
+        if read != 0 {
+            self.transport.update(&buffer[..read]);
+        }
+        Ok(read)
+    }
 }
 
 /// The commit phase of a well-formed attempt: bounded transport decode
@@ -649,6 +743,8 @@ struct BodyChannel {
     chunk: Vec<u8>,
     /// The read offset into [`Self::chunk`].
     cursor: usize,
+    /// Whole-request digest state, updated as bytes leave the bridge.
+    request_hasher: Arc<Mutex<Sha256>>,
 }
 
 impl ByteSource for BodyChannel {
@@ -659,6 +755,10 @@ impl ByteSource for BodyChannel {
                 let copied = buffered.len().min(window.len());
                 window[..copied].copy_from_slice(&buffered[..copied]);
                 self.cursor += copied;
+                self.request_hasher
+                    .lock()
+                    .expect("request digest lock")
+                    .update(&buffered[..copied]);
                 return Ok(copied);
             }
             match self.receiver.blocking_recv() {

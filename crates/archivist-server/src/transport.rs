@@ -393,6 +393,16 @@ impl<R: io::Read> TransportDecoder<R> {
         self.drained
     }
 
+    /// Return the source after the decoder has been drained.
+    ///
+    /// Callers that use the decoder as a verification preflight can then
+    /// finish the source's framing contract without opening a storage
+    /// session. The source is returned unchanged; no bytes are copied.
+    #[must_use]
+    pub fn into_source(self) -> R {
+        self.source
+    }
+
     /// Produce the next bounded canonical chunk, or [`None`] once the
     /// stream is complete.
     ///
