@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:cli-run",
+  "title": "Agent Archivist run result (archivist.cli-result/v1)",
+  "description": "The result document of the `run --once` command (plan Phase 5; CLI-015): one foreground scheduling cycle — the startup reconciliation that drains the spool's crash debris, the spool-pressure policy's verdict for new materialization, and the two-lane scheduler's work order for the round (drain first, then one freshness reservation per active source, then largest-first backfill under the per-source quantum). Every figure is a content-free counter or a closed-vocabulary token; no field carries a path, a transcript body, a secret value or reference string, or an unbounded identifier (SEC-004, CFG-027).",
+  "type": "object",
+  "x-archivist": {
+    "namespace": "archivist.cli-result/v1",
+    "namespaceField": "schema",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "compatibility": "member additions are additive within v1 per plan Section 7.1 (CLI-015); redefining or removing a member, or a new namespace, is a v2 event"
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "generated_at",
+    "reconcile",
+    "pressure",
+    "plan"
+  ],
+  "properties": {
+    "schema": {
+      "const": "archivist.cli-result/v1",
+      "description": "The CLI result namespace. Present in every result document so a consumer always knows which contract it is reading before anything else (VAL-001); an unknown namespace is not this format and fails closed.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "generated_at": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "The instant the cycle ran (plan Section 7.3).",
+      "x-archivist": {
+        "bearing": "provenance",
+        "compat": "required-v1"
+      }
+    },
+    "reconcile": {
+      "$ref": "#/$defs/reconcile-report",
+      "description": "What the cycle's startup reconciliation pass found and did.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "pressure": {
+      "$ref": "#/$defs/pressure-verdict",
+      "description": "The spool-pressure policy's verdict for new materialization this round (plan Section 7.9, OPS-03/EC-11).",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "plan": {
+      "$ref": "#/$defs/cycle-plan",
+      "description": "The round's arithmetic, as the scheduler spent it.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    }
+  },
+  "$defs": {
+    "reconcile-report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "orphan_bundles_indexed",
+        "acknowledged_bundles_removed",
+        "staging_files_removed",
+        "unclassified_entries",
+        "spool_rows_missing_bundles"
+      ],
+      "properties": {
+        "orphan_bundles_indexed": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Complete bundles with no state row, indexed back into the pipeline."
+        },
+        "acknowledged_bundles_removed": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Bundles of already-acknowledged entries removed from disk."
+        },
+        "staging_files_removed": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Staging files of interrupted materializations removed."
+        },
+        "unclassified_entries": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Entries the reconciler could not classify and deliberately left in place."
+        },
+        "spool_rows_missing_bundles": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Live state rows whose bundle file is missing — a corruption signal, never repaired here."
+        }
+      },
+      "description": "The reconciliation pass's counts; never names, paths, or digests.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "pressure-verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "admits_materialization",
+        "degraded",
+        "reasons",
+        "spool_bytes",
+        "free_bytes",
+        "spool_cap_bytes",
+        "free_floor_bytes",
+        "resume_threshold_bytes"
+      ],
+      "properties": {
+        "admits_materialization": {
+          "type": "boolean",
+          "description": "Whether the policy admits new materialization this round."
+        },
+        "degraded": {
+          "type": "boolean",
+          "description": "Whether any degraded reason is named."
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "spool_cap",
+              "free_floor",
+              "draining"
+            ],
+            "description": "One closed reason token; unknown tokens are not this format.",
+            "x-archivist": {
+              "bearing": "structural",
+              "compat": "required-v1",
+              "failClosed": true
+            }
+          },
+          "description": "The degraded reasons in canonical order; empty when materialization is admitted."
+        },
+        "spool_bytes": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "The live spool usage this evaluation measured."
+        },
+        "free_bytes": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "The filesystem free space this evaluation measured."
+        },
+        "spool_cap_bytes": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "The high-water cap the evaluation applied."
+        },
+        "free_floor_bytes": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "The free-space floor the evaluation applied."
+        },
+        "resume_threshold_bytes": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "The resume threshold the evaluation applied: usage at or below it releases a latched pause."
+        }
+      },
+      "description": "The policy verdict: admission, reason tokens, measurements, and the applied limits.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "cycle-plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capacity_bytes",
+        "drain_entries",
+        "drain_bytes",
+        "eligible_sources",
+        "reserved_sources",
+        "reserved_bytes",
+        "reserved_chunks",
+        "backfilled_sources",
+        "backfill_bytes",
+        "backfill_chunks",
+        "planned_bytes",
+        "short_reservations",
+        "deferred_sources"
+      ],
+      "properties": {
+        "capacity_bytes": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "The materialization capacity the round was given."
+        },
+        "drain_entries": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Pending spool entries the drain phase covers."
+        },
+        "drain_bytes": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Pending spool bytes the drain phase covers."
+        },
+        "eligible_sources": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Sources with measured, schedulable backlog this round."
+        },
+        "reserved_sources": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Active sources that received their reservation chunk."
+        },
+        "reserved_bytes": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Bytes the reservations cover."
+        },
+        "reserved_chunks": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Chunks the reservations cover."
+        },
+        "backfilled_sources": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Sources the backfill pass granted this round."
+        },
+        "backfill_bytes": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Bytes the backfill pass granted."
+        },
+        "backfill_chunks": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Chunks the backfill pass granted."
+        },
+        "planned_bytes": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Bytes the round plans to materialize: reservations plus backfill."
+        },
+        "short_reservations": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Active sources denied their reservation because the round's capacity could not cover every one. Never silent: a round this large reports the shortfall and spends nothing on backfill."
+        },
+        "deferred_sources": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Sources with residual backlog that received no backfill grant this round."
+        }
+      },
+      "description": "The round's arithmetic.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    }
+  }
+}

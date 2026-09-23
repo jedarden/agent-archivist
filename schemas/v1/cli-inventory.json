@@ -1,0 +1,320 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:cli-inventory",
+  "title": "Agent Archivist inventory result (archivist.cli-result/v1)",
+  "description": "The result document of the `inventory` command (plan Phase 5; CLI-015): one read-only pass that measures the complete outstanding bytes and events per discovered source against the acknowledged state and reports the bounded per-scope statuses and fleet totals — without uploading anything. Every figure is a content-free counter or a closed-vocabulary token; no field carries a path, a transcript body, a secret value or reference string, or an unbounded identifier (SEC-004, CFG-027).",
+  "type": "object",
+  "x-archivist": {
+    "namespace": "archivist.cli-result/v1",
+    "namespaceField": "schema",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "compatibility": "member additions are additive within v1 per plan Section 7.1 (CLI-015); redefining or removing a member, or a new namespace, is a v2 event"
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "generated_at",
+    "overall",
+    "sources_without_scan",
+    "statuses",
+    "totals"
+  ],
+  "properties": {
+    "schema": {
+      "const": "archivist.cli-result/v1",
+      "description": "The CLI result namespace. Present in every result document so a consumer always knows which contract it is reading before anything else (VAL-001); an unknown namespace is not this format and fails closed.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "generated_at": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "The instant the inventory pass ran its lag arithmetic against (plan Section 7.3).",
+      "x-archivist": {
+        "bearing": "provenance",
+        "compat": "required-v1"
+      }
+    },
+    "overall": {
+      "enum": [
+        "missing",
+        "unsupported",
+        "failed",
+        "partial",
+        "current",
+        "backfilled"
+      ],
+      "description": "The scopes' coverage states aggregated, and partial while any state-known source went unmeasured. Closed vocabulary shared with the adapter status layer; an unknown token is not this format.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "sources_without_scan": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+      "description": "State-known sources no adapter scan covered this pass. Their backlog is unmeasured, so the report counts them instead of guessing.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "statuses": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/scope-status"
+      },
+      "description": "One bounded status per observed (adapter, account) scope, in first-seen scan order. The status layer never carries per-source detail: its size is independent of how many sources, sessions, or bytes an account holds.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "totals": {
+      "$ref": "#/$defs/fleet-totals",
+      "description": "Fleet-level totals across every scope in the report.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    }
+  },
+  "$defs": {
+    "scope-status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "account",
+        "active_backlog_bytes",
+        "active_backlog_events",
+        "adapter",
+        "classifications",
+        "coverage",
+        "coverage_sources",
+        "historical_backlog_bytes",
+        "historical_backlog_events",
+        "max_freshness_lag_seconds"
+      ],
+      "properties": {
+        "adapter": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$",
+          "maxLength": 64,
+          "description": "The adapter whose pass observed the scope: a closed-vocabulary adapter identifier, never free text.",
+          "x-archivist": {
+            "bearing": "identity",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        },
+        "account": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$",
+          "maxLength": 64,
+          "description": "The configured account label the scope was discovered under: a routing name the operator picked, never an upstream account identifier value (the fleet inventory's sanitization contract).",
+          "x-archivist": {
+            "bearing": "identity",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        },
+        "coverage": {
+          "enum": [
+            "missing",
+            "unsupported",
+            "failed",
+            "partial",
+            "current",
+            "backfilled"
+          ],
+          "description": "The scope's coverage state: the member sources' states aggregated.",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        },
+        "active_backlog_bytes": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Outstanding bytes on freshness-lane sources in this scope.",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1"
+          }
+        },
+        "active_backlog_events": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Outstanding complete records on freshness-lane sources in this scope.",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1"
+          }
+        },
+        "historical_backlog_bytes": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Outstanding bytes on backfill-lane sources in this scope.",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1"
+          }
+        },
+        "historical_backlog_events": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Outstanding complete records on backfill-lane sources in this scope.",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1"
+          }
+        },
+        "max_freshness_lag_seconds": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "The largest per-source freshness lag in the scope; zero when every source is caught up or no time basis exists.",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1"
+          }
+        },
+        "coverage_sources": {
+          "$ref": "#/$defs/coverage-counts",
+          "description": "Per-state source counts across the scope.",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1"
+          }
+        },
+        "classifications": {
+          "$ref": "#/$defs/classification-counts",
+          "description": "How the scope's last scans ended, per closed classification.",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1"
+          }
+        }
+      }
+    },
+    "coverage-counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "missing",
+        "unsupported",
+        "failed",
+        "partial",
+        "current",
+        "backfilled"
+      ],
+      "properties": {
+        "missing": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63"
+        },
+        "unsupported": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63"
+        },
+        "failed": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63"
+        },
+        "partial": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63"
+        },
+        "current": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63"
+        },
+        "backfilled": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63"
+        }
+      },
+      "description": "Per-state source counts, one counter per closed coverage token.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "classification-counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "root-absent",
+        "no-database",
+        "transport-unreachable",
+        "read-error",
+        "permission-denied",
+        "fingerprint-unsupported",
+        "not-observed"
+      ],
+      "properties": {
+        "ok": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63"
+        },
+        "root-absent": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63"
+        },
+        "no-database": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63"
+        },
+        "transport-unreachable": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63"
+        },
+        "read-error": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63"
+        },
+        "permission-denied": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63"
+        },
+        "fingerprint-unsupported": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63"
+        },
+        "not-observed": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63"
+        }
+      },
+      "description": "Last-scan classification counts, one counter per closed classification token.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "fleet-totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active_backlog_bytes",
+        "active_backlog_events",
+        "historical_backlog_bytes",
+        "historical_backlog_events",
+        "sources"
+      ],
+      "properties": {
+        "active_backlog_bytes": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Outstanding bytes on freshness-lane sources fleet-wide."
+        },
+        "active_backlog_events": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Outstanding complete records on freshness-lane sources fleet-wide."
+        },
+        "historical_backlog_bytes": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Outstanding bytes on backfill-lane sources fleet-wide."
+        },
+        "historical_backlog_events": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Outstanding complete records on backfill-lane sources fleet-wide."
+        },
+        "sources": {
+          "$ref": "#/$defs/coverage-counts",
+          "description": "Per-state source counts across the scopes of the report."
+        }
+      },
+      "description": "Fleet-level totals.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    }
+  }
+}

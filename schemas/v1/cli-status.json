@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:cli-status",
+  "title": "Agent Archivist status result (archivist.cli-result/v1)",
+  "description": "The result document of the `status` command (plan Phase 5; CLI-015): the local collection status read from a read-only state snapshot while the daemon may own the mutator lock (CLI-007) — per-source counts by scheduling lane, the freshness of the last acknowledged capture, the live spool size, and the state layer's integrity verdict. Every figure is a content-free counter or a closed-vocabulary token; no field carries a path, a transcript body, a secret value or reference string, or an unbounded identifier (SEC-004, CFG-027).",
+  "type": "object",
+  "x-archivist": {
+    "namespace": "archivist.cli-result/v1",
+    "namespaceField": "schema",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "compatibility": "member additions are additive within v1 per plan Section 7.1 (CLI-015); redefining or removing a member, or a new namespace, is a v2 event"
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "generated_at",
+    "state",
+    "sources",
+    "spool",
+    "last_capture_at"
+  ],
+  "properties": {
+    "schema": {
+      "const": "archivist.cli-result/v1",
+      "description": "The CLI result namespace. Present in every result document so a consumer always knows which contract it is reading before anything else (VAL-001); an unknown namespace is not this format and fails closed.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "generated_at": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "The instant the snapshot was read (plan Section 7.3).",
+      "x-archivist": {
+        "bearing": "provenance",
+        "compat": "required-v1"
+      }
+    },
+    "state": {
+      "$ref": "#/$defs/state-verdict",
+      "description": "The state database's recorded schema version and the read-only integrity verdict.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "sources": {
+      "$ref": "#/$defs/source-counts",
+      "description": "Per-source counts by scheduling lane, from the state snapshot.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "spool": {
+      "$ref": "#/$defs/spool-standing",
+      "description": "The live spool: the not-yet-acknowledged byte sum the state database records.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "last_capture_at": {
+      "oneOf": [
+        {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The freshest acknowledged capture instant across all sources, or null when nothing has been captured yet — the freshness evidence a consumer compares against its own clock.",
+      "x-archivist": {
+        "bearing": "provenance",
+        "compat": "required-v1"
+      }
+    }
+  },
+  "$defs": {
+    "state-verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "integrity"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "The applied schema migration version; 0 before any migration."
+        },
+        "integrity": {
+          "enum": [
+            "ok",
+            "degraded"
+          ],
+          "description": "The read-only integrity verdict over the automated checks (store integrity, foreign keys, expected schema objects).",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        }
+      },
+      "description": "The state layer's version and integrity verdict.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "source-counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enrolled",
+        "freshness",
+        "backfill"
+      ],
+      "properties": {
+        "enrolled": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Sources the state knows."
+        },
+        "freshness": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Sources on the freshness lane."
+        },
+        "backfill": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Sources on the backfill lane."
+        }
+      },
+      "description": "Enrolled source counts by scheduling lane.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "spool-standing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "live_bytes"
+      ],
+      "properties": {
+        "live_bytes": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Bytes of not-yet-acknowledged spool bundles the state database records. The high-water policy's limits are the caller's configuration; this figure is the measurement."
+        }
+      },
+      "description": "The live spool measurement.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    }
+  }
+}

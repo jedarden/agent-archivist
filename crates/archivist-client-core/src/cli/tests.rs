@@ -87,14 +87,29 @@ fn output_envelope_is_closed_and_contains_no_float_domain() {
 }
 
 #[test]
-fn router_refuses_registered_commands_without_result_schemas() {
+fn router_refuses_document_commands_without_result_schemas() {
     let mut router = Router::new();
+    // `doctor` is a document command whose schema has not shipped yet, so a
+    // handler for it has no defined output and is refused; a schema-bearing
+    // document command and a none-stdout command are both accepted.
+    assert!(
+        router
+            .register_handler("doctor", |_invocation| {
+                Ok(json::Value::Object(json::Object::new()))
+            })
+            .is_err()
+    );
     assert!(
         router
             .register_handler("status", |_invocation| {
                 Ok(json::Value::Object(json::Object::new()))
             })
-            .is_err()
+            .is_ok()
+    );
+    assert!(
+        router
+            .register_handler("daemon", |_invocation| Ok(json::Value::Null))
+            .is_ok()
     );
     let _ = CliError::usage();
 }

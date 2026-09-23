@@ -59,6 +59,10 @@ keys = [
   "schedule.backfill_quantum_bytes",
   "ingest.endpoint_url",
 ]
+# The emitted document is the one scheduling cycle's outcome (CLI-015): the
+# reconciliation report, the pressure verdict, and the round's planned
+# arithmetic, pinned by `schemas/v1/cli-run.json`.
+result_schema = "schemas/v1/cli-run.json"
 
 [commands.run.flags.once]
 summary = "Run a single scheduling cycle and exit; the looping form is the daemon."
@@ -73,6 +77,10 @@ stdout = "document"
 operand = "none"
 stdin = "none"
 keys = ["client.state_dir"]
+# The emitted document is the bounded per-scope statuses and fleet totals
+# the inventory pass measured (CLI-015), pinned by
+# `schemas/v1/cli-inventory.json`.
+result_schema = "schemas/v1/cli-inventory.json"
 
 [commands.status]
 summary = "Report local collection status from a read-only state snapshot: per-source counts, freshness, and degraded reason."
@@ -83,6 +91,10 @@ stdout = "document"
 operand = "none"
 stdin = "none"
 keys = ["client.state_dir"]
+# The emitted document is the read-only snapshot's status: per-source
+# counts, freshness, and the state layer's verdict (CLI-015), pinned by
+# `schemas/v1/cli-status.json`.
+result_schema = "schemas/v1/cli-status.json"
 
 [commands."verify-state"]
 summary = "Verify local state consistency: spool and receipt transitions, orphan reconciliation, and cursor invariants."
@@ -93,6 +105,9 @@ stdout = "document"
 operand = "none"
 stdin = "none"
 keys = ["client.state_dir"]
+# The emitted document is the verification's verdicts and evidence counts
+# (CLI-015), pinned by `schemas/v1/cli-verify-state.json`.
+result_schema = "schemas/v1/cli-verify-state.json"
 
 [commands.doctor]
 summary = "Non-mutating health check of configuration, permissions, state integrity, lock, clock, server readiness, and linkage."

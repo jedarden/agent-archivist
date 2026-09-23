@@ -283,6 +283,90 @@ impl InventoryReport {
     }
 }
 
+/// The acknowledged-state context one inventory pass measures against,
+/// loaded once and shared by every per-source measurement and by the
+/// unmeasured-source count: the enrolled sources, each source's current
+/// generation, the acknowledged extents on every generation, and the
+/// freshest acknowledged capture instant per source.
+struct PassContext {
+    sources: HashMap<String, SourceRow>,
+    current_generation: HashMap<String, String>,
+    acknowledged_by_generation: HashMap<String, (u64, u64)>,
+    last_captured: HashMap<String, String>,
+}
+
+impl PassContext {
+    /// Load the whole context in four reads.
+    ///
+    /// # Errors
+    /// Propagates the loaders' [`StateError`]: `Unavailable` for a failed
+    /// read, `SchemaCorruption` for a stored value outside the pinned
+    /// vocabulary.
+    fn load(conn: &Connection) -> Result<Self, StateError> {
+        Ok(Self {
+            sources: load_sources(conn)?,
+            current_generation: current_generation_by_source(conn)?,
+            acknowledged_by_generation: acknowledged_by_generation(conn)?,
+            last_captured: last_captured_by_source(conn)?,
+        })
+    }
+
+    /// Measure every scan against the loaded context. Acknowledged
+    /// extents come from the source's current generation only: a prior
+    /// generation closed by truncation or replacement describes an
+    /// artifact that no longer exists, and its extents must not offset
+    /// the current one's backlog.
+    fn measure(
+        &self,
+        scans: &[SourceScan],
+        now: &Timestamp,
+        degraded: bool,
+    ) -> Vec<SourceInventory> {
+        let now_epoch = epoch_seconds(now);
+        scans
+            .iter()
+            .map(|scan| {
+                let acknowledged = self
+                    .current_generation
+                    .get(scan.source.as_str())
+                    .and_then(|generation| self.acknowledged_by_generation.get(generation))
+                    .copied()
+                    .unwrap_or((0, 0));
+                measure(
+                    scan,
+                    self.sources.get(scan.source.as_str()),
+                    acknowledged,
+                    self.last_captured
+                        .get(scan.source.as_str())
+                        .and_then(|text| basis_epoch(text)),
+                    now_epoch,
+                    degraded,
+                )
+            })
+            .collect()
+    }
+}
+
+/// Measure every scan against the acknowledged state: the per-source
+/// records the scheduling cycle plans over — the inventory-pass step the
+/// daemon cycle's own contract names ([`crate::scheduler`]) — each one the
+/// same measurement the report aggregation folds.
+///
+/// # Errors
+/// [`StateError`] with [`StateErrorKind::Unavailable`] when the state
+/// database cannot be read, or [`StateErrorKind::SchemaCorruption`] when a
+/// stored value is outside the vocabulary the schema pins — a read-side
+/// backstop matching the write-side `CHECK` constraints. Errors carry no
+/// runtime text.
+pub fn measured_sources(
+    conn: &Connection,
+    scans: &[SourceScan],
+    now: &Timestamp,
+    options: &InventoryOptions,
+) -> Result<Vec<SourceInventory>, StateError> {
+    Ok(PassContext::load(conn)?.measure(scans, now, options.degraded))
+}
+
 /// Run one inventory pass: read the acknowledged state, fold in the
 /// adapter scans, and produce the report.
 ///
@@ -298,34 +382,9 @@ pub fn inventory(
     now: &Timestamp,
     options: &InventoryOptions,
 ) -> Result<InventoryReport, StateError> {
-    let sources = load_sources(conn)?;
-    let current_generation = current_generation_by_source(conn)?;
-    let acknowledged_by_generation = acknowledged_by_generation(conn)?;
-    let last_captured = last_captured_by_source(conn)?;
-    let now_epoch = epoch_seconds(now);
-
-    // Per-source detail for every scan. Acknowledged extents come from the
-    // source's current generation only: a prior generation closed by
-    // truncation or replacement describes an artifact that no longer
-    // exists, and its extents must not offset the current one's backlog.
-    let mut per_source: Vec<SourceInventory> = Vec::with_capacity(scans.len());
-    for scan in scans {
-        let acknowledged = current_generation
-            .get(scan.source.as_str())
-            .and_then(|generation| acknowledged_by_generation.get(generation))
-            .copied()
-            .unwrap_or((0, 0));
-        per_source.push(measure(
-            scan,
-            sources.get(scan.source.as_str()),
-            acknowledged,
-            last_captured
-                .get(scan.source.as_str())
-                .and_then(|text| basis_epoch(text)),
-            now_epoch,
-            options.degraded,
-        ));
-    }
+    let context = PassContext::load(conn)?;
+    let per_source = context.measure(scans, now, options.degraded);
+    let sources = context.sources;
 
     // Aggregate into bounded per-scope statuses, in first-seen scan order.
     let mut scopes: Vec<((String, String), AdapterAccountStatus)> = Vec::new();
@@ -666,7 +725,7 @@ fn corrupted(subject: &'static str) -> StateError {
 
 /// Parse a stored RFC 3339 UTC timestamp into a Unix-second basis,
 /// rejecting values outside the calendar.
-fn basis_epoch(text: &str) -> Option<u64> {
+pub(crate) fn basis_epoch(text: &str) -> Option<u64> {
     let parsed = Timestamp::parse(text).ok()?;
     epoch_seconds(&parsed)
 }
@@ -674,7 +733,7 @@ fn basis_epoch(text: &str) -> Option<u64> {
 /// Convert a validated timestamp to Unix seconds. The optional fractional
 /// part truncates; a leap second folds into the following second.
 /// Pre-epoch timestamps have no non-negative basis and yield `None`.
-fn epoch_seconds(timestamp: &Timestamp) -> Option<u64> {
+pub(crate) fn epoch_seconds(timestamp: &Timestamp) -> Option<u64> {
     if !timestamp.calendar_valid() {
         return None;
     }
@@ -719,7 +778,7 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 /// A counter rendered into the no-float JSON domain: saturating at
 /// `i64::MAX`, because a status figure that would overflow the wire integer
 /// domain is clipped, never wrapped and never a float.
-fn bounded_i64(value: u64) -> i64 {
+pub(crate) fn bounded_i64(value: u64) -> i64 {
     i64::try_from(value).unwrap_or(i64::MAX)
 }
 

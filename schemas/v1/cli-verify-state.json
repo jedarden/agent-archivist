@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:cli-verify-state",
+  "title": "Agent Archivist verify-state result (archivist.cli-result/v1)",
+  "description": "The result document of the `verify-state` command (plan Phase 5; CLI-015): one read-only consistency verification of the local state — the store's automated integrity checks, the spool's row-to-bundle correspondence, orphan bundle files a mutator's next reconciliation pass will index, and the receipt chain every acknowledged spool entry must have. Every figure is a content-free counter or a closed-vocabulary token; no field carries a path, a transcript body, a secret value or reference string, or an unbounded identifier (SEC-004, CFG-027). The command never repairs: reconciliation is the mutator's act, and this document is the evidence.",
+  "type": "object",
+  "x-archivist": {
+    "namespace": "archivist.cli-result/v1",
+    "namespaceField": "schema",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "compatibility": "member additions are additive within v1 per plan Section 7.1 (CLI-015); redefining or removing a member, or a new namespace, is a v2 event"
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "generated_at",
+    "verdict",
+    "checks",
+    "counts"
+  ],
+  "properties": {
+    "schema": {
+      "const": "archivist.cli-result/v1",
+      "description": "The CLI result namespace. Present in every result document so a consumer always knows which contract it is reading before anything else (VAL-001); an unknown namespace is not this format and fails closed.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "generated_at": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "The instant the verification ran (plan Section 7.3).",
+      "x-archivist": {
+        "bearing": "provenance",
+        "compat": "required-v1"
+      }
+    },
+    "verdict": {
+      "enum": [
+        "ok",
+        "degraded"
+      ],
+      "description": "The overall verdict: degraded when any named check failed. Stable and content-free, the same discipline the error classes pin.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "checks": {
+      "$ref": "#/$defs/check-verdicts",
+      "description": "One verdict per named check.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "counts": {
+      "$ref": "#/$defs/finding-counts",
+      "description": "The evidence counts behind the check verdicts.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    }
+  },
+  "$defs": {
+    "check-verdicts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sqlite_integrity",
+        "foreign_keys",
+        "schema_objects",
+        "live_bundles_present",
+        "acknowledged_receipted"
+      ],
+      "properties": {
+        "sqlite_integrity": {
+          "enum": [
+            "ok",
+            "degraded"
+          ],
+          "description": "`PRAGMA integrity_check` returned a clean verdict.",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        },
+        "foreign_keys": {
+          "enum": [
+            "ok",
+            "degraded"
+          ],
+          "description": "`PRAGMA foreign_key_check` found no orphan rows.",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        },
+        "schema_objects": {
+          "enum": [
+            "ok",
+            "degraded"
+          ],
+          "description": "Every table and index the schema expects is present.",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        },
+        "live_bundles_present": {
+          "enum": [
+            "ok",
+            "degraded"
+          ],
+          "description": "Every not-yet-acknowledged spool row's bundle file is on disk. A missing bundle is corruption (the bytes behind a live upload promise are gone); it is never repaired here.",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        },
+        "acknowledged_receipted": {
+          "enum": [
+            "ok",
+            "degraded"
+          ],
+          "description": "Every acknowledged spool entry has a committed receipt through its frozen request: cleanup never runs ahead of the receipt transaction (plan Section 7.9).",
+          "x-archivist": {
+            "bearing": "structural",
+            "compat": "required-v1",
+            "failClosed": true
+          }
+        }
+      },
+      "description": "The named checks and their verdicts.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "finding-counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "live_rows_missing_bundles",
+        "orphan_bundle_files",
+        "acknowledged_entries_without_receipts"
+      ],
+      "properties": {
+        "live_rows_missing_bundles": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Live (not yet acknowledged) spool rows whose bundle file is missing."
+        },
+        "orphan_bundle_files": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Complete bundle files on disk with no spool row: the crash-between-rename-and-commit debris a mutator's next reconciliation pass indexes. Expected after a crash; never corruption."
+        },
+        "acknowledged_entries_without_receipts": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Acknowledged spool entries whose frozen request has no receipt row."
+        }
+      },
+      "description": "The evidence counts.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    }
+  }
+}

@@ -16,19 +16,28 @@ artifacts that pin it:
 3. ``schemas/v1/cli-output.json`` (``archivist.cli-output/v1``) — the $id,
    the namespace const, the closed four-member envelope, the command-token
    pattern the registry's joined forms must satisfy, the resolvable
-   ``generated_at`` reference, and the no-float discipline (CLI-014).
+   ``generated_at`` reference, and the no-float discipline (CLI-014);
+4. cross-registry coherence with ``tools/error-codes.toml`` — the exit
+   mappings and error conditions the CLI contract names (CLI-002's third
+   registry): the usage class allocates exit 64 for ``cli.usage_error`` and
+   ``cli.decision_missing`` (CLI-008, CLI-022), the lock-contention class
+   allocates exit 75 for ``client.lock_held`` (CLI-007), no class claims
+   exit 0 — the success exit (CLI-018) — and none reaches the ``128+n``
+   signal range (CLI-020, ERR-023).
 
 The three flag namespaces (mode, key-derived, operational) are proven
 pairwise disjoint, and the mode-flag set is pinned here so neither registry
-can grow it (CFG-003, CLI-009).
+can grow it (CFG-003, CLI-009). A result schema may attach only to a
+command whose stdout kind is ``document`` (CLI-015, CLI-016).
 
 On success it prints a summary and exits 0. Any failure prints a report on
 stderr and exits 2. Findings name commands, flags, keys, and rules only.
 
 ``--self-test`` runs the same validators against mutated copies of the
-committed trio (registry shape defects, each collision direction, coverage
-and secret/flag separation, schema drift) and fails unless every one is
-rejected. The committed trio must itself be clean.
+committed artifacts (registry shape defects, each collision direction,
+coverage and secret/flag separation, schema drift, exit-mapping and
+error-code drift) and fails unless every one is rejected. The committed
+artifacts must themselves be clean.
 
 Usage::
 
@@ -51,9 +60,11 @@ ROOT = Path(__file__).resolve().parent.parent
 CLI_PATH = Path("tools/cli-commands.toml")
 CONFIG_PATH = Path("tools/config-keys.toml")
 SCHEMA_PATH = Path("schemas/v1/cli-output.json")
+ERROR_PATH = Path("tools/error-codes.toml")
 
 REGISTRY_SCHEMA = "archivist.cli-registry/v1"
 OUTPUT_NAMESPACE = "archivist.cli-output/v1"
+ERROR_REGISTRY_SCHEMA = "archivist.error-registry/v1"
 SCHEMA_ID = "urn:agent-archivist:schema:v1:cli-output"
 DRAFT = "https://json-schema.org/draft/2020-12/schema"
 TIMESTAMP_REF = ("urn:agent-archivist:schema:v1:common"
@@ -108,6 +119,24 @@ SUMMARY_MAX = 160
 
 ENVELOPE_MEMBERS = frozenset({"schema", "command", "generated_at", "result"})
 
+# The exit mappings and error conditions the CLI contract names directly
+# (CLI-002's third registry, cross-checked against tools/error-codes.toml so
+# neither document can drift from the other alone). The full class taxonomy
+# stays pinned in check-error-codes.py; only the constants cli.md cites live
+# here.
+USAGE_EXIT = 64            # CLI-008, CLI-022: usage errors and missing
+                           # non-interactive decisions
+LOCK_EXIT = 75             # CLI-007: a second mutator holds the state lock
+USAGE_CLASS = "usage"
+LOCK_CLASS = "lock_contention"
+USAGE_CODES = ("cli.usage_error", "cli.decision_missing")
+LOCK_CODE = "client.lock_held"
+# CLI-018: exit 0 is the success exit, allocated to no error class.
+# CLI-020 / ERR-023: 128+n is signal termination, outside the allocation
+# table, so no class may claim an exit at or above it.
+SUCCESS_EXIT = 0
+SIGNAL_EXIT_FLOOR = 128
+
 
 def fail(message: str) -> None:
     print(f"error: {message}", file=sys.stderr)
@@ -131,11 +160,12 @@ def key_flag_name(key: str) -> str:
     return key.replace(".", "-").replace("_", "-")
 
 
-def load_trio() -> tuple[dict, dict, dict] | None:
-    """Load the committed registry pair and the envelope schema."""
-    trio: list[dict] = []
+def load_pinned() -> tuple[dict, dict, dict, dict] | None:
+    """Load the committed registries, the envelope schema, and the error
+    registry."""
+    docs: list[dict] = []
     for path, kind in ((CLI_PATH, "cli"), (CONFIG_PATH, "config"),
-                       (SCHEMA_PATH, "schema")):
+                       (SCHEMA_PATH, "schema"), (ERROR_PATH, "errors")):
         try:
             raw = (ROOT / path).read_bytes()
         except OSError as exc:
@@ -143,22 +173,23 @@ def load_trio() -> tuple[dict, dict, dict] | None:
             return None
         try:
             if kind == "schema":
-                trio.append(json.loads(raw))
+                docs.append(json.loads(raw))
             else:
-                trio.append(tomllib.loads(raw.decode("utf-8")))
+                docs.append(tomllib.loads(raw.decode("utf-8")))
         except (tomllib.TOMLDecodeError, json.JSONDecodeError,
                 UnicodeDecodeError) as exc:
             fail(f"{path}: unparsable ({exc})")
             return None
-    cli, config, schema = trio
-    if not all(isinstance(doc, dict) for doc in trio):
+    if not all(isinstance(doc, dict) for doc in docs):
         fail("a pinned artifact is not a top-level table/object")
         return None
-    return cli, config, schema
+    cli, config, schema, errors = docs
+    return cli, config, schema, errors
 
 
-def validate(cli: dict, config: dict, schema: dict) -> list[str]:
-    """Return every CLI-contract violation in the trio."""
+def validate(cli: dict, config: dict, schema: dict,
+             error_registry: dict) -> list[str]:
+    """Return every CLI-contract violation in the pinned artifacts."""
     errors: list[str] = []
 
     # --- registry shape ----------------------------------------------------
@@ -184,6 +215,10 @@ def validate(cli: dict, config: dict, schema: dict) -> list[str]:
                  for name, declared in config_keys.items()}
     key_flags = {key_flag_name(name) for name, tiers in key_tiers.items()
                  if isinstance(tiers, list) and "flag" in tiers}
+    key_mode_collisions = sorted(flag for flag in key_flags if flag in MODE_FLAGS)
+    if key_mode_collisions:
+        errors.append("key flags invading the mode-flag namespace (CFG-007, "
+                      f"CLI-009): --{' --'.join(key_mode_collisions)}")
     secret_flagged = sorted(name for name, tiers in key_tiers.items()
                             if isinstance(tiers, list) and "flag" in tiers
                             and isinstance(config_keys[name], dict)
@@ -292,6 +327,11 @@ def validate(cli: dict, config: dict, schema: dict) -> list[str]:
 
         result_schema = declared.get("result_schema")
         if result_schema is not None:
+            if declared.get("stdout") != "document":
+                errors.append(f"{what} pins a result schema but its stdout "
+                              f"kind is {declared.get('stdout')!r}; only a "
+                              "document command emits an envelope (CLI-015, "
+                              "CLI-016)")
             if not isinstance(result_schema, str) \
                     or not result_schema.startswith("schemas/v1/") \
                     or not result_schema.endswith(".json"):
@@ -309,6 +349,9 @@ def validate(cli: dict, config: dict, schema: dict) -> list[str]:
 
     # --- output envelope -----------------------------------------------------
     errors.extend(schema_errors(schema, set(joined)))
+
+    # --- cross-registry coherence with the error-code registry ---------------
+    errors.extend(error_coherence(error_registry))
     return errors
 
 
@@ -383,6 +426,59 @@ def schema_errors(schema: dict, command_tokens: set[str]) -> list[str]:
     return errors
 
 
+def error_coherence(error_registry: dict) -> list[str]:
+    """Pin the exit mappings and error conditions cli.md names (CLI-002).
+
+    The error-code registry's own shape and frozen taxonomy are
+    check-error-codes.py's to validate; this cross-check holds only the
+    constants the CLI contract cites, so the two documents cannot drift
+    apart one commit at a time.
+    """
+    violations: list[str] = []
+    if error_registry.get("schema") != ERROR_REGISTRY_SCHEMA:
+        return [f"error registry: schema must be {ERROR_REGISTRY_SCHEMA!r} "
+                "(run tools/check-error-codes.py)"]
+    classes = error_registry.get("classes")
+    codes = error_registry.get("codes")
+    if not isinstance(classes, dict) or not classes \
+            or not isinstance(codes, dict) or not codes:
+        return violations + ["error registry declares no classes or codes "
+                             "(run tools/check-error-codes.py)"]
+
+    for class_name, expected_exit, rule in (
+            (USAGE_CLASS, USAGE_EXIT, "CLI-008, CLI-022"),
+            (LOCK_CLASS, LOCK_EXIT, "CLI-007")):
+        declared = classes.get(class_name)
+        exit_code = declared.get("exit") if isinstance(declared, dict) else None
+        if exit_code != expected_exit:
+            violations.append(f"error registry: class {class_name!r} must "
+                              f"allocate exit {expected_exit} ({rule}); "
+                              f"found {exit_code!r}")
+
+    for code, expected_class in ((USAGE_CODES[0], USAGE_CLASS),
+                                 (USAGE_CODES[1], USAGE_CLASS),
+                                 (LOCK_CODE, LOCK_CLASS)):
+        declared = codes.get(code)
+        actual = declared.get("class") if isinstance(declared, dict) else None
+        if actual != expected_class:
+            violations.append(f"error registry: the CLI contract exits on "
+                              f"code {code!r} in class {expected_class!r} "
+                              f"(CLI-002); found {actual!r}")
+
+    for class_name in sorted(classes):
+        declared = classes[class_name]
+        exit_code = declared.get("exit") if isinstance(declared, dict) else None
+        if exit_code == SUCCESS_EXIT:
+            violations.append(f"error registry: class {class_name!r} claims "
+                              "exit 0, the success exit (CLI-018)")
+        elif isinstance(exit_code, int) and not isinstance(exit_code, bool) \
+                and exit_code >= SIGNAL_EXIT_FLOOR:
+            violations.append(f"error registry: class {class_name!r} claims "
+                              f"exit {exit_code} inside the 128+n signal "
+                              "range (CLI-020, ERR-023)")
+    return violations
+
+
 def walk(node):
     """Yield every dict below `node`."""
     if isinstance(node, dict):
@@ -401,105 +497,137 @@ def set_key_flag(cli: dict, command: str, flag: str) -> None:
     }
 
 
+def add_mode_colliding_key(cli: dict, config: dict) -> None:
+    """Register and consume a key whose derived flag is --json (helper)."""
+    config["keys"]["json"] = {
+        "owner": "archivist-cli", "type": "boolean",
+        "tiers": ["flag", "env", "file"], "secret": False,
+        "default": False,
+        "description": "self-test key.",
+        "example": True,
+    }
+    cli["commands"]["status"]["keys"].append("json")
+
+
 # Self-test mutations: (label, target, mutation) — each must be rejected.
 # target is which pinned artifact the mutation touches.
 SELF_TEST_CASES: list[tuple[str, str, object]] = [
     ("unknown top-level registry key", "cli",
-     lambda c, k, s: c.__setitem__("teapot", True)),
+     lambda c, k, s, e: c.__setitem__("teapot", True)),
     ("unknown per-command key", "cli",
-     lambda c, k, s: c["commands"]["status"].__setitem__("colour", "red")),
+     lambda c, k, s, e: c["commands"]["status"].__setitem__("colour", "red")),
     ("command path not lowercase", "cli",
-     lambda c, k, s: c["commands"].__setitem__("Status", dict(
+     lambda c, k, s, e: c["commands"].__setitem__("Status", dict(
          c["commands"]["status"]))),
     ("command path with three segments", "cli",
-     lambda c, k, s: c["commands"].__setitem__("a b c", dict(
+     lambda c, k, s, e: c["commands"].__setitem__("a b c", dict(
          c["commands"]["status"]))),
     ("joined-form collision", "cli",
-     lambda c, k, s: c["commands"].__setitem__("catalog-rebuild", {
+     lambda c, k, s, e: c["commands"].__setitem__("catalog-rebuild", {
          k2: v for k2, v in c["commands"]["catalog rebuild"].items()
          if k2 != "flags"})),
     ("summary over the bound", "cli",
-     lambda c, k, s: c["commands"]["status"].__setitem__(
+     lambda c, k, s, e: c["commands"]["status"].__setitem__(
          "summary", "x" * 200)),
     ("phase outside the plan range", "cli",
-     lambda c, k, s: c["commands"]["status"].__setitem__("phase", 1)),
+     lambda c, k, s, e: c["commands"]["status"].__setitem__("phase", 1)),
     ("owner is not a workspace crate", "cli",
-     lambda c, k, s: c["commands"]["status"].__setitem__(
+     lambda c, k, s, e: c["commands"]["status"].__setitem__(
          "owner", "archivist-teapot")),
     ("unknown state-lock kind", "cli",
-     lambda c, k, s: c["commands"]["status"].__setitem__(
+     lambda c, k, s, e: c["commands"]["status"].__setitem__(
          "state_lock", "greedy")),
     ("operand of an unbounded kind", "cli",
-     lambda c, k, s: c["commands"]["admin approve"].__setitem__(
+     lambda c, k, s, e: c["commands"]["admin approve"].__setitem__(
          "operand", "value")),
     ("stdin kind outside the closed set", "cli",
-     lambda c, k, s: c["commands"]["status"].__setitem__("stdin", "tty")),
+     lambda c, k, s, e: c["commands"]["status"].__setitem__("stdin", "tty")),
     ("consumption of an unregistered key", "cli",
-     lambda c, k, s: c["commands"]["status"]["keys"].append("teapot.mode")),
+     lambda c, k, s, e: c["commands"]["status"]["keys"].append("teapot.mode")),
     ("duplicate key in one command's list", "cli",
-     lambda c, k, s: c["commands"]["status"]["keys"].append(
+     lambda c, k, s, e: c["commands"]["status"]["keys"].append(
          "client.state_dir")),
     ("missing required command attribute", "cli",
-     lambda c, k, s: c["commands"]["status"].pop("state_lock")),
+     lambda c, k, s, e: c["commands"]["status"].pop("state_lock")),
     ("operational flag colliding with a mode flag", "cli",
-     lambda c, k, s: set_key_flag(c, "status", "config")),
+     lambda c, k, s, e: set_key_flag(c, "status", "config")),
     ("operational flag colliding with a key flag", "cli",
-     lambda c, k, s: set_key_flag(c, "status", "spool-max-bytes")),
+     lambda c, k, s, e: set_key_flag(c, "status", "spool-max-bytes")),
     ("operational flag reused across commands", "cli",
-     lambda c, k, s: set_key_flag(c, "daemon", "once")),
+     lambda c, k, s, e: set_key_flag(c, "daemon", "once")),
     ("value-taking operational flag", "cli",
-     lambda c, k, s: c["commands"]["run"]["flags"]["once"].__setitem__(
+     lambda c, k, s, e: c["commands"]["run"]["flags"]["once"].__setitem__(
          "argument", True)),
     ("operational flag outside the name grammar", "cli",
-     lambda c, k, s: set_key_flag(c, "run", "Verbose")),
+     lambda c, k, s, e: set_key_flag(c, "run", "Verbose")),
     ("result_schema naming a missing file", "cli",
-     lambda c, k, s: c["commands"]["status"].__setitem__(
+     lambda c, k, s, e: c["commands"]["status"].__setitem__(
          "result_schema", "schemas/v1/no-such.json")),
     ("flag-tier key no command consumes", "config",
-     lambda c, k, s: k["keys"].__setitem__("teapot.mode", {
+     lambda c, k, s, e: k["keys"].__setitem__("teapot.mode", {
          "owner": "archivist-cli", "type": "boolean",
          "tiers": ["flag", "env", "file"], "secret": False,
          "default": False,
          "description": "self-test key.",
          "example": True})),
     ("secret key granted a flag tier", "config",
-     lambda c, k, s: k["keys"]["storage.raw_write_credentials_ref"].__setitem__(
+     lambda c, k, s, e: k["keys"]["storage.raw_write_credentials_ref"].__setitem__(
          "tiers", ["flag", "env", "file"])),
     ("envelope $id drift", "schema",
-     lambda c, k, s: s.__setitem__("$id", SCHEMA_ID + "-x")),
+     lambda c, k, s, e: s.__setitem__("$id", SCHEMA_ID + "-x")),
     ("namespace const drift", "schema",
-     lambda c, k, s: s["properties"]["schema"].__setitem__(
+     lambda c, k, s, e: s["properties"]["schema"].__setitem__(
          "const", "archivist.cli-output/v2")),
     ("envelope opened to unknown members", "schema",
-     lambda c, k, s: s.__setitem__("additionalProperties", True)),
+     lambda c, k, s, e: s.__setitem__("additionalProperties", True)),
     ("envelope member dropped", "schema",
-     lambda c, k, s: s["required"].remove("result")),
+     lambda c, k, s, e: s["required"].remove("result")),
     ("float leak in the envelope", "schema",
-     lambda c, k, s: s["properties"]["result"].__setitem__(
+     lambda c, k, s, e: s["properties"]["result"].__setitem__(
          "type", "number")),
     ("dangling generated_at reference", "schema",
-     lambda c, k, s: s["properties"]["generated_at"].__setitem__(
+     lambda c, k, s, e: s["properties"]["generated_at"].__setitem__(
          "$ref", TIMESTAMP_REF.replace("rfc3339-utc-timestamp",
                                        "no-such-timestamp"))),
     ("command-token pattern relaxation", "schema",
-     lambda c, k, s: s["properties"]["command"].__setitem__("pattern", "^.+$")),
+     lambda c, k, s, e: s["properties"]["command"].__setitem__("pattern", "^.+$")),
+    ("key flag invading the mode-flag namespace", "config",
+     lambda c, k, s, e: add_mode_colliding_key(c, k)),
+    ("result schema on a command with no stdout value", "cli",
+     lambda c, k, s, e: c["commands"]["daemon"].__setitem__(
+         "result_schema", "schemas/v1/cli-output.json")),
+    ("usage exit drift against the CLI contract", "errors",
+     lambda c, k, s, e: e["classes"]["usage"].__setitem__("exit", 63)),
+    ("lock-contention exit drift against the CLI contract", "errors",
+     lambda c, k, s, e: e["classes"]["lock_contention"].__setitem__(
+         "exit", 76)),
+    ("unregistered cli.usage_error condition", "errors",
+     lambda c, k, s, e: e["codes"].pop("cli.usage_error")),
+    ("cli.decision_missing drifting out of the usage class", "errors",
+     lambda c, k, s, e: e["codes"]["cli.decision_missing"].__setitem__(
+         "class", "local_state")),
+    ("client.lock_held reclassified off lock contention", "errors",
+     lambda c, k, s, e: e["codes"]["client.lock_held"].__setitem__(
+         "class", "internal")),
+    ("error class claiming the success exit", "errors",
+     lambda c, k, s, e: e["classes"]["internal"].__setitem__("exit", 0)),
+    ("error class claiming the 128+n signal range", "errors",
+     lambda c, k, s, e: e["classes"]["internal"].__setitem__("exit", 143)),
 ]
 
 
-def run_self_test(trio: tuple[dict, dict, dict]) -> int:
-    if validate(*trio):
-        fail("self-test base: the committed trio itself is invalid")
+def run_self_test(pinned: tuple[dict, dict, dict, dict]) -> int:
+    if validate(*pinned):
+        fail("self-test base: the committed artifacts themselves are invalid")
         return 2
 
     passed = 0
     failed = 0
     for label, target, mutation in SELF_TEST_CASES:
-        copies = copy.deepcopy(trio)
-        cli, config, schema = copies
-        mutation(cli, config, schema)
-        artifacts = {"cli": cli, "config": config, "schema": schema}
-        violations = validate(artifacts["cli"], artifacts["config"],
-                              artifacts["schema"])
+        copies = copy.deepcopy(pinned)
+        cli, config, schema, error_registry = copies
+        mutation(cli, config, schema, error_registry)
+        violations = validate(cli, config, schema, error_registry)
         if violations:
             passed += 1
             print(f"  ok  rejects: {label}")
@@ -512,22 +640,22 @@ def run_self_test(trio: tuple[dict, dict, dict]) -> int:
 
 def main(argv: list[str]) -> int:
     if "--self-test" in argv[1:]:
-        trio = load_trio()
-        return 2 if trio is None else run_self_test(trio)
+        pinned = load_pinned()
+        return 2 if pinned is None else run_self_test(pinned)
     if argv[1:]:
         fail(f"unknown arguments: {' '.join(argv[1:])}")
         return 2
 
-    trio = load_trio()
-    if trio is None:
+    pinned = load_pinned()
+    if pinned is None:
         return 2
-    violations = validate(*trio)
+    violations = validate(*pinned)
     for violation in violations:
         fail(violation)
     if violations:
         return 2
 
-    cli, config, _ = trio
+    cli, config, _, error_registry = pinned
     commands = cli["commands"]
     operational = sum(
         len(c.get("flags", {})) for c in commands.values()
@@ -539,8 +667,11 @@ def main(argv: list[str]) -> int:
     print(f"agent-archivist CLI registry: {len(commands)} commands, "
           f"{operational} operational flags, {len(MODE_FLAGS)} mode flags, "
           f"{key_flags} key flags")
-    print("OK: tools/cli-commands.toml, tools/config-keys.toml, and "
-          "schemas/v1/cli-output.json satisfy docs/notes/cli.md")
+    print(f"exit mappings cross-checked: {len(error_registry['classes'])} "
+          f"error classes, {len(error_registry['codes'])} codes")
+    print("OK: tools/cli-commands.toml, tools/config-keys.toml, "
+          "schemas/v1/cli-output.json, and tools/error-codes.toml satisfy "
+          "docs/notes/cli.md")
     return 0
 
 

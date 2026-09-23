@@ -11,10 +11,13 @@
 //! here.
 //!
 //! The binary owns no command behavior. It composes the registry-driven
-//! parser and router from [`archivist_client_core::cli`]; later phases attach
-//! their library-owned handlers at this composition point. A registered
-//! command without a result schema or handler is rejected as not shipped,
-//! rather than being represented by placeholder behavior.
+//! parser and router from [`archivist_client_core::cli`] and attaches the
+//! implemented phases' handlers at this composition point. The Phase 5
+//! operator surface is attached: the `daemon`, `run --once`, `inventory`,
+//! `status`, and `verify-state` commands the operator module composes.
+//! A registered command whose phase has not attached a handler is
+//! rejected as not shipped when invoked, rather than being represented
+//! by placeholder behavior.
 //!
 //! The composition surfaces those handlers share live in this crate's
 //! library target (`archivist_cli::admin` carries the offline
@@ -29,9 +32,18 @@
 //! logic that would need one of the library crates as a peer belongs in that
 //! library crate instead.
 
-/// Compose the command router and run one invocation.
+/// Compose the command router, attach the implemented handlers, and run
+/// one invocation.
 fn main() {
-    let router = archivist_client_core::cli::router::Router::new();
+    let mut router = archivist_client_core::cli::router::Router::new();
+    for (path, handler) in archivist_cli::operator::handlers() {
+        // Every entry names a registered path whose phase shipped its
+        // output kind; the registry gate checked the pair, and a refusal
+        // here is a composition bug, not runtime behavior.
+        router
+            .register_handler(path, handler)
+            .expect("an attached handler names a registered command");
+    }
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     std::process::exit(router.run(&args));
 }

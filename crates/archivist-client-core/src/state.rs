@@ -51,6 +51,12 @@ use migrations::{EXPECTED_INDEXES, EXPECTED_TABLES, MIGRATIONS};
 #[allow(clippy::cast_possible_wrap)]
 pub const LATEST_SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 
+/// The file name of the client state database inside the state directory.
+/// Every command composes this one name with the `client.state_dir` value —
+/// the mutator opens it for writing, the `read_only` command class opens it
+/// through [`StateSnapshot`] — so no caller invents a layout of its own.
+pub const STATE_DB_NAME: &str = "state.db";
+
 /// The closed set of failure classes a client state operation can report.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum StateErrorKind {

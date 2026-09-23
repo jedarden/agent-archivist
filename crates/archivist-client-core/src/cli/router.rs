@@ -35,8 +35,9 @@ impl Router {
     /// schema. This is the composition point for implementing phases.
     ///
     /// # Errors
-    /// Returns [`CliError::usage`] when the path is not registered or has no
-    /// delegated result schema yet.
+    /// Returns [`CliError::usage`] when the path is not registered, or the
+    /// command neither emits a pinned result document nor the none-stdout
+    /// kind a long-running command ships as behavior instead.
     pub fn register_handler(
         &mut self,
         path: &str,
@@ -46,7 +47,11 @@ impl Router {
         let Some(command) = self.registry.command(&segments) else {
             return Err(CliError::usage());
         };
-        if command.result_schema().is_none() {
+        // A document command pins its result to a wire schema (CLI-015); a
+        // none-stdout command (CLI-016) emits nothing to attach one to, and
+        // its handler *is* the registered surface. Anything else has no
+        // defined output and is refused.
+        if command.stdout_kind() != "none" && command.result_schema().is_none() {
             return Err(CliError::usage());
         }
         if self

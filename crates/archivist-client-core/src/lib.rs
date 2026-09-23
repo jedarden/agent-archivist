@@ -45,7 +45,12 @@
 //! times every wait on the monotonic clock a wall-clock step cannot bend,
 //! and stops only on cancellation or a dead jitter source while holding two
 //! words of state — is the shell the collection engine attaches to at the
-//! composition root; see [`daemon`]. The registry-driven
+//! composition root; see [`daemon`]. The operator report documents —
+//! [`report`] reads the same engine through a read-only snapshot to compose
+//! the `status` and `verify-state` reports and the one-cycle `run`
+//! document, every figure a content-free counter pinned to its
+//! `schemas/v1/` wire shape — are what the composition root's command
+//! handlers emit. The registry-driven
 //! command parser, output envelope, error diagnostics, and handler router
 //! live in [`cli`]; command behavior remains in the implementing library
 //! crates and is attached by the composition root. The remaining surfaces
@@ -63,6 +68,7 @@ pub mod cli;
 pub mod config;
 pub mod daemon;
 pub mod inventory;
+pub mod report;
 pub mod scheduler;
 pub mod spool;
 pub mod state;

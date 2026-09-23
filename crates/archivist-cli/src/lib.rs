@@ -23,7 +23,14 @@
 //! act that verifies the client's standing pointer, signs the revocation
 //! with the tenant authority, and publishes it through that store — every
 //! refusal a registered code of `tools/error-codes.toml`, with stdout
-//! empty.
+//! empty. The fourth is the Phase 5 operator command surface
+//! ([`operator`]): the `status`, `verify-state`, and `inventory`
+//! read-only reports over a state snapshot, and the `run --once` and
+//! `daemon` mutators that lock the state directory, migrate, reconcile
+//! the spool, evaluate pressure, and plan the round — every document
+//! pinned to its registry entry's `result_schema`, every refusal a
+//! registered code, and the binary attaches the five handlers at its
+//! own composition point.
 //!
 //! # Dependency boundary
 //!
@@ -34,4 +41,5 @@
 
 pub mod admin;
 pub mod approve;
+pub mod operator;
 pub mod revoke;

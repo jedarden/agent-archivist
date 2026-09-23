@@ -115,7 +115,9 @@ pub const STAGING_SUFFIX: &str = ".staging";
 const STATE_MATERIALIZED: &str = "materialized";
 
 /// The spool-entry state whose bundle is post-commit cleanup debris.
-const STATE_ACKNOWLEDGED: &str = "acknowledged";
+/// Shared with the read-only report queries, which exclude the same
+/// population the pressure gate and the drain phase measure.
+pub(crate) const STATE_ACKNOWLEDGED: &str = "acknowledged";
 
 /// The closed set of failure classes a spool operation can report.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -741,6 +743,28 @@ pub fn live_usage_bytes(store: &StateStore) -> Result<u64, SpoolError> {
         )
         .map_err(|ref err| classify_state_operation(err))?;
     u64::try_from(total).map_err(|_| unavailable("live spool usage cannot be represented"))
+}
+
+/// The count of not-yet-acknowledged spool entries — the same population
+/// [`live_usage_bytes`] sums, counted instead of summed. This is the
+/// pending-bundle figure a scheduling cycle's drain load carries
+/// ([`crate::scheduler::DrainLoad`]): the bundles the round must upload
+/// before it materializes anything new.
+///
+/// # Errors
+///
+/// [`SpoolErrorKind::Unavailable`] or [`SpoolErrorKind::Busy`] when the
+/// state database cannot be read.
+pub fn live_entry_count(store: &StateStore) -> Result<u64, SpoolError> {
+    let count: i64 = store
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM spool_entries WHERE state != ?1",
+            rusqlite::params![STATE_ACKNOWLEDGED],
+            |row| row.get(0),
+        )
+        .map_err(|ref err| classify_state_operation(err))?;
+    u64::try_from(count).map_err(|_| unavailable("live spool count cannot be represented"))
 }
 
 // The static detail texts shared by more than one failure site.

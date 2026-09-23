@@ -41,5 +41,11 @@ archivist-storage-s3 = { path = "../archivist-storage-s3" }
 # so the composition root adds no second async story.
 tokio.workspace = true
 
+[dev-dependencies]
+# The operator tests seed real schema state — sources, spool entries —
+# the read-only reports and the scheduling cycle then measure, over the
+# same workspace pin the state layer itself builds on.
+rusqlite.workspace = true
+
 [lints]
 workspace = true
