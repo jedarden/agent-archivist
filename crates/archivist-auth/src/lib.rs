@@ -54,6 +54,11 @@
 //!   digests, the verified control evidence, and the verifier's clock —
 //!   nothing in it touches storage, so the no-write acceptance holds
 //!   structurally rather than by caller discipline.
+//! - [`trust_cache`] — the bounded 60-second trust cache (EC-09): the
+//!   reader-side cache composed in front of the authority-chain walk,
+//!   so a verified trust record serves for at most sixty seconds and a
+//!   registry outage past that fails closed with the walk's own
+//!   retryable error rather than stale trust.
 //! - [`error`] — the failure taxonomy; every variant names a class and
 //!   carries no path, value, or key material.
 //!
@@ -114,4 +119,5 @@ pub mod retention;
 pub mod revocation;
 mod sha512;
 pub mod sigv4;
+pub mod trust_cache;
 pub mod use_approval;
