@@ -117,6 +117,7 @@
 //! the composition root (`archivist-cli`) selects. Must not depend on the
 //! client engine or any source adapter.
 
+pub mod authorize;
 pub mod config;
 pub mod error;
 pub mod guard;
