@@ -5,7 +5,7 @@
 //! A receipt is not evidence merely because it parses or because its
 //! signature verifies.  This module binds the authenticated receipt back to
 //! the frozen request, its captured range, and the source that produced that
-//! range.  Only after all of those checks pass does one SQLite transaction
+//! range.  Only after all of those checks pass does one `SQLite` transaction
 //! retain the canonical receipt, advance the source watermark, and mark the
 //! spool entry acknowledged.  The bundle file is removed only after that
 //! transaction commits.
@@ -141,6 +141,7 @@ impl std::error::Error for AcknowledgementError {}
 /// guessed from a range coordinate.  The transaction binds it to the range
 /// reached by the verified receipt and keeps a separate numeric watermark so
 /// out-of-order acknowledgements cannot move it backwards.
+#[derive(Clone, Copy)]
 pub struct AcknowledgementRequest<'a> {
     receipt_bytes: &'a [u8],
     cursor: &'a str,
@@ -207,6 +208,12 @@ impl AcknowledgedReceipt {
 /// `spool.remove` is called only after commit; if it fails, the committed row
 /// is left for startup reconciliation and this function returns
 /// [`AcknowledgementErrorKind::CleanupPending`].
+///
+/// # Errors
+///
+/// Returns a content-free [`AcknowledgementError`] when receipt verification,
+/// identity binding, the transaction, or post-commit spool cleanup fails.
+#[allow(clippy::too_many_lines)]
 pub fn acknowledge_receipt(
     spool: &Spool,
     store: &mut StateStore,
@@ -730,6 +737,7 @@ fn now_utc(conn: &Connection) -> Result<Timestamp, AcknowledgementError> {
         .ok_or_else(unavailable)
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn classify_sql(error: rusqlite::Error) -> AcknowledgementError {
     if matches!(
         error,
