@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:export-approval",
+  "title": "Agent Archivist export-approval-v1 administration records",
+  "description": "Tenant-authority-signed raw export approvals and append-only revocations. An approval binds one UUIDv7 export request, one frozen inventory digest, one selected-occurrence-set digest, purpose, destination class, requester, policy version, and an expiry no more than 24 hours after issue. It carries no storage credential, object path, or agent-use permission.",
+  "oneOf": [
+    { "$ref": "#/$defs/approval" },
+    { "$ref": "#/$defs/revocation" }
+  ],
+  "$defs": {
+    "namespace": {
+      "const": "archivist.export/v1",
+      "x-archivist": { "bearing": "security", "failClosed": true }
+    },
+    "tenant": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4"
+    },
+    "request": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v7"
+    },
+    "digest": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex"
+    },
+    "timestamp": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp"
+    },
+    "token": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+      "maxLength": 64
+    },
+    "key-id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id"
+    },
+    "signature": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/ed25519-signature-hex"
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "record_type",
+        "record_kind",
+        "tenant_id",
+        "export_request_id",
+        "inventory_digest",
+        "selected_occurrence_set_digest",
+        "purpose",
+        "destination_class",
+        "requester",
+        "policy_version",
+        "issued_at",
+        "expires_at",
+        "authority_key_id",
+        "authority_signature"
+      ],
+      "properties": {
+        "schema": { "$ref": "#/$defs/namespace" },
+        "record_type": { "const": "export-approval-v1" },
+        "record_kind": { "const": "immutable" },
+        "tenant_id": { "$ref": "#/$defs/tenant" },
+        "export_request_id": { "$ref": "#/$defs/request" },
+        "inventory_digest": { "$ref": "#/$defs/digest" },
+        "selected_occurrence_set_digest": { "$ref": "#/$defs/digest" },
+        "purpose": { "$ref": "#/$defs/token" },
+        "destination_class": { "$ref": "#/$defs/token" },
+        "requester": { "$ref": "#/$defs/token" },
+        "policy_version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 999999999999999999
+        },
+        "issued_at": { "$ref": "#/$defs/timestamp" },
+        "expires_at": { "$ref": "#/$defs/timestamp" },
+        "authority_key_id": { "$ref": "#/$defs/key-id" },
+        "authority_signature": { "$ref": "#/$defs/signature" }
+      },
+      "x-archivist": {
+        "writeClass": "immutable",
+        "objectKey": "tenants/<tenant_id>/v1/control/export-approvals/<approval_digest>.json",
+        "signature": "Ed25519 by the tenant export authority over RFC 8785 canonical bytes with authority_signature removed",
+        "maxLifetimeSeconds": 86400,
+        "failClosed": true
+      }
+    },
+    "revocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "record_type",
+        "record_kind",
+        "tenant_id",
+        "approval_digest",
+        "export_request_id",
+        "revoked_at",
+        "authority_key_id",
+        "authority_signature"
+      ],
+      "properties": {
+        "schema": { "$ref": "#/$defs/namespace" },
+        "record_type": { "const": "export-approval-revocation-v1" },
+        "record_kind": { "const": "immutable" },
+        "tenant_id": { "$ref": "#/$defs/tenant" },
+        "approval_digest": { "$ref": "#/$defs/digest" },
+        "export_request_id": { "$ref": "#/$defs/request" },
+        "revoked_at": { "$ref": "#/$defs/timestamp" },
+        "authority_key_id": { "$ref": "#/$defs/key-id" },
+        "authority_signature": { "$ref": "#/$defs/signature" }
+      },
+      "x-archivist": {
+        "writeClass": "immutable",
+        "objectKey": "tenants/<tenant_id>/v1/control/export-approval-revocations/<approval_digest>.json",
+        "signature": "Ed25519 by the tenant export authority over RFC 8785 canonical bytes with authority_signature removed",
+        "appendOnly": true,
+        "failClosed": true
+      }
+    }
+  }
+}

@@ -91,6 +91,7 @@ pub mod consumption_policy;
 pub mod delegation;
 pub mod ed25519;
 pub mod error;
+pub mod export_approval;
 pub mod identity;
 pub mod link;
 mod random;
