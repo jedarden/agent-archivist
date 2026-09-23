@@ -1013,6 +1013,10 @@ impl<B: ControlAdminBackend + Sync> S3ControlAdminStore<B> {
     /// writer. The ingestion/raw-write interfaces have no corresponding
     /// method, so an uploader cannot create, replace, or remove retention
     /// state.
+    ///
+    /// # Errors
+    /// Returns the same malformed-input, scope, and immutable-conflict
+    /// errors as [`ControlAdminStore::put_immutable_record`].
     pub async fn put_retention(
         &self,
         publication: &RetentionPublication,
