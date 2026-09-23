@@ -450,7 +450,7 @@ impl ExportApproval {
         &self.tenant_id
     }
 
-    /// UUIDv7 request handle bound by the approval.
+    /// `UUIDv7` request handle bound by the approval.
     #[must_use]
     pub const fn export_request_id(&self) -> &RequestId {
         &self.export_request_id
