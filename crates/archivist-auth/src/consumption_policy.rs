@@ -379,6 +379,7 @@ pub struct ConsumptionPolicy {
     purpose_to_consumer_classes: BTreeMap<String, BTreeSet<String>>,
     max_approval_lifetime_seconds: u64,
     predecessor_digest: Option<BlobDigest>,
+    governance_key_id: KeyId,
     digest: BlobDigest,
 }
 
@@ -427,9 +428,9 @@ impl ConsumptionPolicy {
         )?;
         let predecessor_digest = optional_digest(&object, "predecessor_digest")?;
         validate_timestamps(&issued_at, &effective_at, &assessment_not_before)?;
-        let signer = KeyId::parse(required_text(&object, "governance_key_id")?)
+        let governance_key_id = KeyId::parse(required_text(&object, "governance_key_id")?)
             .map_err(|_| ConsumptionPolicyError::MalformedRecord)?;
-        if signer != *anchor.key_id() {
+        if governance_key_id != *anchor.key_id() {
             return Err(ConsumptionPolicyError::UntrustedGovernance);
         }
         let signature = Ed25519Signature::parse(required_text(&object, "governance_signature")?)
@@ -455,6 +456,7 @@ impl ConsumptionPolicy {
             purpose_to_consumer_classes,
             max_approval_lifetime_seconds,
             predecessor_digest,
+            governance_key_id,
             digest: BlobDigest::from_raw(sha256::digest(envelope)),
         })
     }
@@ -521,6 +523,17 @@ impl ConsumptionPolicy {
     #[must_use]
     pub const fn predecessor_digest(&self) -> Option<&BlobDigest> {
         self.predecessor_digest.as_ref()
+    }
+
+    /// The governance key ID that signed this policy and must issue any
+    /// approval binding this policy version.
+    ///
+    /// A use approval binds the policy version, so the identity issuing one
+    /// must be the same governance key this policy was signed with; the
+    /// approval-issuing surface cross-checks the pair before signing.
+    #[must_use]
+    pub const fn governance_key_id(&self) -> &KeyId {
+        &self.governance_key_id
     }
 
     /// The digest of the complete signed policy bytes.
@@ -1195,7 +1208,7 @@ fn check_clock(now: &Timestamp, policy: &ConsumptionPolicy) -> Result<(), Consum
     Ok(())
 }
 
-fn validate_timestamp(timestamp: &Timestamp) -> Result<(), ConsumptionPolicyError> {
+pub(crate) fn validate_timestamp(timestamp: &Timestamp) -> Result<(), ConsumptionPolicyError> {
     if timestamp.calendar_valid() {
         Ok(())
     } else {
@@ -1203,7 +1216,10 @@ fn validate_timestamp(timestamp: &Timestamp) -> Result<(), ConsumptionPolicyErro
     }
 }
 
-fn parse_closed_object(bytes: &[u8], members: &[&str]) -> Result<Object, ConsumptionPolicyError> {
+pub(crate) fn parse_closed_object(
+    bytes: &[u8],
+    members: &[&str],
+) -> Result<Object, ConsumptionPolicyError> {
     let Value::Object(object) =
         json::parse(bytes).map_err(|_| ConsumptionPolicyError::MalformedRecord)?
     else {
@@ -1215,30 +1231,42 @@ fn parse_closed_object(bytes: &[u8], members: &[&str]) -> Result<Object, Consump
     Ok(object)
 }
 
-fn required_text<'a>(object: &'a Object, name: &str) -> Result<&'a str, ConsumptionPolicyError> {
+pub(crate) fn required_text<'a>(
+    object: &'a Object,
+    name: &str,
+) -> Result<&'a str, ConsumptionPolicyError> {
     text_member(object, name).ok_or(ConsumptionPolicyError::MalformedRecord)
 }
 
-fn text_member<'a>(object: &'a Object, name: &str) -> Option<&'a str> {
+pub(crate) fn text_member<'a>(object: &'a Object, name: &str) -> Option<&'a str> {
     match object.get(name) {
         Some(Value::Text(value)) => Some(value.as_str()),
         _ => None,
     }
 }
 
-fn parse_tenant(object: &Object, name: &str) -> Result<TenantId, ConsumptionPolicyError> {
+pub(crate) fn parse_tenant(
+    object: &Object,
+    name: &str,
+) -> Result<TenantId, ConsumptionPolicyError> {
     TenantId::parse(required_text(object, name)?)
         .map_err(|_| ConsumptionPolicyError::MalformedRecord)
 }
 
-fn parse_timestamp(object: &Object, name: &str) -> Result<Timestamp, ConsumptionPolicyError> {
+pub(crate) fn parse_timestamp(
+    object: &Object,
+    name: &str,
+) -> Result<Timestamp, ConsumptionPolicyError> {
     let timestamp = Timestamp::parse(required_text(object, name)?)
         .map_err(|_| ConsumptionPolicyError::MalformedRecord)?;
     validate_timestamp(&timestamp)?;
     Ok(timestamp)
 }
 
-fn parse_digest(object: &Object, name: &str) -> Result<BlobDigest, ConsumptionPolicyError> {
+pub(crate) fn parse_digest(
+    object: &Object,
+    name: &str,
+) -> Result<BlobDigest, ConsumptionPolicyError> {
     BlobDigest::parse(required_text(object, name)?)
         .map_err(|_| ConsumptionPolicyError::MalformedRecord)
 }
@@ -1256,7 +1284,7 @@ fn optional_digest(
     }
 }
 
-fn positive_number(object: &Object, name: &str) -> Result<u64, ConsumptionPolicyError> {
+pub(crate) fn positive_number(object: &Object, name: &str) -> Result<u64, ConsumptionPolicyError> {
     match object.get(name) {
         Some(Value::Int(value)) if (1..=POLICY_MAX_VERSION_I64).contains(value) => {
             u64::try_from(*value).map_err(|_| ConsumptionPolicyError::InvalidBounds)
@@ -1350,7 +1378,9 @@ fn purpose_map(
     Ok(map)
 }
 
-fn token(value: &str) -> bool {
+/// The shared governance-token grammar: lowercase lead, 64 bytes, and the
+/// punctuation set every closed record family in this crate validates with.
+pub(crate) fn token(value: &str) -> bool {
     let bytes = value.as_bytes();
     !bytes.is_empty()
         && bytes.len() <= 64
@@ -1369,25 +1399,25 @@ fn pointer_version(bytes: &[u8]) -> Result<u64, ConsumptionPolicyError> {
     positive_number(&object, "policy_version")
 }
 
-fn text(value: &str) -> Value {
+pub(crate) fn text(value: &str) -> Value {
     Value::Text(value.to_owned())
 }
 
-fn signed_integer(value: u64) -> Value {
+pub(crate) fn signed_integer(value: u64) -> Value {
     Value::Int(
         i64::try_from(value)
             .unwrap_or_else(|_| unreachable!("policy numeric bounds fit in a signed integer")),
     )
 }
 
-fn timestamp_cmp(
+pub(crate) fn timestamp_cmp(
     left: &Timestamp,
     right: &Timestamp,
 ) -> Result<std::cmp::Ordering, ConsumptionPolicyError> {
     Ok(timestamp_value(left)?.cmp(&timestamp_value(right)?))
 }
 
-fn timestamp_value(timestamp: &Timestamp) -> Result<(i64, u32), ConsumptionPolicyError> {
+pub(crate) fn timestamp_value(timestamp: &Timestamp) -> Result<(i64, u32), ConsumptionPolicyError> {
     validate_timestamp(timestamp)?;
     let bytes = timestamp.as_str().as_bytes();
     let number = |slice: &[u8]| {

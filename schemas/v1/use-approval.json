@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:use-approval",
+  "title": "Agent Archivist use-approval-v1 governance records",
+  "description": "Offline tenant-governance-signed derived-use approvals and append-only revocations. An approval binds one tenant, redacted episode digest, risk-assessment digest, purpose, consumer class, policy version, approver, issue and expiry instants, and the assessment-freshness policy snapshot. It carries no raw object path or storage capability.",
+  "oneOf": [
+    { "$ref": "#/$defs/approval" },
+    { "$ref": "#/$defs/revocation" }
+  ],
+  "$defs": {
+    "namespace": {
+      "const": "archivist.governance/v1",
+      "x-archivist": { "bearing": "security", "failClosed": true }
+    },
+    "tenant": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4"
+    },
+    "digest": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex"
+    },
+    "timestamp": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp"
+    },
+    "token": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+      "maxLength": 64
+    },
+    "key-id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id"
+    },
+    "signature": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/ed25519-signature-hex"
+    },
+    "policy-version": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 999999999999999999
+    },
+    "assessment-freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evaluated_at", "not_before", "max_age_seconds"],
+      "properties": {
+        "evaluated_at": { "$ref": "#/$defs/timestamp" },
+        "not_before": { "$ref": "#/$defs/timestamp" },
+        "max_age_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2592000
+        }
+      },
+      "x-archivist": { "bearing": "security", "failClosed": true }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "record_type",
+        "record_kind",
+        "tenant_id",
+        "episode_digest",
+        "assessment_digest",
+        "purpose",
+        "consumer_class",
+        "policy_version",
+        "approver",
+        "issued_at",
+        "expires_at",
+        "assessment_freshness",
+        "governance_key_id",
+        "governance_signature"
+      ],
+      "properties": {
+        "schema": { "$ref": "#/$defs/namespace" },
+        "record_type": { "const": "use-approval-v1" },
+        "record_kind": { "const": "immutable" },
+        "tenant_id": { "$ref": "#/$defs/tenant" },
+        "episode_digest": { "$ref": "#/$defs/digest" },
+        "assessment_digest": { "$ref": "#/$defs/digest" },
+        "purpose": { "$ref": "#/$defs/token" },
+        "consumer_class": { "$ref": "#/$defs/token" },
+        "policy_version": { "$ref": "#/$defs/policy-version" },
+        "approver": { "$ref": "#/$defs/token" },
+        "issued_at": { "$ref": "#/$defs/timestamp" },
+        "expires_at": { "$ref": "#/$defs/timestamp" },
+        "assessment_freshness": { "$ref": "#/$defs/assessment-freshness" },
+        "governance_key_id": { "$ref": "#/$defs/key-id" },
+        "governance_signature": { "$ref": "#/$defs/signature" }
+      },
+      "x-archivist": {
+        "writeClass": "immutable",
+        "objectKey": "tenants/<tenant_id>/v1/control/use-approvals/<approval_digest>.json",
+        "signature": "Ed25519 by the offline tenant governance identity over RFC 8785 canonical bytes with governance_signature removed",
+        "failClosed": true
+      }
+    },
+    "revocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "record_type",
+        "record_kind",
+        "tenant_id",
+        "approval_digest",
+        "episode_digest",
+        "revoked_at",
+        "governance_key_id",
+        "governance_signature"
+      ],
+      "properties": {
+        "schema": { "$ref": "#/$defs/namespace" },
+        "record_type": { "const": "use-approval-revocation-v1" },
+        "record_kind": { "const": "immutable" },
+        "tenant_id": { "$ref": "#/$defs/tenant" },
+        "approval_digest": { "$ref": "#/$defs/digest" },
+        "episode_digest": { "$ref": "#/$defs/digest" },
+        "revoked_at": { "$ref": "#/$defs/timestamp" },
+        "governance_key_id": { "$ref": "#/$defs/key-id" },
+        "governance_signature": { "$ref": "#/$defs/signature" }
+      },
+      "x-archivist": {
+        "writeClass": "immutable",
+        "objectKey": "tenants/<tenant_id>/v1/control/use-approval-revocations/<approval_digest>.json",
+        "signature": "Ed25519 by the offline tenant governance identity over RFC 8785 canonical bytes with governance_signature removed",
+        "appendOnly": true,
+        "failClosed": true
+      }
+    }
+  }
+}
