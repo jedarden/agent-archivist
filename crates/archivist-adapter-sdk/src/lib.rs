@@ -71,10 +71,12 @@
 //!   content-free fail-closed rejection for invalid ones.
 //! - [`conformance`]: the append-only conformance suite (plan Phase 6D):
 //!   the harness-agnostic runner that drives any adapter built on this
-//!   SDK through the synthetic corpus's time-dimension scenes — complete
-//!   records, a partial tail, growth — and names every capture-contract
-//!   breach. The `synthetic_append_only` example is the executable shape
-//!   a community adapter starts from; this suite is what it is held to.
+//!   SDK through the synthetic corpus's six scenes — the time dimension
+//!   (complete records, a partial tail, growth) and the environment
+//!   dimension (replacement, permissions, missing roots) — and names
+//!   every capture-contract breach. The `synthetic_append_only` example
+//!   is the executable shape a community adapter starts from; this suite
+//!   is what it is held to.
 //!
 //!
 //! # Dependency boundary
@@ -112,10 +114,13 @@ pub use archivist_protocol::vocabulary::{AdapterId, VersionToken};
 
 pub use capability::{AdapterCapability, CapabilitySet, MAX_CAPABILITIES};
 pub use capture_alignment::{AlignmentError, CaptureAlignment, InferenceAlignment, align_attempts};
+pub use compatibility::{
+    CompatibilityMatrix, FIRST_PARTY_OPENAI_HTTP1, MatrixError, QualifiedRoute,
+};
 pub use conformance::{
     CORPUS_RELATIVE, ConformanceAdapter, ConformanceSuite, CorpusError, GenerationContinuity,
-    MountError, PassError, PassReport, SOURCE_FILE_NAME, Scenario, ScenarioOutcome,
-    TimeDimensionReport, Violation,
+    MountError, PassError, PassReport, SOURCE_FILE_NAME, Scenario, ScenarioOutcome, SuiteReport,
+    Violation,
 };
 pub use descriptor::{AdapterDescriptor, DescriptorError};
 pub use discovery::{
@@ -144,14 +149,11 @@ pub use inference_observer::{
     LogicalInferenceClose, LogicalInferenceOutcome, LogicalInferenceStart, ObserverFailure,
     RecordingArtifactSink, SinkFailure,
 };
-pub use compatibility::{
-    CompatibilityMatrix, MatrixError, QualifiedRoute, FIRST_PARTY_OPENAI_HTTP1,
-};
-pub use openai_conformance::{
-    CheckId, ConformanceError, ConformanceReport, ConformanceSink, ReceivedExchange, SceneId,
-    SceneOutcome, TransportConformance, CONFORMANCE_CREDENTIAL, OpenAiWireFixture, WireScript,
-};
 pub use lifecycle::{AdapterLifecycle, LifecycleState};
+pub use openai_conformance::{
+    CONFORMANCE_CREDENTIAL, CheckId, ConformanceError, ConformanceReport, ConformanceSink,
+    OpenAiWireFixture, ReceivedExchange, SceneId, SceneOutcome, TransportConformance, WireScript,
+};
 pub use session_identity::{SessionIdentity, SessionIdentityError};
 pub use status::{
     AccountLabel, AdapterAccountStatus, ClassificationCounts, CoverageCounts, CoverageState,

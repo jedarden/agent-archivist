@@ -19,10 +19,13 @@
 //! ```text
 //! cargo run -p archivist-adapter-sdk --example synthetic_append_only
 //! cargo run -p archivist-adapter-sdk --example synthetic_append_only -- growth
+//! cargo run -p archivist-adapter-sdk --example synthetic_append_only -- all
 //! ```
 //!
 //! The corpus is located relative to this crate's manifest, so the example
-//! runs from any working directory; `--corpus DIR` overrides it.
+//! runs from any working directory; `--corpus DIR` overrides it. `all`
+//! runs every scene in corpus order — the full six-scenario Phase 6D
+//! pass, ending in one `event=suite` summary line.
 //!
 //! # Scenes
 //!
@@ -346,7 +349,7 @@ fn usage_error(message: &str) -> ! {
     eprintln!(
         "usage: synthetic_append_only [SCENE] [--scene NAME] [--corpus DIR]\n\
          scenes: complete-records (default), partial-tail, growth, replacement,\n\
-         \x20       permissions, missing-root\n\
+         \x20       permissions, missing-root, all (every scene in corpus order)\n\
          --corpus DIR  corpus directory (default: {CORPUS_RELATIVE} beside this crate)"
     );
     std::process::exit(2);
@@ -366,7 +369,8 @@ fn main() -> ExitCode {
                      \n\
                      usage: synthetic_append_only [SCENE] [--scene NAME] [--corpus DIR]\n\
                      scenes: complete-records (default), partial-tail, growth,\n\
-                     \x20       replacement, permissions, missing-root"
+                     \x20       replacement, permissions, missing-root,\n\
+                     \x20       all (every scene in corpus order)"
                 );
                 return ExitCode::SUCCESS;
             }
@@ -390,8 +394,6 @@ fn main() -> ExitCode {
             }
         }
     }
-    let scene = Scene::parse(&scene_name)
-        .unwrap_or_else(|| usage_error(&format!("unknown scene: {scene_name}")));
     let corpus = corpus_override.unwrap_or_else(default_corpus);
     if !corpus.is_dir() {
         eprintln!(
@@ -400,7 +402,35 @@ fn main() -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
+    if scene_name == "all" {
+        return run_all(&corpus);
+    }
+    let scene = Scene::parse(&scene_name)
+        .unwrap_or_else(|| usage_error(&format!("unknown scene: {scene_name}")));
     run(&scene, &corpus)
+}
+
+/// Run every corpus scene in order — the full six-scenario Phase 6D
+/// pass. Each scene ends in its own bounded status line (a coverage gap
+/// or a fail-closed denial is an observation, not a failure), and the
+/// run ends in one suite summary: every scene, every scene complete.
+fn run_all(corpus: &Path) -> ExitCode {
+    let total = SCENES.len();
+    let mut completed = 0;
+    for scene in SCENES {
+        println!("event=scene-begin scene={}", scene.account);
+        let outcome = run(&scene, corpus);
+        println!("event=scene-end scene={}", scene.account);
+        if outcome == ExitCode::SUCCESS {
+            completed += 1;
+        }
+    }
+    println!("event=suite scenes={total} complete={completed}");
+    if completed == total {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 /// Run one scene end to end: every observation outcome — including a
