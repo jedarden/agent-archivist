@@ -9,7 +9,7 @@
 //! | `/health/live` | GET | Process-only liveness: answered from the process, never from storage or configuration. |
 //! | `/health/ready` | GET | The readiness snapshot: valid configuration plus fresh trust evidence for every configured tenant. |
 //! | `/metrics` | GET | The registered server families in Prometheus text exposition. |
-//! | `/v1/ingest` | POST | Admission-guarded, then bounded-parse: the request deadline bounds the whole attempt, the process-wide in-flight cap admits before anything request-derived is read, and an overloaded replica refuses with the retryable `request.rate_limited` body; admitted attempts validate the pinned framing and parse the envelope, every request-shape violation rendering its registry code through [`crate::error`] (`request.framing_invalid`/`envelope.*` 400s, the `envelope.media_type_unsupported` 415, and the payload-limit 413s as the pipeline grows their triggers), and a well-formed attempt is still refused with the stable `server.unavailable` body until the commit slice lands. |
+//! | `/v1/ingest` | POST | Admission-guarded, then bounded-parse, then the streaming commit: the request deadline bounds the whole attempt, the process-wide in-flight cap admits before anything request-derived is read, and an overloaded replica refuses with the retryable `request.rate_limited` body; admitted attempts validate the pinned framing and parse the envelope, every request-shape violation rendering its registry code through [`crate::error`] (`request.framing_invalid`/`envelope.*` 400s, the `envelope.media_type_unsupported` 415, and the payload-limit 413s the decode stage's limits fire), and a well-formed attempt streams through transport decode into `commit_blob` — a verified blob, reported through the retryable `server.partial_commit` body until the occurrence and attestation writes land (RCPT-005). |
 //!
 //! Fail-closed is the operative rule for every body: responses render
 //! canonical bytes through `archivist-protocol`'s RFC 8785 writer, carry
@@ -24,11 +24,17 @@
 
 use std::io;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
+use archivist_protocol::envelope::{Envelope, EnvelopeError};
 use archivist_protocol::json::{Object, Value};
 use archivist_protocol::vocabulary::RequestId;
+use archivist_storage::blob::{BlobEncoder, BlobExpectation, commit_blob};
 use archivist_storage::control::ControlReadStore;
+use archivist_storage::error::{StorageError, StorageErrorKind};
 use archivist_storage::raw_write::RawWriteStore;
+use archivist_storage::zstd_v1::ZstdV1Encoder;
 use axum::Router;
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
@@ -40,10 +46,11 @@ use tokio::sync::mpsc;
 use crate::error::{ErrorResponse, ServerFailure};
 use crate::guard::{DeadlineElapsed, within_deadline};
 use crate::metrics::IngestOutcome;
-use crate::parse::framing::{ByteSource, RequestFraming};
+use crate::parse::framing::{ByteSource, FramingError, RequestFraming};
 use crate::parse::ingest::{IngestParseError, parse_ingest_with_cap};
-use crate::parse::parts::TwoPartError;
+use crate::parse::parts::{PayloadStream, TwoPartError};
 use crate::state::{ReadinessSnapshot, ServerState};
+use crate::transport::{DecodeLimits, TransportDecodeError, TransportDecoder};
 
 /// Media type of the content-free health bodies.
 pub const HEALTH_MEDIA_TYPE: &str = "application/json";
@@ -129,14 +136,19 @@ async fn metrics<W, C>(State(state): State<Arc<ServerState<W, C>>>) -> Response 
 /// envelope malformed/version/schema/size — renders its registry code
 /// and pinned message through [`failure_response`] with the envelope's
 /// request identifier carried once one has parsed (ERR-025, ERR-027).
-/// A well-formed attempt is still refused with the stable retryable
-/// body: no commit pipeline exists yet, so nothing can be committed and
-/// no receipt can be issued, and saying so through `server.unavailable`
-/// is the honest response (plan Section 7.8: server-failure class,
-/// retryable, no receipt). The commit slice replaces that refusal —
-/// holding the admission across its streaming attempt — behind the same
-/// route.
-async fn ingest<W, C>(State(state): State<Arc<ServerState<W, C>>>, request: Request) -> Response {
+/// A well-formed attempt streams on through [`attempt_commit`]: the
+/// declared transport decodes under the two hard payload limits into
+/// `commit_blob`'s zstd-v1 encoder, the session completes only after
+/// every size and digest verifies, and this slice's verified blob
+/// renders the retryable `server.partial_commit` body — the occurrence
+/// and attestation writes land on their own slice, and until then the
+/// honest answer for a durable blob is RCPT-005's: no receipt, retry the
+/// identical envelope.
+async fn ingest<W, C>(State(state): State<Arc<ServerState<W, C>>>, request: Request) -> Response
+where
+    W: RawWriteStore + Send + Sync + 'static,
+    C: ControlReadStore + Send + Sync + 'static,
+{
     let attempt = within_deadline(state.config().request_deadline(), async {
         match state.gate().try_admit_process() {
             Err(_rejection) => {
@@ -188,9 +200,13 @@ fn failure_response(failure: ServerFailure, request_id: Option<RequestId>) -> Re
 /// committed nothing and admitted nothing), while a well-formed attempt
 /// under the fail-closed bootstrap and a parse-phase fault are failures.
 async fn attempt_parse<W, C>(
-    state: &ServerState<W, C>,
+    state: &Arc<ServerState<W, C>>,
     request: Request,
-) -> (IngestOutcome, Response) {
+) -> (IngestOutcome, Response)
+where
+    W: RawWriteStore + Send + Sync + 'static,
+    C: ControlReadStore + Send + Sync + 'static,
+{
     // The framing is validated from the header alone, before any body
     // byte is read: a wrong Content-Type never opens the body.
     let content_type = request
@@ -243,19 +259,288 @@ async fn attempt_parse<W, C>(
             envelope_cap,
         )
     });
-    let (failure, request_id) = match parse.await {
+    match parse.await {
         // A panicked parse committed nothing and is a defect, not a wire
         // condition: the internal-failure class, never a 200-shaped lie.
-        Err(_join) => (ServerFailure::Internal, None),
-        Ok(Err(rejection)) => (ServerFailure::Parse(rejection.error), rejection.request_id),
-        // Well-formed: the commit pipeline lands later. The parsed
-        // envelope's identifier is known, so the refusal carries it
-        // (ERR-025) — a client correlating its attempt sees the server
-        // that read it.
-        Ok(Ok((envelope, _stream))) => (ServerFailure::Unavailable, Some(envelope.request_id)),
+        Err(_join) => {
+            let failure = ServerFailure::Internal;
+            (failure.outcome(), failure_response(failure, None))
+        }
+        Ok(Err(rejection)) => {
+            let failure = ServerFailure::Parse(rejection.error);
+            let outcome = failure.outcome();
+            // The parsed envelope's identifier is known, so the refusal
+            // carries it (ERR-025) — a client correlating its attempt
+            // sees the server that read it.
+            (outcome, failure_response(failure, rejection.request_id))
+        }
+        // Well-formed: the commit phase takes the attempt the rest of the
+        // way — transport decode, blob commit, rendering — with the
+        // admission still held across it.
+        Ok(Ok((envelope, stream))) => attempt_commit(Arc::clone(state), envelope, stream).await,
+    }
+}
+
+/// The commit phase of a well-formed attempt: bounded transport decode
+/// into the blob commit, then the rendering (plan Section 7.7).
+///
+/// The decode runs on the blocking pool — its reads block on the parse
+/// bridge's channel, which is legal only off the async runtime — and
+/// feeds `commit_blob` chunk by chunk through a same-thread iterator, so
+/// no stage ever holds payload scale beyond its own bounded buffers: the
+/// decode stage's 16 MiB target chunk, the one chunk in flight to the
+/// encoder, the writer's 8 MiB part. Memory follows the concurrency
+/// buffers, never the body (VAL-008), and the request deadline and the
+/// process-wide in-flight cap held by the admission cover the whole
+/// phase.
+///
+/// The checks run in the plan's order, each able to stop the attempt with
+/// nothing stored: the decode stage's two hard limits fire mid-stream
+/// against the bytes actually produced (the two 413 classes), the framing
+/// must close exactly past the payload, and the produced canonical extent
+/// must equal the envelope's declared size — any of these failing gates
+/// the encoder, so the commit's own epilogue refuses and the live
+/// multipart session aborts (VAL-008; EC-07: no stored object, no live
+/// session). The commit then completes only after the canonical digest
+/// and the declared size verify against the bytes actually produced.
+///
+/// What renders on a verified commit is this slice's honest outcome: the
+/// occurrence and attestation writes are not wired yet, so the attempt
+/// holds a durable blob and nothing more — the registry's
+/// `server.partial_commit`, retryable, no receipt, the identical retry
+/// repairing the rest (protocol Section 4.1; RCPT-005). The store's
+/// physical answer travels untouched behind the commit (RCPT-003):
+/// created stays created, already-present stays already-present, and the
+/// payload is streamed and verified in both cases — a known digest never
+/// exempts the bytes (plan Section 7.7).
+async fn attempt_commit<W, C>(
+    state: Arc<ServerState<W, C>>,
+    envelope: Envelope,
+    stream: PayloadStream<BodyChannel>,
+) -> (IngestOutcome, Response)
+where
+    W: RawWriteStore + Send + Sync + 'static,
+    C: ControlReadStore + Send + Sync + 'static,
+{
+    let request_id = envelope.request_id;
+    let limits = DecodeLimits::new(
+        state.config().record_max_bytes(),
+        u64::from(state.config().max_expansion_ratio()),
+    );
+    let expectation = BlobExpectation::new(envelope.blob_digest, envelope.uncompressed_size);
+    let encoding = envelope.transport_encoding;
+    let tenant = envelope.tenant_id.clone();
+    let uploads = Arc::clone(state.uploads());
+    // Captured here, where the runtime is current; the blocking task uses
+    // it to drive the commit's async store calls.
+    let handle = tokio::runtime::Handle::current();
+
+    // The one blocking task drives the whole streaming tail: the decode
+    // reads block on the parse bridge's channel, and the commit's store
+    // futures run under the runtime handle on this same thread.
+    let attempt = tokio::task::spawn_blocking(move || {
+        let decoder = match TransportDecoder::new(encoding, stream, limits) {
+            Ok(decoder) => decoder,
+            Err(error) => return decode_failure(error),
+        };
+        // The pledge is the envelope's declared canonical extent — the
+        // declaration the whole stream is held to; the encoder enforces
+        // it, and a rejection here is a build or version drift.
+        let encoder = match ZstdV1Encoder::new(expectation.uncompressed_bytes()) {
+            Ok(encoder) => encoder,
+            Err(_) => return ServerFailure::Internal,
+        };
+        // The drain's verdict gates the commit: until the drain has
+        // verified the declared size, the encoder refuses its epilogue,
+        // which is what aborts the live session. (Framing closure is the
+        // decode stage's own end-of-stream check: an incomplete frame
+        // fails `next_chunk` and arrives here as an error.) Both are
+        // shared by reference with the drain and the encoder, so they
+        // carry the verdict across the encoder trait's `Sync` bound.
+        let gate = AtomicBool::new(true);
+        let cause = Mutex::new(None);
+        let mut gated = GateEncoder {
+            inner: encoder,
+            gate: &gate,
+        };
+        let mut chunks = DrainChunks {
+            decoder: Some(decoder),
+            declared_bytes: expectation.uncompressed_bytes(),
+            drained_bytes: 0,
+            gate: &gate,
+            cause: &cause,
+        };
+        let commit = handle.block_on(commit_blob(
+            state.storage().raw(),
+            &uploads,
+            &tenant,
+            expectation,
+            &mut gated,
+            &mut chunks,
+        ));
+        // A recorded cause is the attempt's true failure: the commit
+        // result behind it is only the abort the gate forced.
+        if let Some(failure) = cause.lock().expect("cause lock").take() {
+            return failure;
+        }
+        match commit {
+            // Verified against the store, and still only the blob: the
+            // partial-commit class is this slice's honest answer
+            // (RCPT-005), and the metric counts the attempt as the
+            // failure it reported — `committed` means committed *and*
+            // receipted.
+            Ok(_committed) => ServerFailure::PartialCommit,
+            // The commit layer's own validation or the store failed with
+            // nothing left behind; the kind carries the wire class.
+            Err(error) => ServerFailure::from_storage_kind(error.kind()),
+        }
+    })
+    .await;
+    let failure = match attempt {
+        // A panicked commit task is a defect, not a wire condition; the
+        // aborting writer's Drop already abandoned the session.
+        Err(_join) => ServerFailure::Internal,
+        Ok(failure) => failure,
     };
     let outcome = failure.outcome();
-    (outcome, failure_response(failure, request_id))
+    (outcome, failure_response(failure, Some(request_id)))
+}
+
+/// The route failure for a transport-decode refusal: the two limit
+/// classes ride their registered 413 payloads, and every other decode
+/// failure fails closed to the framing-invalid class the registry pins
+/// for a request that is not the byte layout the protocol declared.
+fn decode_failure(error: TransportDecodeError) -> ServerFailure {
+    match error.payload_limit() {
+        Some(limit) => ServerFailure::PayloadLimit(limit),
+        None => match error {
+            // A decoder that could not be built is a build or version
+            // drift, not a wire condition.
+            TransportDecodeError::CodecSetup => ServerFailure::Internal,
+            TransportDecodeError::MalformedFrame { .. }
+            | TransportDecodeError::SourceRead(_) => framing_invalid(),
+            // Unreachable — the limit classes always carry a payload
+            // limit, answered above; a rerender here would mean the
+            // classification drifted, and internal is the fail-closed
+            // answer for that too.
+            TransportDecodeError::RecordTooLarge { .. }
+            | TransportDecodeError::ExpansionRatioExceeded { .. } => ServerFailure::Internal,
+        },
+    }
+}
+
+/// The pinned request-shape refusal the pipeline's framing-class failures
+/// render: the registry's `request.framing_invalid` with its pinned
+/// message, content-free — the codec's own static detail never rides the
+/// wire (SEC-004).
+fn framing_invalid() -> ServerFailure {
+    ServerFailure::Parse(IngestParseError::Framing(TwoPartError::Framing(
+        FramingError::MalformedDelimiter,
+    )))
+}
+
+/// The consistency rejection for a stream whose produced canonical extent
+/// differs from the envelope's declared `uncompressed_size`: the request
+/// is not the declaration the protocol pinned, refused before any commit
+/// (protocol Section 3.4 fault table; VAL-003).
+fn declared_size_mismatch() -> ServerFailure {
+    ServerFailure::Parse(IngestParseError::Envelope(EnvelopeError::SchemaInvalid {
+        field: "uncompressed_size",
+        reason: "declared size differs from the bytes the request carried",
+    }))
+}
+
+/// Static detail of the pre-commit gate refusal — content-free, and
+/// unreachable by any rendering path: the route reports the recorded
+/// cause, never the gate trip itself.
+const GATE_REFUSED_DETAIL: &str =
+    "the pipeline refused the attempt before its commit could complete";
+
+/// The pipeline's pre-commit gate, worn by the storage encoder: once the
+/// drain's verdict has failed a check, the encoder refuses the frame
+/// epilogue, which is what aborts `commit_blob`'s live session before
+/// anything completes. The gate holds no state beyond the verdict the
+/// drain recorded.
+struct GateEncoder<'a, E: BlobEncoder> {
+    inner: E,
+    gate: &'a AtomicBool,
+}
+
+impl<E: BlobEncoder> BlobEncoder for GateEncoder<'_, E> {
+    fn update(&mut self, canonical: &[u8], out: &mut Vec<u8>) -> Result<(), StorageError> {
+        self.inner.update(canonical, out)
+    }
+
+    fn finish(&mut self, out: &mut Vec<u8>) -> Result<(), StorageError> {
+        if !self.gate.load(Ordering::SeqCst) {
+            return Err(StorageError::new(
+                StorageErrorKind::MalformedInput,
+                GATE_REFUSED_DETAIL,
+            ));
+        }
+        self.inner.finish(out)
+    }
+}
+
+/// The canonical chunk source the commit consumes: the transport
+/// decoder's lending chunks, copied out one at a time — the copy is a
+/// concurrency buffer in flight to the encoder, never a second
+/// payload-scale hold. The drain runs the pipeline's own pre-commit
+/// checks (framing closure, declared size) and records their verdict in
+/// the gate and the cause the route renders.
+struct DrainChunks<'a, R> {
+    /// Present until the stream drains or fails; `None` afterwards, so a
+    /// source can never be read past its own verdict.
+    decoder: Option<TransportDecoder<R>>,
+    declared_bytes: u64,
+    /// Running total of the canonical bytes handed to the commit.
+    drained_bytes: u64,
+    gate: &'a AtomicBool,
+    cause: &'a Mutex<Option<ServerFailure>>,
+}
+
+impl<R: io::Read> Iterator for DrainChunks<'_, R> {
+    type Item = Vec<u8>;
+
+    fn next(&mut self) -> Option<Vec<u8>> {
+        let decoder = self.decoder.as_mut()?;
+        match decoder.next_chunk() {
+            Ok(Some(chunk)) => {
+                self.drained_bytes += chunk.len() as u64;
+                Some(chunk.to_vec())
+            }
+            Ok(None) => {
+                // Drained: framing closure was the decode stage's own
+                // end-of-stream check (an incomplete frame failed
+                // `next_chunk` above), so the check left is the declared
+                // size — the produced canonical extent must equal the
+                // declaration before the commit may complete.
+                self.decoder = None;
+                let size_ok = self.drained_bytes == self.declared_bytes;
+                if !size_ok {
+                    self.cause
+                        .lock()
+                        .expect("cause lock")
+                        .replace(declared_size_mismatch());
+                }
+                self.gate.store(size_ok, Ordering::SeqCst);
+                None
+            }
+            Err(error) => {
+                // The stage is closed — it reads no further. The canonical
+                // stream ends here, short of its declared digest: the
+                // commit layer's own validation aborts the live session
+                // before anything completes.
+                self.decoder = None;
+                self.gate.store(false, Ordering::SeqCst);
+                self.cause
+                    .lock()
+                    .expect("cause lock")
+                    .replace(decode_failure(error));
+                None
+            }
+        }
+    }
 }
 
 /// Buffering budget of the async-to-blocking body bridge: a fixed
@@ -334,12 +619,16 @@ fn ready_body(snapshot: ReadinessSnapshot) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{HEALTH_MEDIA_TYPE, LIVE_BODY, METRICS_MEDIA_TYPE, failure_response, ready_body};
+    use super::{
+        BlobEncoder, Envelope, HEALTH_MEDIA_TYPE, LIVE_BODY, METRICS_MEDIA_TYPE,
+        ZstdV1Encoder, failure_response, ready_body,
+    };
     use crate::error::{
         AuthRejection, CORRELATION_ID_HEADER, ERROR_MEDIA_TYPE, PayloadLimit, REQUEST_ID_HEADER,
         ServerFailure,
     };
     use crate::guard::ProcessAdmission;
+    use archivist_storage::metadata::ObjectTag;
     use crate::parse::parts::ENVELOPE_PART_MEDIA_TYPE;
     use crate::state::{
         NotReadyReason, ReadinessSnapshot, ServerState, signed_test_control_record,
@@ -349,7 +638,8 @@ mod tests {
     use archivist_protocol::json;
     use archivist_protocol::object_key::BlobObjectKey;
     use archivist_protocol::vocabulary::{
-        ClientId, Ed25519PublicKey, KeyId, RequestId, StorageOutcome, TenantId,
+        ClientId, Ed25519PublicKey, IncomingChecksum, KeyId, RequestId, StorageOutcome, TenantId,
+        TransportEncoding,
     };
     use archivist_storage::capability::StoreCapabilities;
     use archivist_storage::control::{AuthorizationEpoch, ControlReadStore, ControlRecord};
@@ -362,6 +652,7 @@ mod tests {
     use std::net::SocketAddr;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
 
@@ -729,11 +1020,264 @@ mod tests {
         }
     }
 
-    fn test_state() -> Arc<ServerState<SilentRawStore, SilentControlStore>> {
-        let config = crate::config::ServerConfig::builder()
+    // ------------------------------------------------------------------
+    // The commit slice's end-to-end double: a raw store that records what
+    // an attempt did to it and completes each multipart session with the
+    // next scripted outcome — the physical truth the route must carry
+    // through untouched (RCPT-003). The control store stays silent: no
+    // authorization middleware touches the control plane yet.
+    // ------------------------------------------------------------------
+
+    /// What one recording store saw, shared between the store and the
+    /// test's observation handle.
+    #[derive(Default)]
+    struct Recordings {
+        /// The outcomes `commit_multipart` answers with, in order; an
+        /// empty queue answers `created`.
+        scripted: std::sync::Mutex<std::collections::VecDeque<StorageOutcome>>,
+        /// The outcomes `commit_multipart` answered with, in order.
+        answered: std::sync::Mutex<Vec<StorageOutcome>>,
+        /// The blob keys sessions were begun under, in order.
+        begun_keys: std::sync::Mutex<Vec<BlobObjectKey>>,
+        /// The stored bytes written into parts, in write order.
+        stored: std::sync::Mutex<Vec<u8>>,
+        begun: AtomicU64,
+        parts: AtomicU64,
+        commits: AtomicU64,
+        aborts: AtomicU64,
+    }
+
+    /// A raw store double for the streaming commit: begins sessions under
+    /// the real derived keys, accumulates the bytes written into parts,
+    /// answers commits from the script, and counts aborts — the
+    /// assertion surface for "nothing stored" and for the store's
+    /// physical answer passing through untouched.
+    #[derive(Clone, Default)]
+    struct RecordingRawStore {
+        recordings: Arc<Recordings>,
+    }
+
+    impl RecordingRawStore {
+        /// A store whose sessions complete with `outcomes` in order.
+        fn scripted(outcomes: &[StorageOutcome]) -> Self {
+            let store = Self::default();
+            *store
+                .recordings
+                .scripted
+                .lock()
+                .expect("scripted outcome lock") = outcomes.iter().copied().collect();
+            store
+        }
+
+        /// The shared observation handle.
+        fn recordings(&self) -> Arc<Recordings> {
+            Arc::clone(&self.recordings)
+        }
+    }
+
+    impl RawWriteStore for RecordingRawStore {
+        fn capabilities(&self) -> StoreCapabilities {
+            StoreCapabilities::unprobed()
+        }
+
+        async fn write_manifest(
+            &self,
+            _key: &ManifestKey,
+            _bytes: &[u8],
+        ) -> Result<StorageOutcome, StorageError> {
+            unavailable()
+        }
+
+        async fn begin_multipart(
+            &self,
+            blob: &BlobObjectKey,
+        ) -> Result<MultipartUploadId, StorageError> {
+            self.recordings.begun.fetch_add(1, Ordering::SeqCst);
+            self.recordings
+                .begun_keys
+                .lock()
+                .expect("begun keys lock")
+                .push(blob.clone());
+            Ok(MultipartUploadId::parse("recording-store-session").expect("session grammar"))
+        }
+
+        async fn write_part(
+            &self,
+            _upload: &MultipartUploadId,
+            part: PartNumber,
+            bytes: &[u8],
+        ) -> Result<PartCommitment, StorageError> {
+            self.recordings.parts.fetch_add(1, Ordering::SeqCst);
+            self.recordings
+                .stored
+                .lock()
+                .expect("stored bytes lock")
+                .extend_from_slice(bytes);
+            let tag = ObjectTag::parse("recording-store-part").expect("tag grammar");
+            Ok(PartCommitment::new(part, tag))
+        }
+
+        async fn commit_multipart(
+            &self,
+            _upload: &MultipartUploadId,
+            _parts: &[PartCommitment],
+        ) -> Result<StorageOutcome, StorageError> {
+            self.recordings.commits.fetch_add(1, Ordering::SeqCst);
+            let outcome = self
+                .recordings
+                .scripted
+                .lock()
+                .expect("scripted outcome lock")
+                .pop_front()
+                .unwrap_or(StorageOutcome::Created);
+            self.recordings
+                .answered
+                .lock()
+                .expect("answered outcomes lock")
+                .push(outcome);
+            Ok(outcome)
+        }
+
+        async fn abort_multipart(&self, _upload: &MultipartUploadId) -> Result<(), StorageError> {
+            self.recordings.aborts.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    /// The observation assertions over one store's recordings, so the
+    /// tests read as what happened rather than as lock choreography.
+    struct Observed {
+        recordings: Arc<Recordings>,
+    }
+
+    impl Observed {
+        fn begun(&self) -> u64 {
+            self.recordings.begun.load(Ordering::SeqCst)
+        }
+
+        fn commits(&self) -> u64 {
+            self.recordings.commits.load(Ordering::SeqCst)
+        }
+
+        fn aborts(&self) -> u64 {
+            self.recordings.aborts.load(Ordering::SeqCst)
+        }
+
+        fn begun_keys(&self) -> Vec<BlobObjectKey> {
+            self.recordings
+                .begun_keys
+                .lock()
+                .expect("begun keys lock")
+                .clone()
+        }
+
+        fn stored(&self) -> Vec<u8> {
+            self.recordings
+                .stored
+                .lock()
+                .expect("stored bytes lock")
+                .clone()
+        }
+
+        fn answered(&self) -> Vec<StorageOutcome> {
+            self.recordings
+                .answered
+                .lock()
+                .expect("answered outcomes lock")
+                .clone()
+        }
+    }
+
+    /// [`test_state`]'s configuration: the registry defaults.
+    fn test_config() -> crate::config::ServerConfig {
+        crate::config::ServerConfig::builder()
             .listen_address("127.0.0.1:0")
             .build()
-            .expect("test configuration validates");
+            .expect("test configuration validates")
+    }
+
+    /// The route's state over one recording store — the composition the
+    /// commit-slice tests drive.
+    fn commit_state(
+        store: RecordingRawStore,
+        config: crate::config::ServerConfig,
+    ) -> (Arc<ServerState<RecordingRawStore, SilentControlStore>>, Observed) {
+        let observed = Observed {
+            recordings: store.recordings(),
+        };
+        let trust = TrustConfig::from_roots(vec![
+            TenantTrustRoot::new(TEST_TENANT, TEST_KEY).expect("test tenant root validates"),
+        ])
+        .expect("one-tenant anchor set validates");
+        (
+            Arc::new(ServerState::new(
+                config,
+                trust,
+                IngestStorage::compose(store, SilentControlStore),
+            )),
+            observed,
+        )
+    }
+
+    /// The `zstd` transport frame of `canonical`, exactly as a client
+    /// would transmit it — and, being the pinned profile encoder, exactly
+    /// the stored form the commit must produce (VAL-006 determinism).
+    fn zstd_frame(canonical: &[u8]) -> Vec<u8> {
+        let mut encoder =
+            ZstdV1Encoder::new(canonical.len() as u64).expect("profile encoder");
+        let mut frame = Vec::new();
+        BlobEncoder::update(&mut encoder, canonical, &mut frame).expect("frame body");
+        BlobEncoder::finish(&mut encoder, &mut frame).expect("frame epilogue");
+        frame
+    }
+
+    /// The SHA-256 of `bytes` as the envelope's hex digest text.
+    fn sha256_hex(bytes: &[u8]) -> String {
+        archivist_protocol::sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    /// The scenario's envelope rewritten over `canonical`'s transport
+    /// facts — declared encoding, transport extent, transport checksum,
+    /// and, when the canonical payload itself changes, the canonical
+    /// digest and declared size — with every derived identity re-derived
+    /// from the rewritten fields, re-serialized canonically.
+    fn rewritten_envelope(
+        id: &str,
+        encoding: &str,
+        canonical: &[u8],
+        transport: &[u8],
+    ) -> Vec<u8> {
+        let mut envelope = Envelope::parse(&corpus_file(id, "envelope"))
+            .expect("the envelope fixture parses");
+        envelope.transport_encoding = TransportEncoding::parse(encoding)
+            .unwrap_or_else(|_| panic!("{encoding} is a declared transport"));
+        envelope.incoming_checksum =
+            IncomingChecksum::parse(&sha256_hex(transport)).expect("the transport checksum is canonical");
+        envelope.compressed_size = transport.len() as u64;
+        envelope.uncompressed_size = canonical.len() as u64;
+        envelope.blob_digest = archivist_protocol::derivation::blob_digest(canonical);
+        envelope.occurrence_id = envelope.rederive_occurrence_id();
+        envelope.attestation_id = envelope.rederive_attestation_id();
+        envelope.canonical_bytes()
+    }
+
+    fn test_state() -> Arc<ServerState<SilentRawStore, SilentControlStore>> {
+        test_state_with_config(
+            crate::config::ServerConfig::builder()
+                .listen_address("127.0.0.1:0")
+                .build()
+                .expect("test configuration validates"),
+        )
+    }
+
+    /// [`test_state`] over an explicit configuration — the deadline test
+    /// needs a shortened deadline the default cannot express.
+    fn test_state_with_config(
+        config: crate::config::ServerConfig,
+    ) -> Arc<ServerState<SilentRawStore, SilentControlStore>> {
         let trust = TrustConfig::from_roots(vec![
             TenantTrustRoot::new(
                 TEST_TENANT,
@@ -752,7 +1296,11 @@ mod tests {
 
     /// Serve the real router on an ephemeral socket; the task detaches
     /// and dies with the test runtime.
-    async fn serve(state: Arc<ServerState<SilentRawStore, SilentControlStore>>) -> SocketAddr {
+    async fn serve<W, C>(state: Arc<ServerState<W, C>>) -> SocketAddr
+    where
+        W: RawWriteStore + Send + Sync + 'static,
+        C: ControlReadStore + Send + Sync + 'static,
+    {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("test listener binds");
@@ -985,32 +1533,254 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn a_well_formed_attempt_is_refused_unavailable_until_the_commit_slice_lands() {
-        let address = serve(test_state()).await;
-        let id = "valid-direct-baseline";
+    /// Post the baseline attempt to a running server and assert the
+    /// partial-commit contract on the answer.
+    async fn post_baseline_expect_partial_commit(
+        address: SocketAddr,
+        id: &str,
+    ) -> String {
         let body = corpus_file(id, "request_body");
         let response =
             exchange_bytes(address, &ingest_request(&corpus_content_type(id), &body)).await;
-        // The envelope parsed, so the stable retryable refusal carries
-        // its identifier (ERR-025) in body and header alike.
+        // The blob verified and committed; with no occurrence or
+        // attestation write wired yet, the honest answer is the
+        // registry's partial-commit class: retryable, no receipt, the
+        // envelope's identifier carried (ERR-025) in body and header
+        // alike.
         let request_id = corpus_request_id(id);
-        let text = assert_exchange_contract(
+        assert!(response.header(REQUEST_ID_HEADER.as_str()).is_some());
+        assert_exchange_contract(
             &response,
             503,
-            "server.unavailable",
+            "server.partial_commit",
+            true,
+            Some(&request_id),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_well_formed_identity_attempt_commits_the_blob_and_reports_the_partial_commit() {
+        let id = "valid-direct-baseline";
+        let (state, store) = commit_state(RecordingRawStore::default(), test_config());
+        let address = serve(Arc::clone(&state)).await;
+        post_baseline_expect_partial_commit(address, id).await;
+
+        // The physical truth, observed at the store seam (RCPT-003): one
+        // session under the envelope's derived key, the whole canonical
+        // payload streamed into parts, committed exactly once, nothing
+        // aborted, and the store's own `created` answer recorded — never
+        // strengthened into a receipt the blob alone cannot justify.
+        let envelope = Envelope::parse(&corpus_file(id, "envelope"))
+            .expect("the envelope fixture parses");
+        let expected_key = BlobObjectKey::new(
+            &envelope.tenant_id,
+            envelope.storage_profile,
+            &envelope.blob_digest,
+        );
+        assert_eq!(store.begun_keys(), vec![expected_key]);
+        assert_eq!(store.stored().len(), corpus_file(id, "payload").len());
+        assert_eq!(store.commits(), 1);
+        assert_eq!(store.aborts(), 0);
+        assert_eq!(store.answered(), vec![StorageOutcome::Created]);
+        assert_eq!(state.uploads().live_count(), 0);
+
+        // The metric counts the attempt as the failure it reported —
+        // `committed` means committed *and* receipted, and no receipt
+        // exists yet (RCPT-005).
+        let metrics = exchange(address, &get_request("/metrics")).await;
+        let text = String::from_utf8(metrics.body).expect("exposition is text");
+        assert!(
+            text.contains("archivist_server_ingest_requests_total{archivist_ingest_outcome=\"failed\"} 1"),
+            "{text}"
+        );
+        assert!(
+            text.contains("archivist_server_ingest_requests_total{archivist_ingest_outcome=\"committed\"} 0"),
+            "{text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_existing_compatible_blob_is_still_drained_and_verified_before_its_outcome() {
+        let id = "valid-direct-baseline";
+        // The second attempt meets a blob the store already holds: the
+        // scripted outcome the route must carry through untouched.
+        let (state, store) = commit_state(
+            RecordingRawStore::scripted(&[StorageOutcome::Created, StorageOutcome::AlreadyPresent]),
+            test_config(),
+        );
+        let address = serve(Arc::clone(&state)).await;
+        let first = post_baseline_expect_partial_commit(address, id).await;
+        let second = post_baseline_expect_partial_commit(address, id).await;
+        assert_eq!(first, second, "both attempts render the same class");
+
+        // The retry drained and verified the whole payload again before
+        // learning the blob already existed — plan Section 7.7 — and the
+        // store's own answers passed through unchanged (RCPT-003).
+        assert_eq!(store.commits(), 2);
+        assert_eq!(store.aborts(), 0);
+        assert_eq!(
+            store.stored().len(),
+            2 * corpus_file(id, "payload").len(),
+            "the identical bytes are stored twice"
+        );
+        assert_eq!(
+            store.answered(),
+            vec![StorageOutcome::Created, StorageOutcome::AlreadyPresent]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_well_formed_zstd_attempt_commits_the_decoded_canonical_bytes() {
+        let id = "valid-direct-baseline";
+        let canonical = corpus_file(id, "payload");
+        let frame = zstd_frame(&canonical);
+        let envelope_bytes = rewritten_envelope(id, "zstd", &canonical, &frame);
+        let body = framed_body(
+            BOUNDARY,
+            &[
+                (ENVELOPE_PART_MEDIA_TYPE, &envelope_bytes),
+                ("application/zstd", &frame),
+            ],
+        );
+        let (state, store) = commit_state(RecordingRawStore::default(), test_config());
+        let address = serve(Arc::clone(&state)).await;
+        let response = exchange_bytes(
+            address,
+            &ingest_request("multipart/related; boundary=archivist-conformance-01", &body),
+        )
+        .await;
+        let request_id = corpus_request_id(id);
+        assert_exchange_contract(
+            &response,
+            503,
+            "server.partial_commit",
             true,
             Some(&request_id),
         );
-        assert!(response.header(REQUEST_ID_HEADER.as_str()).is_some());
-        // The pinned unavailable message, verbatim from the registry.
-        assert!(
-            text.contains(
-                "\"message\":\"The service is temporarily unable to handle the \
-                 request; retry the identical envelope.\""
-            ),
-            "{text}"
+
+        // The stored form is the profile encoder's encoding of the
+        // decoded canonical bytes — not the client's uploaded frame
+        // passed through (VAL-006: identical canonical bytes, identical
+        // stored bytes).
+        let envelope = Envelope::parse(&corpus_file(id, "envelope"))
+            .expect("the envelope fixture parses");
+        let expected_key = BlobObjectKey::new(
+            &envelope.tenant_id,
+            envelope.storage_profile,
+            &envelope.blob_digest,
         );
+        assert_eq!(store.begun_keys(), vec![expected_key]);
+        assert_eq!(store.stored(), zstd_frame(&canonical));
+        assert_eq!(store.commits(), 1);
+        assert_eq!(store.aborts(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_altered_payload_aborts_with_nothing_stored() {
+        let id = "valid-direct-baseline";
+        let mut payload = corpus_file(id, "payload");
+        payload[0] ^= 0x01;
+        let body = framed_body(
+            BOUNDARY,
+            &[
+                (ENVELOPE_PART_MEDIA_TYPE, &corpus_file(id, "envelope")),
+                (IDENTITY_MEDIA_TYPE, &payload),
+            ],
+        );
+        let (state, store) = commit_state(RecordingRawStore::default(), test_config());
+        let address = serve(Arc::clone(&state)).await;
+        let response = exchange_bytes(
+            address,
+            &ingest_request("multipart/related; boundary=archivist-conformance-01", &body),
+        )
+        .await;
+        // The canonical digest does not match the declared one: the
+        // commit aborts the session and the conflict is the answer.
+        let request_id = corpus_request_id(id);
+        assert_exchange_contract(
+            &response,
+            409,
+            "storage.integrity_conflict",
+            false,
+            Some(&request_id),
+        );
+        assert_eq!(store.begun(), 1, "the attempt began its session");
+        assert_eq!(store.commits(), 0, "nothing committed");
+        assert_eq!(store.aborts(), 1, "the live session was aborted");
+        assert_eq!(state.uploads().live_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_attempt_past_the_record_cap_aborts_with_nothing_stored() {
+        let id = "valid-direct-baseline";
+        let config = crate::config::ServerConfig::builder()
+            .listen_address("127.0.0.1:0")
+            .record_max_bytes(64)
+            .build()
+            .expect("test configuration validates");
+        let (state, store) = commit_state(RecordingRawStore::default(), config);
+        let address = serve(Arc::clone(&state)).await;
+        let body = corpus_file(id, "request_body");
+        let response =
+            exchange_bytes(address, &ingest_request(&corpus_content_type(id), &body)).await;
+        // The 176-byte canonical record exceeds the 64-byte cap: the 413
+        // fires from the real limit check mid-stream, naming the cap.
+        let request_id = corpus_request_id(id);
+        let text = assert_exchange_contract(
+            &response,
+            413,
+            "request.record_too_large",
+            false,
+            Some(&request_id),
+        );
+        assert!(text.contains("exceeds the 64 byte unsplittable limit"), "{text}");
+        // The attempt's session never survived: begun for the streaming
+        // commit, aborted when the limit fired, committed never.
+        assert_eq!(store.begun(), 1);
+        assert_eq!(store.commits(), 0);
+        assert_eq!(store.aborts(), 1);
+        assert_eq!(state.uploads().live_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_attempt_past_the_expansion_ratio_aborts_with_nothing_stored() {
+        let id = "valid-direct-baseline";
+        // 64 KiB of zeros compresses far past the 100:1 registry ratio:
+        // the frame is tiny and the canonical stream enormous.
+        let canonical = vec![0u8; 65_536];
+        let frame = zstd_frame(&canonical);
+        assert!(
+            canonical.len() / frame.len() > 100,
+            "the fixture must exceed the ratio to exercise the refusal"
+        );
+        let envelope_bytes = rewritten_envelope(id, "zstd", &canonical, &frame);
+        let body = framed_body(
+            BOUNDARY,
+            &[
+                (ENVELOPE_PART_MEDIA_TYPE, &envelope_bytes),
+                ("application/zstd", &frame),
+            ],
+        );
+        let (state, store) = commit_state(RecordingRawStore::default(), test_config());
+        let address = serve(Arc::clone(&state)).await;
+        let response = exchange_bytes(
+            address,
+            &ingest_request("multipart/related; boundary=archivist-conformance-01", &body),
+        )
+        .await;
+        let request_id = corpus_request_id(id);
+        let text = assert_exchange_contract(
+            &response,
+            413,
+            "request.expansion_ratio_exceeded",
+            false,
+            Some(&request_id),
+        );
+        assert!(text.contains("exceeds 100 to 1"), "{text}");
+        assert_eq!(store.begun(), 1);
+        assert_eq!(store.commits(), 0);
+        assert_eq!(store.aborts(), 1);
+        assert_eq!(state.uploads().live_count(), 0);
     }
 
     #[tokio::test]
@@ -1788,6 +2558,290 @@ mod tests {
             (ServerFailure::Unavailable, IngestOutcome::Failed),
         ] {
             assert_eq!(failure.outcome(), expected_outcome, "{failure:?}");
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // The timeout path over the live route, and the hostile-content
+    // probe: the deadline is what ends an attempt whose declared body
+    // never arrives, and no trap riding an attempt — envelope bytes,
+    // payload bytes, free text — may reach any failing path's body, its
+    // headers, or the metric labels.
+    // ------------------------------------------------------------------
+
+    /// The traps one hostile attempt plants: envelope-member bytes, raw
+    /// payload bytes, free text, a part-one media type, and a path-like
+    /// string.
+    const HOSTILE_TRAPS: [&str; 5] = [
+        "CANARY-ENVELOPE-8f",
+        "CANARY-PAYLOAD-2v",
+        "CANARY-FREE-TEXT-5k",
+        "CANARY-MEDIA-TYPE-4d",
+        "/etc/archivist-shadow",
+    ];
+
+    /// Assert no planted trap reaches a live error response — no header
+    /// value and no body byte.
+    fn assert_no_trap_reaches(response: &Exchanged, path: &str) {
+        for (name, value) in &response.headers {
+            for trap in HOSTILE_TRAPS {
+                assert!(
+                    !value.contains(trap),
+                    "{path}: trap {trap} never rides header {name}: {value}"
+                );
+            }
+        }
+        let text = String::from_utf8(response.body.clone()).expect("error body is text");
+        for trap in HOSTILE_TRAPS {
+            assert!(
+                !text.contains(trap),
+                "{path}: trap {trap} never reaches the body: {text}"
+            );
+        }
+    }
+
+    /// One instance of every wire-distinct Section 7.8 failing path: the
+    /// framing, media, and envelope rejections, the four authorization
+    /// refusals, integrity, the three size limits, throttling, the three
+    /// timeout paths, the registry refusal, the storage failures, the
+    /// fail-closed bootstrap, and the partial commit.
+    fn every_failing_path() -> Vec<ServerFailure> {
+        use crate::parse::framing::FramingError;
+        use crate::parse::ingest::IngestParseError;
+        use crate::parse::parts::TwoPartError;
+        use archivist_protocol::envelope::EnvelopeError;
+        vec![
+            ServerFailure::Parse(IngestParseError::Framing(TwoPartError::PayloadPartMissing)),
+            ServerFailure::Parse(IngestParseError::Framing(TwoPartError::TrailingPart)),
+            ServerFailure::Parse(IngestParseError::Framing(TwoPartError::Framing(
+                FramingError::MalformedDelimiter,
+            ))),
+            ServerFailure::Parse(IngestParseError::Framing(TwoPartError::EnvelopeNotFirst)),
+            ServerFailure::Parse(IngestParseError::Framing(TwoPartError::EnvelopeExceedsCap {
+                limit_bytes: 65_536,
+            })),
+            ServerFailure::Parse(IngestParseError::Envelope(EnvelopeError::Malformed {
+                reason: "not canonical-domain JSON",
+                source: None,
+            })),
+            ServerFailure::Parse(IngestParseError::Envelope(
+                EnvelopeError::VersionUnsupported {
+                    field: "protocol_version",
+                    found: 2,
+                },
+            )),
+            ServerFailure::Parse(IngestParseError::Envelope(EnvelopeError::SchemaInvalid {
+                field: "occurrence_id",
+                reason: "re-derivation mismatch",
+            })),
+            ServerFailure::Parse(IngestParseError::Envelope(EnvelopeError::SizeExceeded {
+                limit_bytes: 65_536,
+            })),
+            ServerFailure::Authorization(AuthRejection::Unlinked),
+            ServerFailure::Authorization(AuthRejection::Revoked),
+            ServerFailure::Authorization(AuthRejection::ProofRejected),
+            ServerFailure::Authorization(AuthRejection::Forbidden),
+            ServerFailure::IntegrityConflict,
+            ServerFailure::PayloadLimit(PayloadLimit::SplittableBytes {
+                actual_bytes: 5_000_000,
+                limit_bytes: 4_194_304,
+            }),
+            ServerFailure::PayloadLimit(PayloadLimit::SplittableRatio { max_ratio: 100 }),
+            ServerFailure::PayloadLimit(PayloadLimit::UnsplittableRecord {
+                actual_bytes: 300_000_000,
+                limit_bytes: 268_435_456,
+            }),
+            ServerFailure::RateLimited,
+            ServerFailure::DeadlineElapsed,
+            ServerFailure::TooEarly,
+            ServerFailure::UpstreamTimeout,
+            ServerFailure::RegistryUnavailable,
+            ServerFailure::StorageFailure,
+            ServerFailure::Internal,
+            ServerFailure::Unavailable,
+            ServerFailure::PartialCommit,
+        ]
+    }
+
+    #[tokio::test]
+    async fn the_deadline_elapsed_refusal_renders_the_contract_over_the_route() {
+        let config = crate::config::ServerConfig::builder()
+            .listen_address("127.0.0.1:0")
+            .request_deadline_seconds(1)
+            .build()
+            .expect("test configuration validates");
+        let address = serve(test_state_with_config(config)).await;
+        // The framing header is well formed, so the attempt is admitted
+        // and the parse blocks on the body bridge waiting for the
+        // declared 64 bytes that never arrive — the deadline is what ends
+        // the attempt, and the refusal renders the full contract.
+        let request = format!(
+            "POST /v1/ingest HTTP/1.1\r\nHost: test\r\n\
+             Content-Type: multipart/related; boundary={BOUNDARY}\r\n\
+             Content-Length: 64\r\nConnection: close\r\n\r\n"
+        );
+        let response = exchange(address, &request).await;
+        let text =
+            assert_exchange_contract(&response, 408, "request.deadline_exceeded", true, None);
+        assert!(
+            text.contains(
+                "\"message\":\"The request exceeded the request deadline; retry \
+                 the identical envelope.\""
+            ),
+            "{text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_hostile_trap_reaches_any_rendered_failure_body_or_header() {
+        for failure in every_failing_path() {
+            for request_id in [None, Some(request_id_fixture())] {
+                let response = failure_response(failure, request_id);
+                for (name, value) in response.headers() {
+                    let value = value.to_str().expect("contract headers are text");
+                    for trap in HOSTILE_TRAPS {
+                        assert!(
+                            !value.contains(trap),
+                            "{failure:?}: trap {trap} never rides header {name}: {value}"
+                        );
+                    }
+                }
+                let body = axum::body::to_bytes(response.into_body(), 4096)
+                    .await
+                    .expect("body reads");
+                let text = String::from_utf8(body.to_vec()).expect("error body is text");
+                for trap in HOSTILE_TRAPS {
+                    assert!(
+                        !text.contains(trap),
+                        "{failure:?}: trap {trap} never reaches the body: {text}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn hostile_request_bytes_never_reach_a_live_failure_or_the_metric_labels() {
+        use crate::metrics::IngestOutcome;
+        let state = test_state();
+        let address = serve(Arc::clone(&state)).await;
+        // Non-canonical JSON, so the envelope path is the malformed
+        // rejection; the traps ride the envelope members and the payload.
+        let hostile_envelope =
+            format!(r#"{{"leaked": "{}", "note": "{}"}}"#, HOSTILE_TRAPS[0], HOSTILE_TRAPS[4]);
+        let hostile_payload = HOSTILE_TRAPS[1].as_bytes();
+
+        // The framing path: the free-text trap rides the declared
+        // boundary in the Content-Type header and the envelope and
+        // payload traps ride the body — the framing is refused from the
+        // header alone.
+        let content_type = format!("multipart/related; boundary=trap-{}", HOSTILE_TRAPS[2]);
+        let mut body = hostile_envelope.clone().into_bytes();
+        body.extend_from_slice(hostile_payload);
+        let response = exchange_bytes(address, &ingest_request(&content_type, &body)).await;
+        assert_exchange_contract(&response, 400, "request.framing_invalid", false, None);
+        assert_no_trap_reaches(&response, "request.framing_invalid");
+
+        // The media path: a valid framing whose part one declares the
+        // hostile media type and carries the hostile envelope bytes.
+        let body = framed_body(
+            BOUNDARY,
+            &[
+                (&format!("text/x-{}", HOSTILE_TRAPS[3]), hostile_envelope.as_bytes()),
+                (IDENTITY_MEDIA_TYPE, hostile_payload),
+            ],
+        );
+        let response = exchange_bytes(
+            address,
+            &ingest_request("multipart/related; boundary=archivist-conformance-01", &body),
+        )
+        .await;
+        assert_exchange_contract(
+            &response,
+            415,
+            "envelope.media_type_unsupported",
+            false,
+            None,
+        );
+        assert_no_trap_reaches(&response, "envelope.media_type_unsupported");
+
+        // The malformed-envelope path: the hostile envelope bytes ride a
+        // correctly framed part one.
+        let body = framed_body(
+            BOUNDARY,
+            &[
+                (ENVELOPE_PART_MEDIA_TYPE, hostile_envelope.as_bytes()),
+                (IDENTITY_MEDIA_TYPE, hostile_payload),
+            ],
+        );
+        let response = exchange_bytes(
+            address,
+            &ingest_request("multipart/related; boundary=archivist-conformance-01", &body),
+        )
+        .await;
+        assert_exchange_contract(&response, 400, "envelope.malformed", false, None);
+        assert_no_trap_reaches(&response, "envelope.malformed");
+
+        // The throttle path: a saturated replica refuses the hostile body
+        // unread — admission precedes every request byte.
+        let admissions = saturate(&state);
+        let response = exchange_bytes(
+            address,
+            &ingest_request("multipart/related; boundary=archivist-conformance-01", &body),
+        )
+        .await;
+        assert_exchange_contract(&response, 429, "request.rate_limited", true, None);
+        assert_no_trap_reaches(&response, "request.rate_limited");
+        drop(admissions);
+
+        // The metric family stays bounded: no trap anywhere in the
+        // exposition, every ingest series labeled only from the closed
+        // outcome set, and the four attempts classified exactly as the
+        // classes say — three rejections and one throttle.
+        let exposition = exchange(address, &get_request("/metrics")).await;
+        assert_eq!(exposition.status, 200);
+        let text = String::from_utf8(exposition.body).expect("exposition is text");
+        for trap in HOSTILE_TRAPS {
+            assert!(
+                !text.contains(trap),
+                "trap {trap} never reaches the metric exposition: {text}"
+            );
+        }
+        for line in text.lines() {
+            let Some(series) = line.strip_prefix("archivist_server_ingest_requests_total{")
+            else {
+                continue;
+            };
+            let (label, value) = series.split_once("} ").expect("ingest series line shape");
+            assert!(
+                value.bytes().all(|byte| byte.is_ascii_digit()),
+                "a series value is a bare count: {line}"
+            );
+            let (name, token) = label.split_once('=').expect("one label per ingest series");
+            assert_eq!(name, "archivist_ingest_outcome", "{line}");
+            let token = token.trim_matches('"');
+            assert!(
+                IngestOutcome::all()
+                    .iter()
+                    .any(|outcome| outcome.token() == token),
+                "{line}: the label vocabulary is the closed outcome set, never request content"
+            );
+        }
+        for (outcome, count) in [
+            (IngestOutcome::Committed, 0),
+            (IngestOutcome::Rejected, 3),
+            (IngestOutcome::Throttled, 1),
+            (IngestOutcome::Failed, 0),
+        ] {
+            assert!(
+                text.contains(&format!(
+                    "archivist_server_ingest_requests_total{{archivist_ingest_outcome=\"{}\"}} \
+                     {count}\n",
+                    outcome.token()
+                )),
+                "{}: the hostile attempts classify as {count}: {text}",
+                outcome.token()
+            );
         }
     }
 }

@@ -55,6 +55,7 @@ use archivist_auth::authority::{AuthorityChainError, PinnedAuthorityRoot, verify
 use archivist_protocol::vocabulary::{Ed25519PublicKey, KeyId, TenantId};
 use archivist_storage::control::ControlRecord;
 use archivist_storage::ingest::IngestStorage;
+use archivist_storage::multipart::OpenUploads;
 
 use crate::config::ServerConfig;
 use crate::guard::AdmissionGate;
@@ -230,6 +231,12 @@ pub struct ServerState<W, C> {
     config: ServerConfig,
     trust: TrustConfig,
     storage: IngestStorage<W, C>,
+    /// The process-wide multipart-session registry: every blob commit any
+    /// handler opens registers here, so a failed attempt's abort and the
+    /// shutdown path's abandoned-session drain see one shared set
+    /// (`OpenUploads` is an `Arc` — writers clone the handle, the state
+    /// owns the original).
+    uploads: Arc<OpenUploads>,
     readiness: ReadinessTracker,
     gate: AdmissionGate,
     metrics: Arc<ServerMetrics>,
@@ -247,6 +254,7 @@ impl<W, C> ServerState<W, C> {
             readiness: ReadinessTracker::new(&trust),
             gate: AdmissionGate::new(&config, Arc::clone(&metrics)),
             metrics,
+            uploads: Arc::new(OpenUploads::new()),
             config,
             trust,
             storage,
@@ -269,6 +277,15 @@ impl<W, C> ServerState<W, C> {
     #[must_use]
     pub const fn storage(&self) -> &IngestStorage<W, C> {
         &self.storage
+    }
+
+    /// The process-wide multipart-session registry every blob commit
+    /// registers its session in — the handle the route's commit phase
+    /// hands to `commit_blob`, and the one place a shutdown drain can
+    /// enumerate and abort whatever a crash interrupted.
+    #[must_use]
+    pub const fn uploads(&self) -> &Arc<OpenUploads> {
+        &self.uploads
     }
 
     /// Evaluate readiness now.

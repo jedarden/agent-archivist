@@ -92,17 +92,23 @@
 //! before anything commits; once failed, the stage is closed — it
 //! re-yields that first failure on every later call and never reads the
 //! source again. Memory follows the chunk and concurrency buffers,
-//! never the body. The route wiring that drives the stage — and the
-//! store-side abort its failures demand — lands on the ingest route
-//! next.
+//! never the body. The **ingest route** now drives that stage end to
+//! end: a well-formed attempt streams through the bounded parse into the
+//! decode stage and a `commit_blob` session begun under the envelope's
+//! derived key, with the store-side abort its failures demand — the
+//! drain's verdict gates the encoder, a failed attempt aborts its live
+//! session, and nothing is stored. The verified blob is this slice's
+//! whole commit, so the attempt answers the retryable
+//! `server.partial_commit` class (RCPT-005) with no receipt; the store's
+//! physical answer passes through untouched (RCPT-003), and the payload
+//! limits and digest verification are the real checks, not placeholders.
 //!
 //! The Phase 4 bootstrap surface is complete: configuration, trust
 //! anchors, replica state, metrics, the routes, the serve lifecycle, and
-//! the request resource guards. The ingestion pipeline (bounded parsing,
-//! authorization, and validation middleware, streaming envelope
-//! validation, the blob → occurrence → attestation commit order, signed
-//! receipts) arrives on those contracts, replacing the fail-closed
-//! ingest stub.
+//! the request resource guards. Still ahead on those contracts:
+//! signature verification and the per-client admission share on the
+//! ingest path, the occurrence → attestation writes that complete the
+//! three-object commit order, and signed receipts.
 //!
 //! # Dependency boundary
 //!
