@@ -9,7 +9,7 @@
 //! | `/health/live` | GET | Process-only liveness: answered from the process, never from storage or configuration. |
 //! | `/health/ready` | GET | The readiness snapshot: valid configuration plus fresh trust evidence for every configured tenant. |
 //! | `/metrics` | GET | The registered server families in Prometheus text exposition. |
-//! | `/v1/ingest` | POST | Admission-guarded, pre-authorized, then bounded-parse: the request deadline bounds the whole attempt, the process-wide in-flight cap admits before anything request-derived is read, and an overloaded replica refuses with the retryable `request.rate_limited` body; admitted attempts validate the pinned framing, require the bounded signed-attempt record, parse the envelope, and load linked-client evidence before any storage key or raw-write call can exist. Complete received-payload digest verification remains a hard gate in front of the streaming commit. |
+//! | `/v1/ingest` | POST | Admission-guarded, pre-authorized, then bounded-parse: the request deadline bounds the whole attempt, the process-wide in-flight cap admits before anything request-derived is read, and an overloaded replica refuses with the retryable `request.rate_limited` body; admitted attempts validate the pinned framing, require the bounded signed-attempt record, parse the envelope, and load linked-client evidence before any storage key or raw-write call can exist. The one streaming pass then decodes, digests, and encodes into an uncommitted multipart session, and complete received-payload digest and request-signature verification remain a hard gate in front of that session's completion. |
 //!
 //! Fail-closed is the operative rule for every body: responses render
 //! canonical bytes through `archivist-protocol`'s RFC 8785 writer, carry
@@ -26,13 +26,16 @@ use std::io;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context, Poll, Wake, Waker};
 use std::time::Instant;
 
+use archivist_auth::request_verification::AttemptAuthorization;
 use archivist_protocol::envelope::{Envelope, EnvelopeError};
 use archivist_protocol::json::{Object, Value};
 use archivist_protocol::sha256::Sha256;
 use archivist_protocol::vocabulary::{
-    EnvelopeDigest, PayloadCanonicalDigest, PayloadTransportDigest, RequestContentDigest, RequestId,
+    EnvelopeDigest, PayloadCanonicalDigest, PayloadTransportDigest, RequestContentDigest,
+    RequestId, Timestamp,
 };
 use archivist_storage::blob::{BlobEncoder, BlobExpectation, commit_blob};
 use archivist_storage::control::ControlReadStore;
@@ -198,9 +201,9 @@ fn failure_response(failure: ServerFailure, request_id: Option<RequestId>) -> Re
 /// Every outcome is a rendered response paired with the metric outcome the
 /// attempt earned, classified by [`ServerFailure::outcome`] so the
 /// recorded outcome and the wire class can never disagree. The raw writer
-/// is reached only after complete signed-request verification produces an
-/// authorization capability; this slice deliberately fails closed while
-/// the streaming digest handoff is not yet available.
+/// is reached only behind loaded uploader evidence, and its one streaming
+/// pass completes only after the sizes, the digests, and the signed
+/// request itself have all verified (plan Section 7.7).
 ///
 /// The stages deliberately stay in one function: the ordering guarantees
 /// above are legible only when a whole attempt reads top to bottom.
@@ -328,48 +331,24 @@ where
             .await;
 
             let result = match evidence {
-                Ok(evidence) => match preflight_digests(
-                    &envelope,
-                    stream,
-                    request_hasher,
-                    DecodeLimits::new(
-                        state.config().record_max_bytes(),
-                        u64::from(state.config().max_expansion_ratio()),
-                    ),
-                )
-                .await
-                {
-                    Err(failure) => (
-                        failure.outcome(),
-                        failure_response(failure, Some(envelope.request_id)),
-                    ),
-                    Ok(digests) => {
-                        let presented = authorize::presented_request(&envelope, &digests);
-                        match authorize::authorize_attempt(
-                            &record,
-                            &presented,
-                            &evidence,
-                            &authorize::now_timestamp(),
-                        ) {
-                            Err(rejection) => {
-                                authorization_refusal(rejection, Some(envelope.request_id))
-                            }
-                            Ok(_authorized) => {
-                                // The preflight consumed the one-shot body.
-                                // A storage commit therefore remains behind
-                                // the explicit replay handoff; most
-                                // importantly, no AuthorizedAttempt is ever
-                                // mistaken for permission to write before
-                                // that handoff exists.
-                                let failure = ServerFailure::Unavailable;
-                                (
-                                    failure.outcome(),
-                                    failure_response(failure, Some(envelope.request_id)),
-                                )
-                            }
-                        }
-                    }
-                },
+                // One streaming pass is the whole commit tail: the
+                // bounded decode, the digest accumulation, and the
+                // encoder feeding the uncommitted multipart session run
+                // together over the one-shot body, and the signed-request
+                // verdict is decided before the session may complete —
+                // the plan's "completes only after all sizes, digests,
+                // and the request signature verify" (Section 7.7).
+                Ok(evidence) => {
+                    attempt_commit(
+                        Arc::clone(state),
+                        envelope,
+                        stream,
+                        request_hasher,
+                        record,
+                        evidence,
+                    )
+                    .await
+                }
                 Err(EvidenceRejection::Unlinked) => {
                     authorization_refusal(AuthRejection::Unlinked, Some(envelope.request_id))
                 }
@@ -399,50 +378,6 @@ fn authorization_refusal(
     (failure.outcome(), failure_response(failure, request_id))
 }
 
-/// Drain and hash the received payload before the commit path can be
-/// considered. The decoder and framing source stay bounded; this pass
-/// retains only digest state, so an altered body is rejected by the signed
-/// request verifier before a multipart session is opened.
-async fn preflight_digests(
-    envelope: &Envelope,
-    stream: PayloadStream<BodyChannel>,
-    request_hasher: Arc<Mutex<Sha256>>,
-    limits: DecodeLimits,
-) -> Result<authorize::VerifiedDigests, ServerFailure> {
-    let envelope = envelope.clone();
-    tokio::task::spawn_blocking(move || {
-        let source = DigestingPayload {
-            inner: stream,
-            transport: Sha256::new(),
-        };
-        let mut decoder = TransportDecoder::new(envelope.transport_encoding, source, limits)
-            .map_err(decode_failure)?;
-        let mut canonical = Sha256::new();
-        while let Some(chunk) = decoder.next_chunk().map_err(decode_failure)? {
-            canonical.update(chunk);
-        }
-        let source = decoder.into_source();
-        source
-            .inner
-            .finish()
-            .map_err(|error| ServerFailure::Parse(IngestParseError::Framing(error)))?;
-
-        let request_content = request_hasher
-            .lock()
-            .expect("request digest lock")
-            .clone()
-            .finalize();
-        Ok(authorize::VerifiedDigests {
-            request_content: RequestContentDigest::from_raw(request_content),
-            envelope: EnvelopeDigest::from_raw(envelope.envelope_digest().as_raw().to_owned()),
-            payload_canonical: PayloadCanonicalDigest::from_raw(canonical.finalize()),
-            payload_transport: PayloadTransportDigest::from_raw(source.transport.finalize()),
-        })
-    })
-    .await
-    .map_err(|_| ServerFailure::Internal)?
-}
-
 /// A one-pass payload reader that records the bytes as transported while
 /// the bounded decoder produces canonical chunks.
 struct DigestingPayload<R> {
@@ -460,8 +395,9 @@ impl<R: io::Read> io::Read for DigestingPayload<R> {
     }
 }
 
-/// The commit phase of a well-formed attempt: bounded transport decode
-/// into the blob commit, then the rendering (plan Section 7.7).
+/// The commit phase of a well-formed, evidence-bearing attempt: one
+/// streaming pass of bounded transport decode into the blob commit, then
+/// the rendering (plan Section 7.7).
 ///
 /// The decode runs on the blocking pool — its reads block on the parse
 /// bridge's channel, which is legal only off the async runtime — and
@@ -473,15 +409,19 @@ impl<R: io::Read> io::Read for DigestingPayload<R> {
 /// process-wide in-flight cap held by the admission cover the whole
 /// phase.
 ///
-/// The checks run in the plan's order, each able to stop the attempt with
-/// nothing stored: the decode stage's two hard limits fire mid-stream
-/// against the bytes actually produced (the two 413 classes), the framing
-/// must close exactly past the payload, and the produced canonical extent
-/// must equal the envelope's declared size — any of these failing gates
-/// the encoder, so the commit's own epilogue refuses and the live
-/// multipart session aborts (VAL-008; EC-07: no stored object, no live
-/// session). The commit then completes only after the canonical digest
-/// and the declared size verify against the bytes actually produced.
+/// The checks run in the plan's order, each able to stop the attempt
+/// with nothing committed: the decode stage's two hard limits fire
+/// mid-stream against the bytes actually produced (the two 413 classes),
+/// the framing must close exactly past the payload, the produced
+/// canonical extent must equal the envelope's declared size, and the
+/// signed request must cover exactly the four digests the pass computed
+/// over the bytes the request actually carried — the signature verdict
+/// is decided at the drain's end, where every digest is final. Any of
+/// these failing gates the encoder, so the commit's own epilogue refuses
+/// and the live multipart session aborts (VAL-008; EC-07: no stored
+/// object, no live session): the session completes only after all
+/// sizes, digests, and the request signature verify, exactly the plan's
+/// completion contract.
 ///
 /// What renders on a verified commit is this slice's honest outcome: the
 /// occurrence and attestation writes are not wired yet, so the attempt
@@ -492,17 +432,18 @@ impl<R: io::Read> io::Read for DigestingPayload<R> {
 /// created stays created, already-present stays already-present, and the
 /// payload is streamed and verified in both cases — a known digest never
 /// exempts the bytes (plan Section 7.7).
-#[allow(dead_code)]
 async fn attempt_commit<W, C>(
     state: Arc<ServerState<W, C>>,
     envelope: Envelope,
     stream: PayloadStream<BodyChannel>,
+    request_hasher: Arc<Mutex<Sha256>>,
+    record: AttemptAuthorization,
+    evidence: authorize::UploaderEvidence,
 ) -> (IngestOutcome, Response)
 where
     W: RawWriteStore + Send + Sync + 'static,
     C: ControlReadStore + Send + Sync + 'static,
 {
-    let request_id = envelope.request_id;
     let limits = DecodeLimits::new(
         state.config().record_max_bytes(),
         u64::from(state.config().max_expansion_ratio()),
@@ -511,6 +452,14 @@ where
     let encoding = envelope.transport_encoding;
     let tenant = envelope.tenant_id.clone();
     let uploads = Arc::clone(state.uploads());
+    // The envelope digest is final before the first byte streams; the
+    // other three covered digests are the pass's own outputs.
+    let envelope_digest = EnvelopeDigest::from_raw(envelope.envelope_digest().as_raw().to_owned());
+    let request_id = envelope.request_id.clone();
+    // The freshness decision reads the clock once, where the attempt
+    // reaches its commit — the same verdict the pre-authorization gate
+    // already applied from the pipeline's head.
+    let now = authorize::now_timestamp();
     // Captured here, where the runtime is current; the blocking task uses
     // it to drive the commit's async store calls.
     let handle = tokio::runtime::Handle::current();
@@ -519,7 +468,11 @@ where
     // reads block on the parse bridge's channel, and the commit's store
     // futures run under the runtime handle on this same thread.
     let attempt = tokio::task::spawn_blocking(move || {
-        let decoder = match TransportDecoder::new(encoding, stream, limits) {
+        let source = DigestingPayload {
+            inner: stream,
+            transport: Sha256::new(),
+        };
+        let decoder = match TransportDecoder::new(encoding, source, limits) {
             Ok(decoder) => decoder,
             Err(error) => return decode_failure(error),
         };
@@ -530,12 +483,12 @@ where
             return ServerFailure::Internal;
         };
         // The drain's verdict gates the commit: until the drain has
-        // verified the declared size, the encoder refuses its epilogue,
-        // which is what aborts the live session. (Framing closure is the
-        // decode stage's own end-of-stream check: an incomplete frame
-        // fails `next_chunk` and arrives here as an error.) Both are
-        // shared by reference with the drain and the encoder, so they
-        // carry the verdict across the encoder trait's `Sync` bound.
+        // verified the framing closure, the declared size, and the
+        // signed request over the digests it computed, the encoder
+        // refuses its epilogue, which is what aborts the live session.
+        // The verdict is shared by reference with the drain and the
+        // encoder, so it carries across the encoder trait's `Sync`
+        // bound.
         let gate = AtomicBool::new(true);
         let cause = Mutex::new(None);
         let mut gated = GateEncoder {
@@ -546,6 +499,13 @@ where
             decoder: Some(decoder),
             declared_bytes: expectation.uncompressed_bytes(),
             drained_bytes: 0,
+            canonical: Sha256::new(),
+            envelope,
+            envelope_digest,
+            record,
+            evidence,
+            now,
+            request_hasher,
             gate: &gate,
             cause: &cause,
         };
@@ -589,7 +549,6 @@ where
 /// classes ride their registered 413 payloads, and every other decode
 /// failure fails closed to the framing-invalid class the registry pins
 /// for a request that is not the byte layout the protocol declared.
-#[allow(dead_code)]
 fn decode_failure(error: TransportDecodeError) -> ServerFailure {
     match error.payload_limit() {
         Some(limit) => ServerFailure::PayloadLimit(limit),
@@ -613,7 +572,6 @@ fn decode_failure(error: TransportDecodeError) -> ServerFailure {
 /// render: the registry's `request.framing_invalid` with its pinned
 /// message, content-free — the codec's own static detail never rides the
 /// wire (SEC-004).
-#[allow(dead_code)]
 fn framing_invalid() -> ServerFailure {
     ServerFailure::Parse(IngestParseError::Framing(TwoPartError::Framing(
         FramingError::MalformedDelimiter,
@@ -624,7 +582,6 @@ fn framing_invalid() -> ServerFailure {
 /// differs from the envelope's declared `uncompressed_size`: the request
 /// is not the declaration the protocol pinned, refused before any commit
 /// (protocol Section 3.4 fault table; VAL-003).
-#[allow(dead_code)]
 fn declared_size_mismatch() -> ServerFailure {
     ServerFailure::Parse(IngestParseError::Envelope(EnvelopeError::SchemaInvalid {
         field: "uncompressed_size",
@@ -635,7 +592,6 @@ fn declared_size_mismatch() -> ServerFailure {
 /// Static detail of the pre-commit gate refusal — content-free, and
 /// unreachable by any rendering path: the route reports the recorded
 /// cause, never the gate trip itself.
-#[allow(dead_code)]
 const GATE_REFUSED_DETAIL: &str =
     "the pipeline refused the attempt before its commit could complete";
 
@@ -644,7 +600,6 @@ const GATE_REFUSED_DETAIL: &str =
 /// epilogue, which is what aborts `commit_blob`'s live session before
 /// anything completes. The gate holds no state beyond the verdict the
 /// drain recorded.
-#[allow(dead_code)]
 struct GateEncoder<'a, E: BlobEncoder> {
     inner: E,
     gate: &'a AtomicBool,
@@ -669,10 +624,10 @@ impl<E: BlobEncoder> BlobEncoder for GateEncoder<'_, E> {
 /// The canonical chunk source the commit consumes: the transport
 /// decoder's lending chunks, copied out one at a time — the copy is a
 /// concurrency buffer in flight to the encoder, never a second
-/// payload-scale hold. The drain runs the pipeline's own pre-commit
-/// checks (framing closure, declared size) and records their verdict in
-/// the gate and the cause the route renders.
-#[allow(dead_code)]
+/// payload-scale hold. The drain runs the pipeline's own pre-completion
+/// checks (framing closure, declared size, the signed request over the
+/// four covered digests) and records their verdict in the gate and the
+/// cause the route renders.
 struct DrainChunks<'a, R> {
     /// Present until the stream drains or fails; `None` afterwards, so a
     /// source can never be read past its own verdict.
@@ -680,35 +635,103 @@ struct DrainChunks<'a, R> {
     declared_bytes: u64,
     /// Running total of the canonical bytes handed to the commit.
     drained_bytes: u64,
+    /// The canonical digest accumulated over the chunks as they pass —
+    /// one of the four covered members, final only at the drain's end.
+    canonical: Sha256,
+    /// The parsed envelope the commit stands behind; the presented
+    /// request is built from it over the computed digests.
+    envelope: Envelope,
+    /// The envelope digest, final before the pass began.
+    envelope_digest: EnvelopeDigest,
+    /// The signed attempt record the computed digests must satisfy.
+    record: AttemptAuthorization,
+    /// The verified uploader evidence the decision runs against.
+    evidence: authorize::UploaderEvidence,
+    /// The clock reading the freshness decision uses.
+    now: Timestamp,
+    /// The whole-request digest state, shared with the body bridge; the
+    /// framing closure at the drain's end is what makes it final.
+    request_hasher: Arc<Mutex<Sha256>>,
     gate: &'a AtomicBool,
     cause: &'a Mutex<Option<ServerFailure>>,
 }
 
-impl<R: io::Read> Iterator for DrainChunks<'_, R> {
+impl Iterator for DrainChunks<'_, DigestingPayload<PayloadStream<BodyChannel>>> {
     type Item = Vec<u8>;
 
     fn next(&mut self) -> Option<Vec<u8>> {
-        let decoder = self.decoder.as_mut()?;
-        match decoder.next_chunk() {
+        match self.decoder.as_mut()?.next_chunk() {
             Ok(Some(chunk)) => {
                 self.drained_bytes += chunk.len() as u64;
+                self.canonical.update(chunk);
                 Some(chunk.to_vec())
             }
             Ok(None) => {
-                // Drained: framing closure was the decode stage's own
-                // end-of-stream check (an incomplete frame failed
-                // `next_chunk` above), so the check left is the declared
-                // size — the produced canonical extent must equal the
-                // declaration before the commit may complete.
-                self.decoder = None;
-                let size_ok = self.drained_bytes == self.declared_bytes;
-                if !size_ok {
+                // Drained. The framing's payload-part closure was the
+                // decode stage's own end-of-stream check (an incomplete
+                // frame failed `next_chunk` above); the checks left are
+                // the pipeline's, and each is decided here, where every
+                // covered digest is final: the body must close exactly
+                // past the payload, the produced canonical extent must
+                // equal the declaration, and the signed request must
+                // cover exactly the bytes the request carried. A refused
+                // check records its cause and drops the gate, which is
+                // what aborts the live session at the encoder's
+                // epilogue — nothing completes behind an unverified
+                // attempt (plan Section 7.7).
+                let decoder = self
+                    .decoder
+                    .take()
+                    .expect("the drain holds its decoder until its verdict");
+                let source = decoder.into_source();
+                if let Err(error) = source.inner.finish() {
+                    self.cause
+                        .lock()
+                        .expect("cause lock")
+                        .replace(ServerFailure::Parse(IngestParseError::Framing(error)));
+                    self.gate.store(false, Ordering::SeqCst);
+                    return None;
+                }
+                if self.drained_bytes != self.declared_bytes {
                     self.cause
                         .lock()
                         .expect("cause lock")
                         .replace(declared_size_mismatch());
+                    self.gate.store(false, Ordering::SeqCst);
+                    return None;
                 }
-                self.gate.store(size_ok, Ordering::SeqCst);
+                let request_content = self
+                    .request_hasher
+                    .lock()
+                    .expect("request digest lock")
+                    .clone()
+                    .finalize();
+                let digests = authorize::VerifiedDigests {
+                    request_content: RequestContentDigest::from_raw(request_content),
+                    envelope: self.envelope_digest.clone(),
+                    payload_canonical: PayloadCanonicalDigest::from_raw(
+                        self.canonical.clone().finalize(),
+                    ),
+                    payload_transport: PayloadTransportDigest::from_raw(
+                        source.transport.finalize(),
+                    ),
+                };
+                let presented = authorize::presented_request(&self.envelope, &digests);
+                match authorize::authorize_attempt(
+                    &self.record,
+                    &presented,
+                    &self.evidence,
+                    &self.now,
+                ) {
+                    Ok(_authorized) => self.gate.store(true, Ordering::SeqCst),
+                    Err(rejection) => {
+                        self.cause
+                            .lock()
+                            .expect("cause lock")
+                            .replace(ServerFailure::Authorization(rejection));
+                        self.gate.store(false, Ordering::SeqCst);
+                    }
+                }
                 None
             }
             Err(error) => {
@@ -736,7 +759,8 @@ const PARSE_BRIDGE_CHUNKS: usize = 4;
 /// The blocking side of the body bridge: a [`ByteSource`] fed by the
 /// async feeder task through the bounded channel. [`Self::pull`] blocks
 /// on the channel, which is legal only off the async runtime — exactly
-/// where the parse runs, inside [`tokio::task::spawn_blocking`].
+/// where the parse and the commit run, inside
+/// [`tokio::task::spawn_blocking`].
 struct BodyChannel {
     /// The fed chunks; `None`-equivalent (all senders dropped) is the
     /// body's end.
@@ -747,6 +771,46 @@ struct BodyChannel {
     cursor: usize,
     /// Whole-request digest state, updated as bytes leave the bridge.
     request_hasher: Arc<Mutex<Sha256>>,
+}
+
+impl BodyChannel {
+    /// Block until the feeder delivers the next chunk.
+    ///
+    /// This is deliberately not `blocking_recv`: the commit phase drives
+    /// the store's futures on this same blocking thread under
+    /// [`tokio::runtime::Handle::block_on`], and inside that entered
+    /// runtime context tokio's blocking bridge helpers panic ("cannot
+    /// block the current thread from within a runtime"). Parking the
+    /// thread under a hand-rolled waker waits context-free, so the same
+    /// bridge serves both the parse and the commit's interleaved payload
+    /// pulls. The feeder's async send still supplies the backpressure,
+    /// and the thread sleeps rather than spins: `park`'s permit makes
+    /// the wake-between-poll-and-park race a no-op, and a spurious
+    /// return just re-polls.
+    fn next_chunk(&mut self) -> Option<Vec<u8>> {
+        loop {
+            let waker = Waker::from(Arc::new(ParkWaker(std::thread::current())));
+            let mut context = Context::from_waker(&waker);
+            let mut future = std::pin::pin!(self.receiver.recv());
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(chunk) => return chunk,
+                Poll::Pending => std::thread::park(),
+            }
+        }
+    }
+}
+
+/// A waker that unparks the thread a blocked [`BodyChannel`] waits on.
+struct ParkWaker(std::thread::Thread);
+
+impl Wake for ParkWaker {
+    fn wake(self: Arc<Self>) {
+        self.0.unpark();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.unpark();
+    }
 }
 
 impl ByteSource for BodyChannel {
@@ -763,7 +827,7 @@ impl ByteSource for BodyChannel {
                     .update(&buffered[..copied]);
                 return Ok(copied);
             }
-            match self.receiver.blocking_recv() {
+            match self.next_chunk() {
                 // An empty chunk carries nothing: the next iteration
                 // drains the next one.
                 Some(chunk) if chunk.is_empty() => {}
@@ -826,17 +890,18 @@ mod tests {
     };
     use crate::trust::{TenantTrustRoot, TrustConfig};
     use archivist_auth::ed25519;
+    use archivist_auth::request_verification::AttemptAuthorization;
     use archivist_protocol::json;
     use archivist_protocol::object_key::BlobObjectKey;
     use archivist_protocol::vocabulary::{
-        ClientId, Ed25519PublicKey, IncomingChecksum, KeyId, RequestId, StorageOutcome, TenantId,
-        TransportEncoding,
+        ClientId, Ed25519PublicKey, IncomingChecksum, KeyId, RequestId, StorageOutcome,
+        StorageProfile, TenantId, Timestamp, TransportEncoding,
     };
     use archivist_storage::capability::StoreCapabilities;
     use archivist_storage::control::{AuthorizationEpoch, ControlReadStore, ControlRecord};
     use archivist_storage::error::{StorageError, StorageErrorKind};
     use archivist_storage::ingest::IngestStorage;
-    use archivist_storage::metadata::ObjectTag;
+    use archivist_storage::metadata::{ObjectTag, Observation};
     use archivist_storage::raw_write::{
         ManifestKey, MultipartUploadId, PartCommitment, PartNumber, RawWriteStore,
     };
@@ -1057,8 +1122,10 @@ mod tests {
         )
     }
 
-    fn ingest_request(content_type: &str, body: &[u8]) -> Vec<u8> {
-        let attempt = test_attempt_header(content_type);
+    /// One raw POST of `body` under `content_type` carrying `attempt` as
+    /// the signed-attempt header — the shared wire form of every ingest
+    /// request the route tests drive.
+    fn raw_ingest_request(attempt: &str, content_type: &str, body: &[u8]) -> Vec<u8> {
         let mut request = format!(
             "POST /v1/ingest HTTP/1.1\r\nHost: test\r\n\
              Content-Type: {content_type}\r\nX-Archivist-Attempt: {attempt}\r\n\
@@ -1069,6 +1136,89 @@ mod tests {
         .into_bytes();
         request.extend_from_slice(body);
         request
+    }
+
+    fn ingest_request(content_type: &str, body: &[u8]) -> Vec<u8> {
+        raw_ingest_request(&test_attempt_header(content_type), content_type, body)
+    }
+
+    /// A fully signed attempt header over the bytes actually sent: the
+    /// four covered digests are computed from the request's own body,
+    /// envelope, canonical payload, and transport bytes, and the record
+    /// is signed by [`TEST_UPLOADER_SEED`] — the half the fixture
+    /// linked-client record links — at the current instant, exactly as a
+    /// linked client signs a fresh attempt.
+    fn signed_attempt_header(
+        content_type: &str,
+        body: &[u8],
+        envelope: &Envelope,
+        canonical: &[u8],
+        transport: &[u8],
+    ) -> String {
+        let half = Ed25519PublicKey::from_raw(ed25519::public_key_from_seed(&TEST_UPLOADER_SEED));
+        let mut members = json::Object::new();
+        members.set("authorization_epoch", json::Value::Int(1));
+        members.set(
+            "authorization_timestamp",
+            json::Value::Text(authorize::now_timestamp().as_str().to_owned()),
+        );
+        members.set("content_type", json::Value::Text(content_type.to_owned()));
+        members.set(
+            "envelope_digest",
+            json::Value::Text(envelope.envelope_digest().to_hex()),
+        );
+        members.set("http_method", json::Value::Text("POST".to_owned()));
+        members.set(
+            "payload_canonical_digest",
+            json::Value::Text(sha256_hex(canonical)),
+        );
+        members.set(
+            "payload_transport_digest",
+            json::Value::Text(sha256_hex(transport)),
+        );
+        members.set(
+            "request_content_digest",
+            json::Value::Text(sha256_hex(body)),
+        );
+        members.set("route", json::Value::Text("/v1/ingest".to_owned()));
+        members.set("signature", json::Value::Text("0".repeat(128)));
+        members.set(
+            "signature_algorithm",
+            json::Value::Text("ed25519".to_owned()),
+        );
+        members.set(
+            "uploader_key_id",
+            json::Value::Text(KeyId::from_public_key(&half).to_hex()),
+        );
+        // The placeholder signature parses — the preimage does not cover
+        // it — so the framed signing input is available before the real
+        // signature exists.
+        let placeholder = AttemptAuthorization::parse(&json::Value::Object(members.clone()))
+            .expect("the shape-valid test attempt record parses");
+        let signature = ed25519::sign(&TEST_UPLOADER_SEED, &placeholder.signing_input());
+        members.set(
+            "signature",
+            json::Value::Text(
+                archivist_protocol::vocabulary::Ed25519Signature::from_raw(*signature.as_bytes())
+                    .to_hex(),
+            ),
+        );
+        String::from_utf8(json::Value::Object(members).canonical_bytes())
+            .expect("the attempt header is text")
+    }
+
+    /// A full raw POST whose attempt record signs the bytes actually
+    /// sent: the request a linked, in-scope client would transmit for
+    /// this envelope and payload pair.
+    fn signed_ingest_request(
+        content_type: &str,
+        body: &[u8],
+        envelope: &Envelope,
+        canonical: &[u8],
+        transport: &[u8],
+    ) -> Vec<u8> {
+        let attempt = signed_attempt_header(content_type, body, envelope, canonical, transport);
+        raw_ingest_request(&attempt, content_type, body)
     }
 
     #[test]
@@ -1087,7 +1237,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_missing_proof_performs_zero_raw_writes() {
-        let (state, store) = commit_state(RecordingRawStore::default(), test_config());
+        let envelope = Envelope::parse(&corpus_file("valid-direct-baseline", "envelope"))
+            .expect("the fixture envelope parses");
+        let (state, store) =
+            commit_state_with_evidence(RecordingRawStore::default(), test_config(), &envelope);
         let address = serve(state).await;
         let body = corpus_file("valid-direct-baseline", "request_body");
         let request = format!(
@@ -1172,6 +1325,10 @@ mod tests {
 
     const TEST_TENANT: &str = "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b";
     const TEST_AUTHORITY_SEED: [u8; 32] = [0x01; 32];
+    /// The linked uploader's signing seed: the half the fixture
+    /// linked-client record names, and the key the end-to-end attempts
+    /// sign their request records under.
+    const TEST_UPLOADER_SEED: [u8; 32] = [0x02; 32];
 
     fn unavailable<T>() -> Result<T, StorageError> {
         Err(StorageError::of_kind(StorageErrorKind::Unavailable))
@@ -1271,12 +1428,164 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // The commit slice's end-to-end double: a raw store that records what
-    // an attempt did to it and completes each multipart session with the
-    // next scripted outcome — the physical truth the route must carry
-    // through untouched (RCPT-003). The control store stays silent: no
-    // authorization middleware touches the control plane yet.
+    // The commit slice's end-to-end doubles: a control store that serves
+    // one verified linked-client record — the evidence a well-formed
+    // attempt loads before its streaming pass — and a raw store that
+    // records what the attempt did to it and completes each multipart
+    // session with the next scripted outcome, the physical truth the
+    // route must carry through untouched (RCPT-003).
     // ------------------------------------------------------------------
+
+    /// The control plane the commit tests stand on: the authority-signed
+    /// linked-client pointer for one envelope's uploader, served at its
+    /// exact address, and nothing else — no revocations, no rotations,
+    /// no delegations, and no receipt keys. The evidence path performs
+    /// the real signature verification against the test authority; only
+    /// the store behind it is a double.
+    struct LinkedControlStore {
+        envelope: Vec<u8>,
+        observed_at: Timestamp,
+        tenant: TenantId,
+        client: ClientId,
+    }
+
+    impl LinkedControlStore {
+        /// The evidence store for one envelope's uploader: the linked
+        /// record names the envelope's own tenant, client, and harness
+        /// scope, signed by the test authority the state trusts.
+        fn for_envelope(envelope: &Envelope) -> Self {
+            Self {
+                envelope: linked_client_record(envelope),
+                observed_at: Timestamp::parse("2026-09-01T00:00:00Z")
+                    .expect("the fixture observation instant parses"),
+                tenant: envelope.tenant_id.clone(),
+                client: envelope.uploader_client_id.clone(),
+            }
+        }
+    }
+
+    impl ControlReadStore for LinkedControlStore {
+        async fn read_linked_client(
+            &self,
+            tenant: &TenantId,
+            client: &ClientId,
+        ) -> Result<Option<ControlRecord>, StorageError> {
+            if tenant == &self.tenant && client == &self.client {
+                Ok(Some(ControlRecord::new(
+                    self.envelope.clone(),
+                    Observation::new(None, None, self.observed_at.clone()),
+                )))
+            } else {
+                // Any other address is simply a client linked nowhere.
+                Ok(None)
+            }
+        }
+
+        async fn read_delegation(
+            &self,
+            _tenant: &TenantId,
+            _relay: &ClientId,
+            _origin: &ClientId,
+        ) -> Result<Option<ControlRecord>, StorageError> {
+            Ok(None)
+        }
+
+        async fn read_revocation(
+            &self,
+            _tenant: &TenantId,
+            _client: &ClientId,
+            _epoch: AuthorizationEpoch,
+        ) -> Result<Option<ControlRecord>, StorageError> {
+            Ok(None)
+        }
+
+        async fn read_rotation(
+            &self,
+            _tenant: &TenantId,
+            _client: &ClientId,
+            _epoch: AuthorizationEpoch,
+        ) -> Result<Option<ControlRecord>, StorageError> {
+            Ok(None)
+        }
+
+        async fn read_receipt_key(
+            &self,
+            _tenant: &TenantId,
+            _key: &KeyId,
+        ) -> Result<Option<ControlRecord>, StorageError> {
+            unavailable()
+        }
+    }
+
+    /// The linked-client record one envelope's uploader stands on: the
+    /// exact `current-pointer` shape the control schema pins, naming the
+    /// envelope's tenant and client, the uploader half of
+    /// [`TEST_UPLOADER_SEED`] with its derived key ID, and a scope
+    /// granting the envelope's harness and the one v1 ingest operation —
+    /// signed by [`TEST_AUTHORITY_SEED`], the authority the state's trust
+    /// anchor pins.
+    fn linked_client_record(envelope: &Envelope) -> Vec<u8> {
+        let half = Ed25519PublicKey::from_raw(ed25519::public_key_from_seed(&TEST_UPLOADER_SEED));
+        let authority =
+            Ed25519PublicKey::from_raw(ed25519::public_key_from_seed(&TEST_AUTHORITY_SEED));
+        let mut members = json::Object::new();
+        members.set(
+            "schema",
+            json::Value::Text("archivist.control/v1".to_owned()),
+        );
+        members.set("record_type", json::Value::Text("linked-client".to_owned()));
+        members.set(
+            "record_kind",
+            json::Value::Text("current-pointer".to_owned()),
+        );
+        members.set(
+            "tenant_id",
+            json::Value::Text(envelope.tenant_id.as_str().to_owned()),
+        );
+        members.set(
+            "client_id",
+            json::Value::Text(envelope.uploader_client_id.as_str().to_owned()),
+        );
+        members.set(
+            "key_id",
+            json::Value::Text(KeyId::from_public_key(&half).to_hex()),
+        );
+        members.set("key_algorithm", json::Value::Text("ed25519".to_owned()));
+        members.set("public_key", json::Value::Text(half.to_hex()));
+        let mut scopes = json::Object::new();
+        scopes.set(
+            "harnesses",
+            json::Value::Array(vec![json::Value::Text(
+                envelope.harness.as_str().to_owned(),
+            )]),
+        );
+        scopes.set(
+            "operations",
+            json::Value::Array(vec![json::Value::Text("ingest".to_owned())]),
+        );
+        members.set("scopes", json::Value::Object(scopes));
+        members.set("authorization_epoch", json::Value::Int(1));
+        members.set(
+            "signed_at",
+            json::Value::Text("2026-09-01T00:00:00Z".to_owned()),
+        );
+        members.set(
+            "authority_key_id",
+            json::Value::Text(KeyId::from_public_key(&authority).to_hex()),
+        );
+        let signature = ed25519::sign(
+            &TEST_AUTHORITY_SEED,
+            &json::Value::Object(members.clone()).canonical_bytes(),
+        );
+        members.set(
+            "authority_signature",
+            json::Value::Text(
+                archivist_protocol::vocabulary::Ed25519Signature::from_raw(*signature.as_bytes())
+                    .to_hex(),
+            ),
+        );
+        json::Value::Object(members).canonical_bytes()
+    }
 
     /// What one recording store saw, shared between the store and the
     /// test's observation handle.
@@ -1446,13 +1755,16 @@ mod tests {
             .expect("test configuration validates")
     }
 
-    /// The route's state over one recording store — the composition the
-    /// commit-slice tests drive.
-    fn commit_state(
+    /// The route's state over one recording store and the linked-client
+    /// evidence one envelope's uploader stands on — the composition the
+    /// end-to-end commit tests drive: a well-formed attempt loads real
+    /// evidence, then meets a raw store that records its every call.
+    fn commit_state_with_evidence(
         store: RecordingRawStore,
         config: crate::config::ServerConfig,
+        envelope: &Envelope,
     ) -> (
-        Arc<ServerState<RecordingRawStore, SilentControlStore>>,
+        Arc<ServerState<RecordingRawStore, LinkedControlStore>>,
         Observed,
     ) {
         let observed = Observed {
@@ -1471,7 +1783,7 @@ mod tests {
             Arc::new(ServerState::new(
                 config,
                 trust,
-                IngestStorage::compose(store, SilentControlStore),
+                IngestStorage::compose(store, LinkedControlStore::for_envelope(envelope)),
             )),
             observed,
         )
@@ -1787,20 +2099,31 @@ mod tests {
         );
     }
 
-    /// Post the baseline attempt to a running server and assert that the
-    /// storage path remains behind the authorization evidence gate.
-    async fn post_baseline_expect_authorization_gate(address: SocketAddr, id: &str) -> String {
+    /// Post the signed baseline attempt to a running server with linked
+    /// evidence in place, asserting the partial-commit contract and
+    /// returning the rendered body text.
+    async fn post_baseline_expect_partial_commit(address: SocketAddr, id: &str) -> String {
         let body = corpus_file(id, "request_body");
-        let response =
-            exchange_bytes(address, &ingest_request(&corpus_content_type(id), &body)).await;
-        // The test control store has not established linked-client
-        // evidence, so the request is refused before a raw write.
+        let envelope =
+            Envelope::parse(&corpus_file(id, "envelope")).expect("the fixture envelope parses");
+        let canonical = corpus_file(id, "payload");
+        let response = exchange_bytes(
+            address,
+            &signed_ingest_request(
+                &corpus_content_type(id),
+                &body,
+                &envelope,
+                &canonical,
+                &canonical,
+            ),
+        )
+        .await;
         let request_id = corpus_request_id(id);
         assert!(response.header(REQUEST_ID_HEADER.as_str()).is_some());
         assert_exchange_contract(
             &response,
             503,
-            "server.unavailable",
+            "server.partial_commit",
             true,
             Some(&request_id),
         )
@@ -1809,20 +2132,34 @@ mod tests {
     #[tokio::test]
     async fn a_well_formed_identity_attempt_commits_the_blob_and_reports_the_partial_commit() {
         let id = "valid-direct-baseline";
-        let (state, store) = commit_state(RecordingRawStore::default(), test_config());
+        let envelope =
+            Envelope::parse(&corpus_file(id, "envelope")).expect("the fixture envelope parses");
+        let canonical = corpus_file(id, "payload");
+        let (state, store) =
+            commit_state_with_evidence(RecordingRawStore::default(), test_config(), &envelope);
         let address = serve(Arc::clone(&state)).await;
-        post_baseline_expect_authorization_gate(address, id).await;
+        post_baseline_expect_partial_commit(address, id).await;
 
         // The physical truth, observed at the store seam (RCPT-003): one
         // session under the envelope's derived key, the whole canonical
-        // payload streamed into parts, committed exactly once, nothing
-        // aborted, and the store's own `created` answer recorded — never
-        // strengthened into a receipt the blob alone cannot justify.
-        assert!(store.begun_keys().is_empty());
-        assert!(store.stored().is_empty());
-        assert_eq!(store.commits(), 0);
+        // payload streamed through the profile encoder into parts,
+        // committed exactly once, nothing aborted, and the store's own
+        // `created` answer recorded — never strengthened into a receipt
+        // the blob alone cannot justify.
+        let tenant: TenantId = TEST_TENANT.parse().expect("the test tenant parses");
+        assert_eq!(
+            store.begun_keys(),
+            vec![BlobObjectKey::new(
+                &tenant,
+                StorageProfile::ZstdV1,
+                &envelope.blob_digest
+            )]
+        );
+        assert_eq!(store.begun(), 1);
+        assert_eq!(store.stored(), zstd_frame(&canonical));
+        assert_eq!(store.commits(), 1);
         assert_eq!(store.aborts(), 0);
-        assert!(store.answered().is_empty());
+        assert_eq!(store.answered(), vec![StorageOutcome::Created]);
         assert_eq!(state.uploads().live_count(), 0);
 
         // The metric counts the attempt as the failure it reported —
@@ -1847,28 +2184,38 @@ mod tests {
     #[tokio::test]
     async fn an_existing_compatible_blob_is_still_drained_and_verified_before_its_outcome() {
         let id = "valid-direct-baseline";
+        let envelope =
+            Envelope::parse(&corpus_file(id, "envelope")).expect("the fixture envelope parses");
+        let canonical = corpus_file(id, "payload");
         // The second attempt meets a blob the store already holds: the
         // scripted outcome the route must carry through untouched.
-        let (state, store) = commit_state(
+        let (state, store) = commit_state_with_evidence(
             RecordingRawStore::scripted(&[StorageOutcome::Created, StorageOutcome::AlreadyPresent]),
             test_config(),
+            &envelope,
         );
         let address = serve(Arc::clone(&state)).await;
-        let first = post_baseline_expect_authorization_gate(address, id).await;
-        let second = post_baseline_expect_authorization_gate(address, id).await;
+        let first = post_baseline_expect_partial_commit(address, id).await;
+        let second = post_baseline_expect_partial_commit(address, id).await;
         assert!(
-            first.contains("\"code\":\"server.unavailable\"")
-                && second.contains("\"code\":\"server.unavailable\""),
-            "both attempts render the same class"
+            first.contains("\"code\":\"server.partial_commit\"")
+                && second.contains("\"code\":\"server.partial_commit\""),
+            "both attempts render the same class, whatever the store answered"
         );
 
         // The retry drained and verified the whole payload again before
-        // learning the blob already existed — plan Section 7.7 — and the
-        // store's own answers passed through unchanged (RCPT-003).
-        assert_eq!(store.commits(), 0);
+        // learning the blob already existed — plan Section 7.7: the
+        // encoded payload landed in parts twice — and the store's own
+        // answers passed through unchanged and unstrengthened (RCPT-003).
+        assert_eq!(store.begun(), 2);
+        assert_eq!(store.stored().len(), 2 * zstd_frame(&canonical).len());
+        assert_eq!(store.commits(), 2);
         assert_eq!(store.aborts(), 0);
-        assert!(store.stored().is_empty());
-        assert!(store.answered().is_empty());
+        assert_eq!(
+            store.answered(),
+            vec![StorageOutcome::Created, StorageOutcome::AlreadyPresent]
+        );
+        assert_eq!(state.uploads().live_count(), 0);
     }
 
     #[tokio::test]
@@ -1877,6 +2224,7 @@ mod tests {
         let canonical = corpus_file(id, "payload");
         let frame = zstd_frame(&canonical);
         let envelope_bytes = rewritten_envelope(id, "zstd", &canonical, &frame);
+        let envelope = Envelope::parse(&envelope_bytes).expect("the rewritten envelope parses");
         let body = framed_body(
             BOUNDARY,
             &[
@@ -1884,13 +2232,17 @@ mod tests {
                 ("application/zstd", &frame),
             ],
         );
-        let (state, store) = commit_state(RecordingRawStore::default(), test_config());
+        let (state, store) =
+            commit_state_with_evidence(RecordingRawStore::default(), test_config(), &envelope);
         let address = serve(Arc::clone(&state)).await;
         let response = exchange_bytes(
             address,
-            &ingest_request(
+            &signed_ingest_request(
                 "multipart/related; boundary=archivist-conformance-01",
                 &body,
+                &envelope,
+                &canonical,
+                &frame,
             ),
         )
         .await;
@@ -1898,7 +2250,7 @@ mod tests {
         assert_exchange_contract(
             &response,
             503,
-            "server.unavailable",
+            "server.partial_commit",
             true,
             Some(&request_id),
         );
@@ -1906,11 +2258,22 @@ mod tests {
         // The stored form is the profile encoder's encoding of the
         // decoded canonical bytes — not the client's uploaded frame
         // passed through (VAL-006: identical canonical bytes, identical
-        // stored bytes).
-        assert!(store.begun_keys().is_empty());
-        assert!(store.stored().is_empty());
-        assert_eq!(store.commits(), 0);
+        // stored bytes) — under the digest the decoded canonical
+        // derives, committed once with the store's own answer recorded.
+        let tenant: TenantId = TEST_TENANT.parse().expect("the test tenant parses");
+        assert_eq!(
+            store.begun_keys(),
+            vec![BlobObjectKey::new(
+                &tenant,
+                StorageProfile::ZstdV1,
+                &envelope.blob_digest
+            )]
+        );
+        assert_eq!(store.stored(), zstd_frame(&canonical));
+        assert_eq!(store.commits(), 1);
         assert_eq!(store.aborts(), 0);
+        assert_eq!(store.answered(), vec![StorageOutcome::Created]);
+        assert_eq!(state.uploads().live_count(), 0);
     }
 
     #[tokio::test]
@@ -1918,70 +2281,145 @@ mod tests {
         let id = "valid-direct-baseline";
         let mut payload = corpus_file(id, "payload");
         payload[0] ^= 0x01;
+        // The envelope stays the fixture: it declares the original
+        // canonical digest. The attempt honestly signs the bytes
+        // actually sent, so the signature and every covered digest hold,
+        // and the refusal belongs to the declaration alone.
+        let envelope_bytes = corpus_file(id, "envelope");
+        let envelope = Envelope::parse(&envelope_bytes).expect("the fixture envelope parses");
         let body = framed_body(
             BOUNDARY,
             &[
-                (ENVELOPE_PART_MEDIA_TYPE, &corpus_file(id, "envelope")),
+                (ENVELOPE_PART_MEDIA_TYPE, &envelope_bytes),
                 (IDENTITY_MEDIA_TYPE, &payload),
             ],
         );
-        let (state, store) = commit_state(RecordingRawStore::default(), test_config());
+        let (state, store) =
+            commit_state_with_evidence(RecordingRawStore::default(), test_config(), &envelope);
         let address = serve(Arc::clone(&state)).await;
         let response = exchange_bytes(
             address,
-            &ingest_request(
+            &signed_ingest_request(
                 "multipart/related; boundary=archivist-conformance-01",
                 &body,
+                &envelope,
+                &payload,
+                &payload,
             ),
         )
         .await;
-        // The canonical digest does not match the declared one: the
-        // commit aborts the session and the conflict is the answer.
+        // The canonical bytes the pass produced do not match the digest
+        // the envelope declared: the non-retryable integrity conflict,
+        // decided at the commit's own epilogue.
         let request_id = corpus_request_id(id);
         assert_exchange_contract(
             &response,
-            503,
-            "server.unavailable",
-            true,
+            409,
+            "storage.integrity_conflict",
+            false,
             Some(&request_id),
         );
-        assert_eq!(store.begun(), 0, "authorization precedes session creation");
+        // The whole payload streamed first — the verdict waits on the
+        // final digests — and the live session aborted with nothing
+        // committed (plan Section 7.7).
+        assert_eq!(store.begun(), 1);
+        assert_eq!(store.stored(), zstd_frame(&payload));
         assert_eq!(store.commits(), 0, "nothing committed");
-        assert_eq!(store.aborts(), 0, "no session existed to abort");
+        assert_eq!(store.aborts(), 1, "the session aborted");
+        assert!(store.answered().is_empty());
+        assert_eq!(state.uploads().live_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_unproven_signature_aborts_after_the_drain_with_nothing_committed() {
+        let id = "valid-direct-baseline";
+        let envelope =
+            Envelope::parse(&corpus_file(id, "envelope")).expect("the fixture envelope parses");
+        let (state, store) =
+            commit_state_with_evidence(RecordingRawStore::default(), test_config(), &envelope);
+        let address = serve(Arc::clone(&state)).await;
+        // The body is the valid corpus baseline; the attempt header is
+        // the shape-valid but unproven record. Evidence loads, the
+        // stream drains, and the signature verdict — decided where the
+        // covered digests are final — refuses the attempt.
+        let response = exchange_bytes(
+            address,
+            &ingest_request(&corpus_content_type(id), &corpus_file(id, "request_body")),
+        )
+        .await;
+        let request_id = corpus_request_id(id);
+        assert_exchange_contract(
+            &response,
+            401,
+            "auth.authorization_rejected",
+            false,
+            Some(&request_id),
+        );
+        // The payload drained — decoded and digested to its final
+        // chunks — before the verdict existed, and the refusal is what
+        // aborted the session: the buffered part never flushed to the
+        // store, nothing committed, nothing left live (plan Section 7.7).
+        assert_eq!(store.begun(), 1);
+        assert!(
+            store.stored().is_empty(),
+            "no part flushed past the verdict"
+        );
+        assert_eq!(store.commits(), 0);
+        assert_eq!(store.aborts(), 1);
+        assert!(store.answered().is_empty());
         assert_eq!(state.uploads().live_count(), 0);
     }
 
     #[tokio::test]
     async fn an_attempt_past_the_record_cap_aborts_with_nothing_stored() {
         let id = "valid-direct-baseline";
+        let envelope =
+            Envelope::parse(&corpus_file(id, "envelope")).expect("the fixture envelope parses");
+        let canonical = corpus_file(id, "payload");
         let config = crate::config::ServerConfig::builder()
             .listen_address("127.0.0.1:0")
             .record_max_bytes(64)
             .build()
             .expect("test configuration validates");
-        let (state, store) = commit_state(RecordingRawStore::default(), config);
+        let (state, store) =
+            commit_state_with_evidence(RecordingRawStore::default(), config, &envelope);
         let address = serve(Arc::clone(&state)).await;
         let body = corpus_file(id, "request_body");
-        let response =
-            exchange_bytes(address, &ingest_request(&corpus_content_type(id), &body)).await;
+        let response = exchange_bytes(
+            address,
+            &signed_ingest_request(
+                &corpus_content_type(id),
+                &body,
+                &envelope,
+                &canonical,
+                &canonical,
+            ),
+        )
+        .await;
         // The 176-byte canonical record exceeds the 64-byte cap: the 413
-        // fires from the real limit check mid-stream, naming the cap.
+        // fires from the real limit check mid-stream, naming the measured
+        // record and the cap.
         let request_id = corpus_request_id(id);
         let text = assert_exchange_contract(
             &response,
-            503,
-            "server.unavailable",
-            true,
+            413,
+            "request.record_too_large",
+            false,
             Some(&request_id),
         );
-        // The authorization evidence gate precedes the streaming writer.
         assert!(
-            !text.contains("exceeds the 64 byte unsplittable limit"),
+            text.contains(
+                "\"message\":\"One record of 176 bytes exceeds the 64 byte \
+                 unsplittable limit; the coverage gap is reported.\""
+            ),
             "{text}"
         );
-        assert_eq!(store.begun(), 0);
+        // The limit fired before any canonical chunk reached the writer:
+        // the session began and aborted, nothing was stored.
+        assert_eq!(store.begun(), 1);
+        assert!(store.stored().is_empty());
         assert_eq!(store.commits(), 0);
-        assert_eq!(store.aborts(), 0);
+        assert_eq!(store.aborts(), 1);
         assert_eq!(state.uploads().live_count(), 0);
     }
 
@@ -1997,6 +2435,7 @@ mod tests {
             "the fixture must exceed the ratio to exercise the refusal"
         );
         let envelope_bytes = rewritten_envelope(id, "zstd", &canonical, &frame);
+        let envelope = Envelope::parse(&envelope_bytes).expect("the rewritten envelope parses");
         let body = framed_body(
             BOUNDARY,
             &[
@@ -2004,28 +2443,41 @@ mod tests {
                 ("application/zstd", &frame),
             ],
         );
-        let (state, store) = commit_state(RecordingRawStore::default(), test_config());
+        let (state, store) =
+            commit_state_with_evidence(RecordingRawStore::default(), test_config(), &envelope);
         let address = serve(Arc::clone(&state)).await;
         let response = exchange_bytes(
             address,
-            &ingest_request(
+            &signed_ingest_request(
                 "multipart/related; boundary=archivist-conformance-01",
                 &body,
+                &envelope,
+                &canonical,
+                &frame,
             ),
         )
         .await;
         let request_id = corpus_request_id(id);
         let text = assert_exchange_contract(
             &response,
-            503,
-            "server.unavailable",
-            true,
+            413,
+            "request.expansion_ratio_exceeded",
+            false,
             Some(&request_id),
         );
-        assert!(!text.contains("exceeds 100 to 1"), "{text}");
-        assert_eq!(store.begun(), 0);
+        assert!(
+            text.contains(
+                "\"message\":\"The decompression expansion ratio exceeds 100 to 1; rechunk \
+                 and resubmit.\""
+            ),
+            "{text}"
+        );
+        // The ratio fired mid-stream: the session began and aborted, no
+        // canonical chunk survived into a part, nothing committed.
+        assert_eq!(store.begun(), 1);
+        assert!(store.stored().is_empty());
         assert_eq!(store.commits(), 0);
-        assert_eq!(store.aborts(), 0);
+        assert_eq!(store.aborts(), 1);
         assert_eq!(state.uploads().live_count(), 0);
     }
 
