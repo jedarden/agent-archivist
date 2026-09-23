@@ -108,6 +108,13 @@ impl Jitter for ZeroJitter {
     }
 }
 
+/// Payload bytes are deliberately the low byte of a mixed serial; the
+/// narrowing is the mixing step, never a length or an index.
+#[allow(clippy::cast_possible_truncation)]
+fn mix_byte(value: u64) -> u8 {
+    value as u8
+}
+
 fn timestamp() -> Timestamp {
     Timestamp::parse(CAPTURED_AT).expect("test timestamp")
 }
@@ -147,7 +154,7 @@ fn materialize(
 ) -> Option<archivist_client_core::spool::MaterializedBundle> {
     let length = usize::try_from(8 + serial % 24).expect("small payload length");
     let payload = (0..length)
-        .map(|offset| (serial.wrapping_add(offset as u64) as u8).wrapping_add(1))
+        .map(|offset| mix_byte(serial.wrapping_add(offset as u64)).wrapping_add(1))
         .collect::<Vec<_>>();
     match spool.materialize(store, gate, &payload) {
         Ok(bundle) => Some(bundle),
@@ -247,10 +254,7 @@ fn assert_durable(dir: &Path, store: &mut StateStore) {
     for (name, state, size) in &records {
         assert!(*size >= 0, "a recovered row cannot have a negative size");
         let path = dir.join(SPOOL_DIR_NAME).join(name);
-        if state != "acknowledged" {
-            assert!(path.is_file(), "live row lost its bundle: {name}");
-            live_sum = live_sum.saturating_add(u64::try_from(*size).expect("size is nonnegative"));
-        } else {
+        if state == "acknowledged" {
             let receipt_count: i64 = store
                 .connection()
                 .query_row(
@@ -266,6 +270,9 @@ fn assert_durable(dir: &Path, store: &mut StateStore) {
                 receipt_count, 1,
                 "acknowledged bundle lost its receipt: {name}"
             );
+        } else {
+            assert!(path.is_file(), "live row lost its bundle: {name}");
+            live_sum = live_sum.saturating_add(u64::try_from(*size).expect("size is nonnegative"));
         }
     }
     assert_eq!(live_usage_bytes(store).expect("live usage"), live_sum);
@@ -329,6 +336,7 @@ fn assert_cursor_never_regresses(
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // one deterministic trace loop, read top to bottom
 fn deterministic_recovery_fuzz_converges_after_arbitrary_interruptions() {
     for seed in 0..4_u64 {
         let temp = TempDir::new(seed);
@@ -390,7 +398,12 @@ fn deterministic_recovery_fuzz_converges_after_arbitrary_interruptions() {
                     // can leave; reconciliation must delete staging debris
                     // and index a complete orphan rather than discard it.
                     let identity = id_for(seed.wrapping_mul(10_000) + step * 2 + 1);
-                    let payload = [seed as u8, step as u8, 0xa5, 0x5a];
+                    let payload = [
+                        u8::try_from(seed).expect("seed fits u8"),
+                        u8::try_from(step).expect("step fits u8"),
+                        0xa5,
+                        0x5a,
+                    ];
                     std::fs::write(
                         temp.path()
                             .join(SPOOL_DIR_NAME)
@@ -464,10 +477,11 @@ fn deterministic_recovery_fuzz_converges_after_arbitrary_interruptions() {
                     let length = usize::try_from(generator.below(48)).expect("small receipt");
                     let bytes = (0..length)
                         .map(|n| {
-                            generator
-                                .next()
-                                .wrapping_add(u64::try_from(n).expect("small receipt index"))
-                                as u8
+                            mix_byte(
+                                generator
+                                    .next()
+                                    .wrapping_add(u64::try_from(n).expect("small receipt index")),
+                            )
                         })
                         .collect::<Vec<_>>();
                     let result = acknowledge_receipt(
