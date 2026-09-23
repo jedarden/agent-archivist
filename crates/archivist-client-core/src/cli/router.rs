@@ -3,12 +3,12 @@
 //! Composition and stream routing for parsed CLI invocations.
 
 use std::ffi::OsString;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 
 use archivist_protocol::json;
 
 use super::error::CliError;
-use super::output::OutputEnvelope;
+use super::output::{OutputEnvelope, write_human};
 use super::parse::{self, Invocation, Parsed};
 use super::registry::{Command, Registry};
 
@@ -112,6 +112,11 @@ impl Router {
         if command.stdout_kind() == "none" {
             return 0;
         }
+        if !matches!(&result, json::Value::Object(_)) {
+            let diagnostic = CliError::internal();
+            let _ = diagnostic.write_to(&mut io::stderr().lock(), invocation.modes().json());
+            return diagnostic.exit_code();
+        }
         let write_result = if invocation.modes().json() {
             let Ok(output) = OutputEnvelope::new(&command.joined(), result) else {
                 let diagnostic = CliError::internal();
@@ -119,12 +124,9 @@ impl Router {
                 return diagnostic.exit_code();
             };
             output.write_to(&mut io::stdout().lock())
+        } else if io::stdout().is_terminal() {
+            write_human(&result, &mut io::stdout().lock())
         } else {
-            if !matches!(result, json::Value::Object(_)) {
-                let diagnostic = CliError::internal();
-                let _ = diagnostic.write_to(&mut io::stderr().lock(), invocation.modes().json());
-                return diagnostic.exit_code();
-            }
             let mut stdout = io::stdout().lock();
             stdout
                 .write_all(&result.canonical_bytes())

@@ -88,6 +88,106 @@ impl OutputEnvelope {
     }
 }
 
+/// Write a result document for a human-facing TTY.
+///
+/// The machine-facing path is [`OutputEnvelope`], which is deliberately one
+/// canonical JSON value. A TTY gets the same content rendered as a small
+/// indented field tree so an operator can read it without decoding compact
+/// JSON. The renderer is intentionally uncoloured: output remains safe when
+/// a terminal is captured or copied into a diagnostic transcript.
+pub fn write_human<W: Write>(value: &json::Value, writer: &mut W) -> io::Result<()> {
+    let needs_newline = match value {
+        json::Value::Object(object) => object.is_empty(),
+        json::Value::Array(items) => items.is_empty(),
+        _ => true,
+    };
+    render_human(value, 0, writer)?;
+    if needs_newline {
+        writer.write_all(b"\n")?;
+    }
+    Ok(())
+}
+
+fn render_human<W: Write>(value: &json::Value, indent: usize, writer: &mut W) -> io::Result<()> {
+    match value {
+        json::Value::Object(object) => {
+            if object.is_empty() {
+                return writer.write_all(b"{}");
+            }
+            for (name, child) in object.iter() {
+                write_indent(writer, indent)?;
+                writer.write_all(name.as_bytes())?;
+                match child {
+                    json::Value::Object(_) | json::Value::Array(_) => {
+                        writer.write_all(b":")?;
+                        if child_is_empty(child) {
+                            writer.write_all(b" ")?;
+                            render_human(child, indent, writer)?;
+                            writer.write_all(b"\n")?;
+                        } else {
+                            writer.write_all(b"\n")?;
+                            render_human(child, indent + 2, writer)?;
+                        }
+                    }
+                    _ => {
+                        writer.write_all(b": ")?;
+                        render_scalar(child, writer)?;
+                        writer.write_all(b"\n")?;
+                    }
+                }
+            }
+            Ok(())
+        }
+        json::Value::Array(items) => {
+            if items.is_empty() {
+                return writer.write_all(b"[]");
+            }
+            for item in items {
+                write_indent(writer, indent)?;
+                writer.write_all(b"-")?;
+                match item {
+                    json::Value::Object(_) | json::Value::Array(_) => {
+                        if child_is_empty(item) {
+                            writer.write_all(b" ")?;
+                            render_human(item, indent, writer)?;
+                            writer.write_all(b"\n")?;
+                        } else {
+                            writer.write_all(b"\n")?;
+                            render_human(item, indent + 2, writer)?;
+                        }
+                    }
+                    _ => {
+                        writer.write_all(b" ")?;
+                        render_scalar(item, writer)?;
+                        writer.write_all(b"\n")?;
+                    }
+                }
+            }
+            Ok(())
+        }
+        _ => render_scalar(value, writer),
+    }
+}
+
+fn child_is_empty(value: &json::Value) -> bool {
+    match value {
+        json::Value::Object(object) => object.is_empty(),
+        json::Value::Array(items) => items.is_empty(),
+        _ => false,
+    }
+}
+
+fn render_scalar<W: Write>(value: &json::Value, writer: &mut W) -> io::Result<()> {
+    writer.write_all(&value.canonical_bytes())
+}
+
+fn write_indent<W: Write>(writer: &mut W, indent: usize) -> io::Result<()> {
+    for _ in 0..indent {
+        writer.write_all(b" ")?;
+    }
+    Ok(())
+}
+
 /// Why an output envelope could not be constructed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputError {

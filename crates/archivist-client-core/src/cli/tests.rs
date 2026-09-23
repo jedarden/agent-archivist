@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use archivist_protocol::json;
 
 use super::error::CliError;
-use super::output::OutputEnvelope;
+use super::output::{OutputEnvelope, write_human};
 use super::parse::{self, ParseErrorKind, Parsed};
 use super::registry::Registry;
 use super::router::Router;
@@ -84,6 +84,31 @@ fn output_envelope_is_closed_and_contains_no_float_domain() {
     assert!(object.get("command").is_some());
     assert!(object.get("generated_at").is_some());
     assert!(object.get("result").is_some());
+}
+
+#[test]
+fn human_output_renders_a_readable_field_tree_without_ansi() {
+    let mut result = json::Object::new();
+    result.set(
+        "schema",
+        json::Value::Text("archivist.cli-result/v1".to_owned()),
+    );
+    let mut counts = json::Object::new();
+    counts.set("items", json::Value::Int(2));
+    result.set("counts", json::Value::Object(counts));
+    result.set(
+        "reasons",
+        json::Value::Array(vec![json::Value::Text("none".to_owned())]),
+    );
+
+    let mut bytes = Vec::new();
+    write_human(&json::Value::Object(result), &mut bytes).expect("human output writes");
+    let text = String::from_utf8(bytes).expect("human output is utf-8");
+    assert_eq!(
+        text,
+        "counts:\n  items: 2\nreasons:\n  - \"none\"\nschema: \"archivist.cli-result/v1\"\n"
+    );
+    assert!(!text.contains('\u{1b}'));
 }
 
 #[test]
