@@ -341,11 +341,16 @@ mod tests {
     };
     use crate::guard::ProcessAdmission;
     use crate::parse::parts::ENVELOPE_PART_MEDIA_TYPE;
-    use crate::state::{NotReadyReason, ReadinessSnapshot, ServerState};
+    use crate::state::{
+        NotReadyReason, ReadinessSnapshot, ServerState, signed_test_control_record,
+    };
     use crate::trust::{TenantTrustRoot, TrustConfig};
+    use archivist_auth::ed25519;
     use archivist_protocol::json;
     use archivist_protocol::object_key::BlobObjectKey;
-    use archivist_protocol::vocabulary::{ClientId, KeyId, RequestId, StorageOutcome, TenantId};
+    use archivist_protocol::vocabulary::{
+        ClientId, Ed25519PublicKey, KeyId, RequestId, StorageOutcome, TenantId,
+    };
     use archivist_storage::capability::StoreCapabilities;
     use archivist_storage::control::{AuthorizationEpoch, ControlReadStore, ControlRecord};
     use archivist_storage::error::{StorageError, StorageErrorKind};
@@ -625,7 +630,7 @@ mod tests {
     // ------------------------------------------------------------------
 
     const TEST_TENANT: &str = "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b";
-    const TEST_KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const TEST_AUTHORITY_SEED: [u8; 32] = [0x01; 32];
 
     fn unavailable<T>() -> Result<T, StorageError> {
         Err(StorageError::of_kind(StorageErrorKind::Unavailable))
@@ -730,7 +735,12 @@ mod tests {
             .build()
             .expect("test configuration validates");
         let trust = TrustConfig::from_roots(vec![
-            TenantTrustRoot::new(TEST_TENANT, TEST_KEY).expect("test tenant root validates"),
+            TenantTrustRoot::new(
+                TEST_TENANT,
+                &Ed25519PublicKey::from_raw(ed25519::public_key_from_seed(&TEST_AUTHORITY_SEED))
+                    .to_hex(),
+            )
+            .expect("test tenant root validates"),
         ])
         .expect("one-tenant anchor set validates");
         Arc::new(ServerState::new(
@@ -853,10 +863,28 @@ mod tests {
         let live = exchange(address, &get_request("/health/live")).await;
         assert_eq!(live.status, 200);
 
-        // Evidence recorded through the ledger is the only thing that
-        // flips the answer.
         let tenant: TenantId = TEST_TENANT.parse().expect("test tenant parses");
-        assert!(state.record_trust_evidence(&tenant));
+        let signed = signed_test_control_record(&tenant, &TEST_AUTHORITY_SEED);
+        let mut tampered = json::parse(signed.envelope()).expect("test record parses");
+        if let json::Value::Object(ref mut object) = tampered {
+            object.set("authority_signature", json::Value::Text("00".repeat(64)));
+        } else {
+            panic!("test control record is an object");
+        }
+        let tampered = archivist_storage::control::ControlRecord::new(
+            tampered.canonical_bytes(),
+            signed.observation().clone(),
+        );
+        assert!(
+            state
+                .record_verified_control_read(&tenant, &tampered, |_| None)
+                .is_err()
+        );
+
+        // Only a successful signed control-record read flips the answer.
+        state
+            .record_verified_control_read(&tenant, &signed, |_| None)
+            .expect("the signed control read verifies");
         let after = exchange(address, &get_request("/health/ready")).await;
         assert_eq!(after.status, 200);
         assert_eq!(

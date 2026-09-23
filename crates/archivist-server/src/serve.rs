@@ -332,9 +332,13 @@ pub async fn shutdown_on_signal() {
 mod tests {
     use super::{ArchivistServer, ShutdownOutcome, StartupError, shutdown_channel};
     use crate::config::ServerConfig;
+    use crate::state::signed_test_control_record;
     use crate::trust::{TenantTrustRoot, TrustConfig};
+    use archivist_auth::ed25519;
     use archivist_protocol::object_key::BlobObjectKey;
-    use archivist_protocol::vocabulary::{ClientId, KeyId, StorageOutcome, TenantId};
+    use archivist_protocol::vocabulary::{
+        ClientId, Ed25519PublicKey, KeyId, StorageOutcome, TenantId,
+    };
     use archivist_storage::capability::StoreCapabilities;
     use archivist_storage::control::{AuthorizationEpoch, ControlReadStore, ControlRecord};
     use archivist_storage::error::{StorageError, StorageErrorKind};
@@ -348,7 +352,7 @@ mod tests {
     use tokio::net::TcpStream;
 
     const TENANT_A: &str = "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b";
-    const KEY_A: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const AUTHORITY_SEED: [u8; 32] = [0x01; 32];
 
     // ------------------------------------------------------------------
     // Mock stores: nothing in this surface calls them, so every method
@@ -454,7 +458,11 @@ mod tests {
     }
 
     fn test_trust() -> TrustConfig {
-        TrustConfig::from_roots(vec![TenantTrustRoot::new(TENANT_A, KEY_A).unwrap()]).unwrap()
+        let authority = Ed25519PublicKey::from_raw(ed25519::public_key_from_seed(&AUTHORITY_SEED));
+        TrustConfig::from_roots(vec![
+            TenantTrustRoot::new(TENANT_A, &authority.to_hex()).unwrap(),
+        ])
+        .unwrap()
     }
 
     fn test_server(drain_seconds: u64) -> ArchivistServer<MockRawStore, MockControlStore> {
@@ -534,13 +542,17 @@ mod tests {
         let (_trigger, signal) = shutdown_channel();
         let bound = test_server(5).bind().unwrap();
         let address = bound.local_addr();
-        // Drive evidence through the shared state, exactly as the trust
-        // slice will.
-        assert!(
-            bound
-                .state()
-                .record_trust_evidence(&TENANT_A.parse().unwrap())
-        );
+        // Drive evidence through a signed control-record read, exactly as
+        // the trust refresh path does. The raw writer is never consulted.
+        let tenant = TENANT_A.parse().unwrap();
+        bound
+            .state()
+            .record_verified_control_read(
+                &tenant,
+                &signed_test_control_record(&tenant, &AUTHORITY_SEED),
+                |_| None,
+            )
+            .expect("the signed control read verifies");
         let handle = tokio::spawn(async move { bound.serve(signal.wait()).await });
         tokio::task::yield_now().await;
 

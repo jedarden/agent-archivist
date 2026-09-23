@@ -27,11 +27,11 @@
 //! the control-record refresh records, never probed — a readiness check
 //! that wrote a probe object would be a durable server-side write with
 //! no caller, and there is no such thing here. The producer of the
-//! evidence — the control-record refresh that verifies records through
-//! the tenant authority keys of [`crate::trust::TrustConfig`] — arrives
-//! with the trust verification slice; until then a replica starts
-//! not-ready and fails closed, which is the honest state for a replica
-//! that has proven nothing yet.
+//! evidence is [`ServerState::record_verified_control_read`]: it accepts
+//! only bytes returned by the control-read boundary after the
+//! tenant-authority signature has been verified. Until that happens a
+//! replica starts not-ready and fails closed, which is the honest state
+//! for a replica that has proven nothing yet.
 //!
 //! # Admission
 //!
@@ -51,7 +51,9 @@ use std::fmt;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use archivist_protocol::vocabulary::TenantId;
+use archivist_auth::authority::{AuthorityChainError, PinnedAuthorityRoot, verify_control_record};
+use archivist_protocol::vocabulary::{Ed25519PublicKey, KeyId, TenantId};
+use archivist_storage::control::ControlRecord;
 use archivist_storage::ingest::IngestStorage;
 
 use crate::config::ServerConfig;
@@ -140,7 +142,7 @@ impl ReadinessTracker {
     /// # Panics
     /// Only if the readiness ledger is poisoned — a concurrent panic
     /// while holding it, which is itself a bug.
-    pub fn record_trust_evidence(&self, tenant: &TenantId) -> bool {
+    fn record_evidence(&self, tenant: &TenantId) -> bool {
         let mut tenants = self.tenants.write().expect("readiness ledger poisoned");
         match tenants.iter_mut().find(|(known, _)| known == tenant) {
             Some((_, evidence)) => {
@@ -161,7 +163,8 @@ impl ReadinessTracker {
         let tenants = self.tenants.read().expect("readiness ledger poisoned");
         tenants.iter().any(|(known, evidence)| {
             known == tenant
-                && evidence.is_some_and(|at| now.duration_since(at) <= TRUST_EVIDENCE_WINDOW)
+                && evidence
+                    .is_some_and(|at| now.saturating_duration_since(at) < TRUST_EVIDENCE_WINDOW)
         })
     }
 
@@ -177,7 +180,7 @@ impl ReadinessTracker {
         tenants
             .iter()
             .filter_map(|(_, evidence)| evidence.as_ref())
-            .map(|at| now.duration_since(*at))
+            .map(|at| now.saturating_duration_since(*at))
             .min()
     }
 
@@ -195,7 +198,9 @@ impl ReadinessTracker {
         let mut any_absent = false;
         for (_, evidence) in tenants.iter() {
             match evidence {
-                Some(at) if now.duration_since(*at) <= TRUST_EVIDENCE_WINDOW => tenants_ready += 1,
+                Some(at) if now.saturating_duration_since(*at) < TRUST_EVIDENCE_WINDOW => {
+                    tenants_ready += 1;
+                }
                 // Stale evidence is only distinguishable from absent when
                 // some tenant is not ready at all; the reason class below
                 // derives staleness by elimination, so it is not recorded.
@@ -287,11 +292,45 @@ impl<W, C> ServerState<W, C> {
         &self.metrics
     }
 
-    /// Record one successful trust-record read for a configured tenant.
+    /// Record one successful, signed control-record read for a configured
+    /// tenant.
     ///
-    /// Returns `false` for a tenant outside the trust configuration.
-    pub fn record_trust_evidence(&self, tenant: &TenantId) -> bool {
-        self.readiness.record_trust_evidence(tenant)
+    /// The record must be the byte-exact value returned by the control-read
+    /// store. Its tenant-authority signature is checked against this
+    /// replica's pinned root before the freshness lease is updated. The
+    /// optional fetch resolves authority-rotation links by their derived
+    /// key, allowing the same verifier to accept a successor authority
+    /// during its valid chain window. A failed verification never changes
+    /// readiness.
+    ///
+    /// The fetch closure is deliberately synchronous and storage-agnostic:
+    /// callers perform any asynchronous control reads before passing the
+    /// immutable bytes here. No raw-writer capability is consulted, and no
+    /// probe object is written.
+    ///
+    /// # Errors
+    /// [`AuthorityChainError::RecordDisagreement`] when `tenant` is not
+    /// configured, or the corresponding closed authority-verification
+    /// error for an invalid record, signer, or chain.
+    pub fn record_verified_control_read(
+        &self,
+        tenant: &TenantId,
+        record: &ControlRecord,
+        fetch_authority_rotation: impl FnMut(&KeyId) -> Option<Vec<u8>>,
+    ) -> Result<(), AuthorityChainError> {
+        let root = self
+            .trust
+            .root_for(tenant)
+            .ok_or(AuthorityChainError::RecordDisagreement)?;
+        let public_key = Ed25519PublicKey::parse(root.authority().as_str())
+            .map_err(|_| AuthorityChainError::MalformedRecord)?;
+        let pinned = PinnedAuthorityRoot::new(tenant.clone(), public_key);
+        verify_control_record(&pinned, record.envelope(), fetch_authority_rotation)?;
+        if self.readiness.record_evidence(tenant) {
+            Ok(())
+        } else {
+            Err(AuthorityChainError::RecordDisagreement)
+        }
     }
 
     /// The age of the newest successful trust-record read, in whole
@@ -311,6 +350,41 @@ impl<W, C> fmt::Debug for ServerState<W, C> {
             .field("trust", &self.trust)
             .finish_non_exhaustive()
     }
+}
+
+#[cfg(test)]
+/// Build the smallest signed control record accepted by the authority
+/// verifier for server unit tests. It models the byte-exact object a
+/// control-read store returns; the readiness path still performs the real
+/// signature check.
+pub(crate) fn signed_test_control_record(tenant: &TenantId, seed: &[u8; 32]) -> ControlRecord {
+    use archivist_auth::ed25519;
+    use archivist_protocol::json::{Object, Value};
+    use archivist_protocol::vocabulary::{Ed25519Signature, Timestamp};
+    use archivist_storage::metadata::Observation;
+
+    let public = Ed25519PublicKey::from_raw(ed25519::public_key_from_seed(seed));
+    let authority_key_id = KeyId::from_public_key(&public);
+    let mut object = Object::new();
+    object.set("schema", Value::Text("archivist.control/v1".to_owned()));
+    object.set("record_type", Value::Text("receipt-key".to_owned()));
+    object.set("record_kind", Value::Text("immutable".to_owned()));
+    object.set("tenant_id", Value::Text(tenant.as_str().to_owned()));
+    object.set("signed_at", Value::Text("2026-09-23T00:00:00Z".to_owned()));
+    object.set("authority_key_id", Value::Text(authority_key_id.to_hex()));
+    let signature = ed25519::sign(seed, &Value::Object(object.clone()).canonical_bytes());
+    object.set(
+        "authority_signature",
+        Value::Text(Ed25519Signature::from_raw(*signature.as_bytes()).to_hex()),
+    );
+    ControlRecord::new(
+        Value::Object(object).canonical_bytes(),
+        Observation::new(
+            None,
+            None,
+            Timestamp::parse("2026-09-23T00:00:00Z").expect("test timestamp is valid"),
+        ),
+    )
 }
 
 #[cfg(test)]
@@ -353,7 +427,7 @@ mod tests {
     fn evidence_makes_one_tenant_ready_not_both() {
         let tracker = ReadinessTracker::new(&two_tenant_config());
         let tenant_a: TenantId = TENANT_A.parse().unwrap();
-        assert!(tracker.record_trust_evidence(&tenant_a));
+        assert!(tracker.record_evidence(&tenant_a));
         let snapshot = tracker.evaluate(Instant::now());
         assert!(!snapshot.ready);
         assert_eq!(snapshot.tenants_ready, 1);
@@ -365,8 +439,8 @@ mod tests {
     #[test]
     fn all_fresh_evidence_is_ready() {
         let tracker = ReadinessTracker::new(&two_tenant_config());
-        tracker.record_trust_evidence(&TENANT_A.parse().unwrap());
-        tracker.record_trust_evidence(&TENANT_B.parse().unwrap());
+        tracker.record_evidence(&TENANT_A.parse().unwrap());
+        tracker.record_evidence(&TENANT_B.parse().unwrap());
         let snapshot = tracker.evaluate(Instant::now());
         assert!(snapshot.ready);
         assert_eq!(snapshot.tenants_ready, 2);
@@ -378,12 +452,12 @@ mod tests {
         let tracker = ReadinessTracker::new(&two_tenant_config());
         // The provable freshness interval is anchored to instants captured
         // around the recording: every evidence instant lies in
-        // `[before, after]`, so `before + WINDOW` proves fresh (`<=`) and
-        // `after + WINDOW + 1ns` proves expired — expiry lands "immediately
-        // past the window" within that capture gap.
+        // `[before, after]`, so `before + WINDOW` proves fresh and
+        // `after + WINDOW + 1ns` proves expired — expiry lands
+        // immediately at the 60-second boundary.
         let before = Instant::now();
-        tracker.record_trust_evidence(&TENANT_A.parse().unwrap());
-        tracker.record_trust_evidence(&TENANT_B.parse().unwrap());
+        tracker.record_evidence(&TENANT_A.parse().unwrap());
+        tracker.record_evidence(&TENANT_B.parse().unwrap());
         let after = Instant::now();
 
         assert!(tracker.evaluate(before + TRUST_EVIDENCE_WINDOW).ready);
@@ -397,22 +471,23 @@ mod tests {
     #[test]
     fn one_stale_tenant_is_not_ready_but_counted() {
         let tracker = ReadinessTracker::new(&two_tenant_config());
-        tracker.record_trust_evidence(&TENANT_A.parse().unwrap());
+        tracker.record_evidence(&TENANT_A.parse().unwrap());
         // A real gap between the two recordings (coarse clocks can return
         // the same instant for adjacent calls) so the evaluation instant
         // below is unambiguously past B's boundary while inside A's.
         std::thread::sleep(Duration::from_millis(2));
-        tracker.record_trust_evidence(&TENANT_B.parse().unwrap());
+        tracker.record_evidence(&TENANT_B.parse().unwrap());
         std::thread::sleep(Duration::from_millis(2));
         let a_rerecorded = Instant::now();
-        tracker.record_trust_evidence(&TENANT_A.parse().unwrap());
+        tracker.record_evidence(&TENANT_A.parse().unwrap());
 
-        // Evaluate exactly one window after A's re-recording: A's evidence
-        // is at most one window old (fresh — `<=`), and B's is a whole
-        // recording gap older than A's, so it is past its window (stale).
+        // Evaluate just inside one window after A's re-recording: A's
+        // evidence is fresh, and B's is a whole recording gap older than
+        // A's, so it is past its window (stale).
         // Both facts follow from the captured instant, with no assumption
         // about scheduling delay.
-        let snapshot = tracker.evaluate(a_rerecorded + TRUST_EVIDENCE_WINDOW);
+        let snapshot =
+            tracker.evaluate(a_rerecorded + TRUST_EVIDENCE_WINDOW - Duration::from_nanos(1));
         assert!(!snapshot.ready);
         assert_eq!(snapshot.tenants_ready, 1);
         assert_eq!(snapshot.reason, Some(NotReadyReason::TrustEvidenceStale));
@@ -422,7 +497,7 @@ mod tests {
     fn unknown_tenants_cannot_grow_the_ledger() {
         let tracker = ReadinessTracker::new(&two_tenant_config());
         let stranger: TenantId = "99999999-9999-4999-8999-999999999999".parse().unwrap();
-        assert!(!tracker.record_trust_evidence(&stranger));
+        assert!(!tracker.record_evidence(&stranger));
         assert!(!tracker.has_fresh_evidence(&stranger, Instant::now()));
         assert_eq!(tracker.evaluate(Instant::now()).tenants_configured, 2);
     }
@@ -431,9 +506,9 @@ mod tests {
     fn the_newest_evidence_age_is_the_minimum_across_tenants() {
         let tracker = ReadinessTracker::new(&two_tenant_config());
         assert!(tracker.newest_evidence_age(Instant::now()).is_none());
-        tracker.record_trust_evidence(&TENANT_A.parse().unwrap());
-        tracker.record_trust_evidence(&TENANT_B.parse().unwrap());
-        tracker.record_trust_evidence(&TENANT_A.parse().unwrap());
+        tracker.record_evidence(&TENANT_A.parse().unwrap());
+        tracker.record_evidence(&TENANT_B.parse().unwrap());
+        tracker.record_evidence(&TENANT_A.parse().unwrap());
         let age = tracker.newest_evidence_age(Instant::now()).unwrap();
         // The newest read (tenant A's second one) is within test-execution
         // noise of now.
