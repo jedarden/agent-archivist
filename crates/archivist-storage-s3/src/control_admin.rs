@@ -25,12 +25,12 @@
 //!   record registry (`tools/control-records.toml`) and the envelope's
 //!   object-key patterns pin (plan Section 7.5, ID-008). A record whose
 //!   members do not carry their record family's grammar fails closed before
-//!   any request is issued. The six derivable layouts include the
+//!   any request is issued. The seven derivable layouts include the
 //!   authority-rotation link's predecessor-addressed key — the chain
 //!   history appends precisely because the retiring half's own ID is the
 //!   address an immutable write can never repeat at.
 //! - **Two write classes.** An immutable family (`revocation`, `rotation`,
-//!   `receipt-key`, `authority-rotation`) is written once at its derived
+//!   `receipt-key`, `authority-rotation`, `retention`) is written once at its derived
 //!   key: a byte-identical re-put is an idempotent success, an incompatible
 //!   object at the key is an integrity conflict (`EC-06`). A
 //!   current-pointer family (`linked-client`, `delegation`) is replaced
@@ -40,7 +40,7 @@
 //! - **One tenant, one prefix.** The configuration pins the tenant whose
 //!   control prefix the administration credential provisions, and
 //!   [`permits_key`](crate::config::ControlAdminConfig::permits_key) is the
-//!   raw-key model of that scope: the six control
+//!   raw-key model of that scope: the seven control
 //!   layouts under `tenants/<tenant>/v1/control/`, and nothing else. Every
 //!   non-control prefix — raw, catalog, derived, tombstone, legal-hold,
 //!   another tenant's control prefix — is denied. The deployment's backend
@@ -48,12 +48,13 @@
 //!   (read-write below the tenant control prefix, deny everything else),
 //!   and the compatibility-suite profiles prove it on live backends.
 //! - **The authority's signed publications route here.** The Phase 3
-//!   administrator act composes with the store at exactly two typed
+//!   administrator act composes with the store at exactly three typed
 //!   entries: [`S3ControlAdminStore::put_link_approval`] carries an
 //!   approved link request's signed envelope onto the current-pointer
-//!   class, and [`S3ControlAdminStore::put_revocation`] carries a signed
-//!   revocation onto the immutable class. The signing surface
-//!   (`archivist-auth`) and this store meet in those two methods and
+//!   class, while [`S3ControlAdminStore::put_revocation`] and
+//!   [`S3ControlAdminStore::put_retention`] carry signed immutable records.
+//!   The signing surface
+//!   (`archivist-auth`) and this store meet in those three methods and
 //!   nowhere else — the publication value already binds the envelope to
 //!   the object key the authority derived, the routing re-makes that key
 //!   through [`ControlObjectKey::parse`] as a pre-flight (family and
@@ -86,10 +87,11 @@ use std::future::Future;
 use std::str::FromStr;
 
 use archivist_auth::link::ClientLinkPublication;
+use archivist_auth::retention::RetentionPublication;
 use archivist_auth::revocation::RevocationPublication;
 use archivist_protocol::json::{self, Object, Value};
 use archivist_protocol::vocabulary::{
-    ClientId, Ed25519Signature, GrammarError, KeyId, TenantId, Timestamp,
+    ClientId, Ed25519Signature, GrammarError, KeyId, OccurrenceId, TenantId, Timestamp,
 };
 use archivist_storage::control::{
     AdminControlRecord, AuthorizationEpoch, ControlAdminStore, ControlRecordKind, ControlWriteClass,
@@ -129,6 +131,9 @@ const DETAIL_EPOCH: &str = "authorization epoch is missing or outside its bounds
 const DETAIL_SELF_DELEGATION: &str = "relay and origin name the same client";
 const DETAIL_RECEIPT_EPOCH: &str = "receipt-key record carries no authorization epoch";
 const DETAIL_AUTHORITY_EPOCH: &str = "authority-rotation record carries no authorization epoch";
+const DETAIL_RETENTION_ACTION: &str = "retention action is not a known action";
+const DETAIL_RETENTION_REASON: &str = "retention reason class is not a known class";
+const DETAIL_RETENTION_AUDIT: &str = "retention audit identity is malformed";
 const DETAIL_IMMUTABLE_CONFLICT: &str = "stored record differs from the presented immutable record";
 const DETAIL_POINTER_CONFLICT: &str = "stored pointer is not a valid record of its family";
 const DETAIL_SCOPE: &str = "record tenant is outside this administration identity";
@@ -136,7 +141,7 @@ const DETAIL_PUBLICATION_KEY: &str =
     "publication names an object key outside the derived control layouts";
 const DETAIL_PUBLICATION_FAMILY: &str = "publication family does not match this write method";
 
-/// A server-derived control object key: one of the six canonical layouts
+/// A server-derived control object key: one of the seven canonical layouts
 /// below `tenants/<tenant>/v1/control/` (plan Section 7.5; the control
 /// record registry's `object_key` entries).
 ///
@@ -233,13 +238,28 @@ impl ControlObjectKey {
         }
     }
 
-    /// Parse one object key against the six canonical layouts, failing
+    /// Derive the retention-event key:
+    /// `tenants/<tenant>/v1/control/retention/<occurrence>/<epoch>.json`.
+    #[must_use]
+    pub fn retention(
+        tenant: &TenantId,
+        occurrence: &OccurrenceId,
+        epoch: AuthorizationEpoch,
+    ) -> Self {
+        Self {
+            text: format!("tenants/{tenant}/v1/control/retention/{occurrence}/{epoch}.json"),
+            kind: ControlRecordKind::Retention,
+            tenant: tenant.clone(),
+        }
+    }
+
+    /// Parse one object key against the seven canonical layouts, failing
     /// closed on anything else — every non-control prefix, a malformed
     /// identifier segment, a non-canonical epoch, and a wrong family shape
     /// all refuse rather than normalize.
     ///
     /// # Errors
-    /// [`ControlKeyError::NotCanonical`] for any text outside the six
+    /// [`ControlKeyError::NotCanonical`] for any text outside the seven
     /// layouts.
     pub fn parse(text: &str) -> Result<Self, ControlKeyError> {
         let invalid = || ControlKeyError::NotCanonical;
@@ -298,6 +318,12 @@ impl ControlObjectKey {
                 ends_here(segments.next())?;
                 Ok(Self::authority_rotation(&tenant, &previous_key))
             }
+            "retention" => {
+                let occurrence = occurrence_segment(segments.next())?;
+                let epoch = epoch_segment(segments.next())?;
+                ends_here(segments.next())?;
+                Ok(Self::retention(&tenant, &occurrence, epoch))
+            }
             _ => Err(invalid()),
         }
     }
@@ -355,6 +381,14 @@ fn key_segment(segment: Option<&str>) -> Result<KeyId, ControlKeyError> {
     KeyId::parse(raw).map_err(|_| ControlKeyError::NotCanonical)
 }
 
+/// Parse one bare occurrence identity segment.
+fn occurrence_segment(segment: Option<&str>) -> Result<OccurrenceId, ControlKeyError> {
+    let raw = segment
+        .filter(|body| !body.is_empty())
+        .ok_or(ControlKeyError::NotCanonical)?;
+    OccurrenceId::parse(raw).map_err(|_| ControlKeyError::NotCanonical)
+}
+
 /// Strip the required `.json` suffix from one key segment.
 fn json_named_segment(segment: Option<&str>) -> Result<&str, ControlKeyError> {
     segment
@@ -391,7 +425,7 @@ fn ends_here(next: Option<&str>) -> Result<(), ControlKeyError> {
 
 /// The validated view of one control envelope: the family that claims it,
 /// the tenant it belongs to, the key its own members derive, and — for the
-/// four families whose identity or pointer the epoch is — the signed epoch.
+/// five families whose identity or pointer the epoch is — the signed epoch.
 ///
 /// This is the store's addressing decision and nothing more: it says where
 /// a record lives and how a replacement compares, never that the record is
@@ -425,7 +459,7 @@ impl ValidatedEnvelope {
 /// namespace; `record_type` and `record_kind` present, canonical, and in
 /// the registry's agreement (the kind the envelope declares is the class
 /// its family pins); `tenant_id`; the family's key members; the epoch rules
-/// (required and bounded for the four epoch-bearing families, absent for
+/// (required and bounded for the five epoch-bearing families, absent for
 /// the two key-addressed families, receipt-key and authority-rotation); and
 /// the wrapper's `signed_at`, `authority_key_id`, and `authority_signature`
 /// shapes. Payload members
@@ -550,6 +584,15 @@ pub(crate) fn validate_envelope(bytes: &[u8]) -> Result<ValidatedEnvelope, Stora
                 None,
             )
         }
+        ControlRecordKind::Retention => {
+            let occurrence = occurrence_member(&object)?;
+            let epoch = epoch_member(&object)?;
+            retention_members(&object)?;
+            (
+                ControlObjectKey::retention(&tenant, &occurrence, epoch),
+                Some(epoch),
+            )
+        }
     };
 
     Ok(ValidatedEnvelope {
@@ -588,6 +631,56 @@ fn key_member(object: &Object, name: &str) -> Result<KeyId, StorageError> {
     text_member(object, name)
         .and_then(|text| KeyId::parse(text).ok())
         .ok_or_else(|| StorageError::new(StorageErrorKind::MalformedInput, DETAIL_INCOMPLETE))
+}
+
+/// One required occurrence identity.
+fn occurrence_member(object: &Object) -> Result<OccurrenceId, StorageError> {
+    text_member(object, "occurrence_id")
+        .and_then(|text| OccurrenceId::parse(text).ok())
+        .ok_or_else(|| StorageError::new(StorageErrorKind::MalformedInput, DETAIL_INCOMPLETE))
+}
+
+/// Validate the retention record's closed action/reason vocabulary and its
+/// bounded audit principal before the administration credential is used.
+fn retention_members(object: &Object) -> Result<(), StorageError> {
+    match text_member(object, "retention_action") {
+        Some("tombstone" | "legal-hold" | "release") => {}
+        _ => {
+            return Err(StorageError::new(
+                StorageErrorKind::MalformedInput,
+                DETAIL_RETENTION_ACTION,
+            ));
+        }
+    }
+    match text_member(object, "reason_class") {
+        Some("legal-hold" | "tenant-policy" | "operator-request" | "privacy-request") => {}
+        _ => {
+            return Err(StorageError::new(
+                StorageErrorKind::MalformedInput,
+                DETAIL_RETENTION_REASON,
+            ));
+        }
+    }
+    let Some(audit_identity) = text_member(object, "audit_identity") else {
+        return Err(StorageError::new(
+            StorageErrorKind::MalformedInput,
+            DETAIL_RETENTION_AUDIT,
+        ));
+    };
+    let bytes = audit_identity.as_bytes();
+    if bytes.is_empty()
+        || bytes.len() > 128
+        || !bytes[0].is_ascii_alphanumeric()
+        || !bytes[1..]
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || b".@_:/-".contains(byte))
+    {
+        return Err(StorageError::new(
+            StorageErrorKind::MalformedInput,
+            DETAIL_RETENTION_AUDIT,
+        ));
+    }
+    Ok(())
 }
 
 /// The signed authorization epoch: required, integral, and inside the
@@ -821,7 +914,7 @@ impl<B: ControlAdminBackend + Sync> ControlAdminStore for S3ControlAdminStore<B>
 // -----------------------------------------------------------------------
 impl<B: ControlAdminBackend + Sync> S3ControlAdminStore<B> {
     /// Pre-flight one publication's declared object key against the
-    /// family the calling method routes: the key must be one of the six
+    /// family the calling method routes: the key must be one of the seven
     /// derived control layouts, of exactly that family, and inside the
     /// one provisioned tenant. The store's own write rules govern the put
     /// that follows — this check refuses a misaddressed publication
@@ -911,6 +1004,26 @@ impl<B: ControlAdminBackend + Sync> S3ControlAdminStore<B> {
         ))
         .await
     }
+
+    /// Route one tenant-authority-signed retention decision onto the control
+    /// plane: a tombstone, legal hold, or release is immutable evidence at
+    /// the occurrence-and-epoch address derived by the signer.
+    ///
+    /// Retention publications are accepted only by this offline control
+    /// writer. The ingestion/raw-write interfaces have no corresponding
+    /// method, so an uploader cannot create, replace, or remove retention
+    /// state.
+    pub async fn put_retention(
+        &self,
+        publication: &RetentionPublication,
+    ) -> Result<(), StorageError> {
+        self.route_publication(publication.object_key(), ControlRecordKind::Retention)?;
+        self.put_immutable_record(&AdminControlRecord::new(
+            ControlRecordKind::Retention,
+            publication.envelope().to_vec(),
+        ))
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -919,7 +1032,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use archivist_protocol::json::{Object, Value};
-    use archivist_protocol::vocabulary::Ed25519PublicKey;
+    use archivist_protocol::vocabulary::{Ed25519PublicKey, OccurrenceId};
     use archivist_storage::control::{ControlRecordKind, ControlWriteClass};
 
     use super::{
@@ -936,6 +1049,7 @@ mod tests {
     const TENANT: &str = "1a2b3c4d-5e6f-4a1b-9c2d-3e4f5a6b7c8d";
     const CLIENT: &str = "0f1e2d3c-4b5a-4968-8776-5544332211ff";
     const RELAY: &str = "2b1a0f9e-8d7c-4e6b-9a5f-1e2d3c4b5a69";
+    const OCCURRENCE: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     const OTHER_TENANT: &str = "00000000-1111-4222-8333-444444444444";
     const SIGNED_AT: &str = "2026-09-11T00:00:00Z";
     const ADMIN_REF: &str = "file:/etc/archivist/storage/control-admin-credentials";
@@ -951,6 +1065,10 @@ mod tests {
 
     fn relay() -> archivist_protocol::vocabulary::ClientId {
         RELAY.parse().unwrap()
+    }
+
+    fn occurrence() -> OccurrenceId {
+        OCCURRENCE.parse().unwrap()
     }
 
     fn signature_hex() -> String {
@@ -1096,6 +1214,18 @@ mod tests {
         envelope(&members)
     }
 
+    fn retention_envelope(epoch: i64) -> Vec<u8> {
+        let mut members = wrapper("retention", "immutable");
+        members.extend([
+            ("occurrence_id", text(OCCURRENCE)),
+            ("authorization_epoch", Value::Int(epoch)),
+            ("retention_action", text("tombstone")),
+            ("reason_class", text("operator-request")),
+            ("audit_identity", text("retention-admin")),
+        ]);
+        envelope(&members)
+    }
+
     /// The in-memory backend: an object map plus the prefix denial the
     /// deployment's administration-credential policy states. The check is
     /// the policy's own shape — a literal string-prefix rule over the key,
@@ -1215,13 +1345,6 @@ mod tests {
         result.expect_err("this write must fail").kind()
     }
 
-    /// Registry families whose Rust derivation has not landed — each sits
-    /// here only while its implementing slice is open work, and landing the
-    /// derivation removes the name. Anything the registry ships that is in
-    /// neither this list nor the derivation fails the proof below, so a new
-    /// registry family cannot drift past the Rust side silently.
-    const PENDING_DERIVATIONS: &[&str] = &["retention"];
-
     #[test]
     #[allow(clippy::too_many_lines)]
     fn derived_keys_agree_with_the_registry_layouts() {
@@ -1240,18 +1363,12 @@ mod tests {
             .unwrap_or_else(|e| panic!("the control record registry must parse: {e}"));
 
         // The derivation implements exactly the registry's record set —
-        // no family without a Rust layout, no layout without a family —
-        // minus the families whose derivation is still pending its own
-        // implementing slice.
+        // no family without a Rust layout, no layout without a family.
         // (The registry's append-only rule lands a new family's schema,
         // envelope entry, enum token, object-key pattern, and this
         // derivation in one change; this assertion is the Rust side of
         // that rule.)
-        let families: Vec<&str> = registry
-            .keys()
-            .map(String::as_str)
-            .filter(|family| !PENDING_DERIVATIONS.contains(family))
-            .collect();
+        let families: Vec<&str> = registry.keys().map(String::as_str).collect();
         assert_eq!(
             families,
             [
@@ -1259,6 +1376,7 @@ mod tests {
                 "delegation",
                 "linked-client",
                 "receipt-key",
+                "retention",
                 "revocation",
                 "rotation"
             ],
@@ -1278,15 +1396,13 @@ mod tests {
             ("client_id", CLIENT.to_owned()),
             ("relay_client_id", RELAY.to_owned()),
             ("origin_client_id", CLIENT.to_owned()),
+            ("occurrence_id", OCCURRENCE.to_owned()),
             ("authorization_epoch", epoch.get().to_string()),
             ("key_id", key_id_of(&[0x3c; 32])),
             ("previous_key_id", key_id_of(&[0xab; 32])),
         ]);
 
         for (family, entry) in &registry {
-            if PENDING_DERIVATIONS.contains(&family.as_str()) {
-                continue;
-            }
             let expected = entry
                 .substitute(family, &golden)
                 .unwrap_or_else(|e| panic!("{family}: {e}"));
@@ -1311,6 +1427,10 @@ mod tests {
                 "revocation" => (
                     ControlRecordKind::Revocation,
                     ControlObjectKey::revocation(&tenant, &client, epoch),
+                ),
+                "retention" => (
+                    ControlRecordKind::Retention,
+                    ControlObjectKey::retention(&tenant, &occurrence(), epoch),
                 ),
                 "rotation" => (
                     ControlRecordKind::Rotation,
@@ -1352,6 +1472,7 @@ mod tests {
                 "linked-client" => linked_client_envelope(3),
                 "receipt-key" => receipt_key_envelope(),
                 "revocation" => revocation_envelope(3),
+                "retention" => retention_envelope(3),
                 "rotation" => rotation_envelope(3),
                 _ => unreachable!(),
             };
@@ -1524,7 +1645,7 @@ mod tests {
     }
 
     #[test]
-    fn key_parsing_fails_closed_outside_the_six_layouts() {
+    fn key_parsing_fails_closed_outside_the_seven_layouts() {
         let digest = "0f".repeat(32);
         let epoch_ceiling = "999999999999999999"; // the 18-digit bound
         for accepted in [
@@ -1534,6 +1655,7 @@ mod tests {
             format!("tenants/{TENANT}/v1/control/rotations/{CLIENT}/1.json"),
             format!("tenants/{TENANT}/v1/control/receipt-keys/{digest}.json"),
             format!("tenants/{TENANT}/v1/control/authority-rotations/{digest}.json"),
+            format!("tenants/{TENANT}/v1/control/retention/{OCCURRENCE}/1.json"),
         ] {
             assert!(
                 ControlObjectKey::parse(&accepted).is_ok(),
@@ -1560,6 +1682,10 @@ mod tests {
             // without the `.json` suffix never parses.
             format!("tenants/{TENANT}/v1/control/authority-rotations/1.json"),
             format!("tenants/{TENANT}/v1/control/authority-rotations/{digest}"),
+            format!("tenants/{TENANT}/v1/control/retention/{OCCURRENCE}/0.json"),
+            format!("tenants/{TENANT}/v1/control/retention/{OCCURRENCE}/01.json"),
+            format!("tenants/{TENANT}/v1/control/retention/{OCCURRENCE}/x.json"),
+            format!("tenants/{TENANT}/v1/control/retention/{CLIENT}/1.json"),
             // An uppercase rendering is not canonical.
             format!("tenants/{TENANT}/v1/control/clients/{CLIENT}.json").to_uppercase(),
             // Over the key-length bound the envelope's key patterns pin:
@@ -1600,6 +1726,11 @@ mod tests {
             ControlObjectKey::rotation(&tenant, &client, AuthorizationEpoch::new(2).unwrap()),
             ControlObjectKey::receipt_key(&tenant, &digest),
             ControlObjectKey::authority_rotation(&tenant, &authority_root),
+            ControlObjectKey::retention(
+                &tenant,
+                &occurrence(),
+                AuthorizationEpoch::new(3).unwrap(),
+            ),
         ];
         for key in derived {
             assert!(config.permits_key(key.as_str()), "{}", key.as_str());
@@ -1673,6 +1804,15 @@ mod tests {
                 ControlObjectKey::authority_rotation(
                     &tenant,
                     &archivist_protocol::vocabulary::KeyId::parse(&key_id_of(&[0xab; 32])).unwrap(),
+                ),
+            ),
+            (
+                retention_envelope(3),
+                ControlRecordKind::Retention,
+                ControlObjectKey::retention(
+                    &tenant,
+                    &occurrence(),
+                    AuthorizationEpoch::new(3).unwrap(),
                 ),
             ),
         ] {
@@ -1766,6 +1906,27 @@ mod tests {
             text(CLIENT),
         ));
         assert_rejected(&without_member(&delegation_envelope(1), "origin_client_id"));
+        assert_rejected(&without_member(&retention_envelope(1), "occurrence_id"));
+        assert_rejected(&replace_member(
+            &retention_envelope(1),
+            "occurrence_id",
+            text("not-an-occurrence"),
+        ));
+        assert_rejected(&replace_member(
+            &retention_envelope(1),
+            "retention_action",
+            text("unknown-action"),
+        ));
+        assert_rejected(&replace_member(
+            &retention_envelope(1),
+            "reason_class",
+            text("unknown-reason"),
+        ));
+        assert_rejected(&replace_member(
+            &retention_envelope(1),
+            "audit_identity",
+            text(" bad identity"),
+        ));
 
         // Epoch rules: missing, zero, above the 18-digit ceiling, or a
         // key-addressed record (receipt-key, authority-rotation) carrying
@@ -1865,7 +2026,7 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines)]
     fn immutable_families_write_once_replay_idempotently_and_reject_incompatible_bytes() {
-        // The immutable write class is one rule over its four families
+        // The immutable write class is one rule over its five families
         // (plan Section 5; the trait's EC-06 contract): a fresh record
         // creates the object at its derived key, the byte-identical retry
         // of that same administrative write is already the object there —
@@ -1944,6 +2105,23 @@ mod tests {
                         &authority_rotation_envelope(),
                         "authority_signature",
                         text(&"33".repeat(64)),
+                    ),
+                ],
+            ),
+            (
+                ControlRecordKind::Retention,
+                format!("tenants/{TENANT}/v1/control/retention/{OCCURRENCE}/3.json"),
+                retention_envelope(3),
+                vec![
+                    replace_member(
+                        &retention_envelope(3),
+                        "retention_action",
+                        text("legal-hold"),
+                    ),
+                    replace_member(
+                        &retention_envelope(3),
+                        "audit_identity",
+                        text("other-admin"),
                     ),
                 ],
             ),
@@ -2486,6 +2664,9 @@ mod tests {
             super::DETAIL_SELF_DELEGATION,
             super::DETAIL_RECEIPT_EPOCH,
             super::DETAIL_AUTHORITY_EPOCH,
+            super::DETAIL_RETENTION_ACTION,
+            super::DETAIL_RETENTION_REASON,
+            super::DETAIL_RETENTION_AUDIT,
             super::DETAIL_IMMUTABLE_CONFLICT,
             super::DETAIL_POINTER_CONFLICT,
             super::DETAIL_SCOPE,
@@ -2498,7 +2679,7 @@ mod tests {
 }
 
 /// The Phase 3 routing proofs: the authority's signed publications
-/// (`archivist-auth`) carried through [`S3ControlAdminStore`]'s two typed
+/// (`archivist-auth`) carried through [`S3ControlAdminStore`]'s three typed
 /// entries, over a mock of the [`ControlAdminBackend`] seam whose policy
 /// is the deployment's own prefix rule. Real signed envelopes throughout —
 /// a deterministic authority half signs, a deterministic installation
@@ -2515,6 +2696,7 @@ mod publication_tests {
     use archivist_auth::link::{
         ClientLinkPublication, LinkRequest, RequestedScopes, ScopeOperation, approve_link_request,
     };
+    use archivist_auth::retention::{RetentionReasonClass, RetentionRecord, publish_tombstone};
     use archivist_auth::revocation::{
         LinkedClientPointer, RevocationPublication, RevocationRecord, publish_revocation,
     };
@@ -2534,6 +2716,7 @@ mod publication_tests {
     // same envelope.
     const TENANT: &str = "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b";
     const CLIENT: &str = "0f1e2d3c-4b5a-4968-8776-5544332211ff";
+    const OCCURRENCE: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     const AUTHORITY_SEED: [u8; 32] = [0x17; 32];
     const CLIENT_SEED: [u8; 32] = [0x2a; 32];
     const APPROVAL_INSTANT: &str = "2026-09-19T00:00:00Z";
@@ -2547,6 +2730,10 @@ mod publication_tests {
 
     fn client_id() -> ClientId {
         CLIENT.parse().expect("grammar")
+    }
+
+    fn occurrence_id() -> archivist_protocol::vocabulary::OccurrenceId {
+        OCCURRENCE.parse().expect("grammar")
     }
 
     fn instant() -> Timestamp {
@@ -2648,6 +2835,29 @@ mod publication_tests {
         ControlObjectKey::revocation(&tenant(), &client_id(), AuthorizationEpoch::new(1).unwrap())
             .as_str()
             .to_owned()
+    }
+
+    fn retention_key() -> String {
+        ControlObjectKey::retention(
+            &tenant(),
+            &occurrence_id(),
+            AuthorizationEpoch::new(1).unwrap(),
+        )
+        .as_str()
+        .to_owned()
+    }
+
+    fn tombstone() -> archivist_auth::retention::RetentionPublication {
+        publish_tombstone(
+            &AUTHORITY_SEED,
+            &tenant(),
+            &occurrence_id(),
+            1,
+            RetentionReasonClass::OperatorRequest,
+            "offline-admin",
+            &instant(),
+        )
+        .expect("the golden tombstone signs")
     }
 
     /// A no-dependency executor for futures that complete without pending
@@ -2851,6 +3061,19 @@ mod publication_tests {
             pointer.epoch(),
         )
         .expect("the stored revocation re-verifies from the pinned root");
+
+        // Retention is a third, immutable administrator route. It addresses
+        // an occurrence history rather than a client authorization epoch,
+        // and the raw/ingest credential never receives this method.
+        let marked = tombstone();
+        assert_eq!(marked.object_key(), retention_key());
+        block_on(store.put_retention(&marked)).expect("the tombstone routes");
+        assert_eq!(backend.puts(), 3);
+        block_on(store.put_retention(&marked)).expect("the tombstone replay is idempotent");
+        assert_eq!(backend.puts(), 3);
+        let stored_mark = backend.stored(marked.object_key()).expect("stored");
+        RetentionRecord::verify(&root(), &stored_mark, no_links, &occurrence_id(), 1)
+            .expect("the stored tombstone re-verifies from the pinned root");
     }
 
     #[test]
@@ -2965,6 +3188,7 @@ mod publication_tests {
         let store = S3ControlAdminStore::new(admin_config(), backend.clone());
         let approved = approval();
         let revoked = revocation_of(&pointer_of(approved.envelope()));
+        let marked = tombstone();
 
         assert_eq!(
             block_on(store.put_link_approval(&approved))
@@ -2975,6 +3199,12 @@ mod publication_tests {
         assert_eq!(
             block_on(store.put_revocation(&revoked))
                 .expect_err("control records are not an ingest credential's to write")
+                .kind(),
+            StorageErrorKind::ScopeViolation
+        );
+        assert_eq!(
+            block_on(store.put_retention(&marked))
+                .expect_err("retention is not an ingest credential's to write")
                 .kind(),
             StorageErrorKind::ScopeViolation
         );

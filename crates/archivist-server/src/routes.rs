@@ -1258,6 +1258,13 @@ mod tests {
         let address = serve(test_state()).await;
         let response = exchange(address, &get_request("/v1/ingest")).await;
         assert_eq!(response.status, 405);
+        let response = exchange(
+            address,
+            "DELETE /v1/ingest HTTP/1.1\r\nHost: test\r\nContent-Length: 0\r\n\
+             Connection: close\r\n\r\n",
+        )
+        .await;
+        assert_eq!(response.status, 405);
     }
 
     // ------------------------------------------------------------------
