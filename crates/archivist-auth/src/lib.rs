@@ -43,6 +43,17 @@
 //!   same authority chain, and the tenant/origin/harness/operation
 //!   conjunction decision whose authorized attempts present the origin,
 //!   never the relay.
+//! - [`request_verification`] — the per-attempt decision an ingestion
+//!   replica renders between admission and any storage write: parse and
+//!   frame the signed `ingest-attempt-v1` record, then digests,
+//!   freshness (the five-minute window and skew allowance), linkage,
+//!   signature, scope, and origin delegation, in that order, so an
+//!   altered, expired, unlinked, revoked, cross-tenant, or unauthorized
+//!   attempt never yields a value a caller could write under. The
+//!   decision is a pure function of the record, the received bytes'
+//!   digests, the verified control evidence, and the verifier's clock —
+//!   nothing in it touches storage, so the no-write acceptance holds
+//!   structurally rather than by caller discipline.
 //! - [`error`] — the failure taxonomy; every variant names a class and
 //!   carries no path, value, or key material.
 //!
@@ -74,10 +85,11 @@
 //! append-only trust view, and per-attempt evaluation — is
 //! [`revocation`], and origin/uploader delegation — the signed relay
 //! grant and the tenant/origin/harness/operation conjunction — is
-//! [`delegation`]. Per-attempt request signing, full linked-client
-//! records, rotation epochs, receipt signing keys, and
-//! receipt verification arrive with their owning deliverables on these
-//! same primitives.
+//! [`delegation`]. Per-attempt request signing is
+//! [`request_verification`] — the server side of the signed
+//! `ingest-attempt-v1` construction — and full linked-client records,
+//! rotation epochs, receipt signing keys, and receipt verification
+//! arrive with their owning deliverables on these same primitives.
 //!
 //! The workspace is dependency-free by policy: the curve and hash
 //! implementations here are owned, small, and pinned by RFC 8032 and FIPS
@@ -97,6 +109,7 @@ pub mod link;
 mod random;
 pub mod receipt;
 pub mod reference;
+pub mod request_verification;
 pub mod retention;
 pub mod revocation;
 mod sha512;
