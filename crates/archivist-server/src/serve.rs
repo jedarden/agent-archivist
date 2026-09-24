@@ -21,10 +21,22 @@
 //!    starts at the signal and is a hard bound on the drain alone, so a
 //!    stalled drain cannot hold the process past it. When the window
 //!    elapses the drain ends in [`ShutdownOutcome::DrainTimedOut`] and
-//!    the caller — the composition root — decides the exit; the
-//!    multipart-abort step that the plan appends to a timed-out drain
-//!    belongs to the slice that owns uploads, which will also move the
-//!    shutdown gauge into its `aborting` phase.
+//!    the caller — the composition root — decides the exit.
+//!
+//!    The run's last step is the plan's multipart-abort step ("abort
+//!    unfinished multipart uploads, and exit nonzero if an abort
+//!    fails"): after the drain, on either verdict, the gauge moves to
+//!    [`ShutdownPhase::Aborting`] and every session the run left
+//!    registered as abandoned is aborted against the raw writer
+//!    ([`archivist_storage::multipart::OpenUploads::abort_abandoned`]).
+//!    A failed abort ends the run in [`ShutdownOutcome::AbortsFailed`]
+//!    — the nonzero exit [`ShutdownOutcome::exit_code`] reports — and
+//!    the failed sessions stay registered so a later drain retries
+//!    them. What a forced termination orphans beyond this process's
+//!    reach — a backend session whose identifier never reached the
+//!    registry, one still owned by a writer finishing past the drain —
+//!    is the deployment's 24-hour incomplete-multipart lifecycle rule's
+//!    to reap (plan Section 7.7).
 //!
 //! Cancellation is a plain channel: [`shutdown_channel`] hands out one
 //! trigger and one signal, the composition root wires the trigger to
@@ -39,7 +51,6 @@ use std::net::TcpListener as StdListener;
 use std::sync::Arc;
 use std::time::Duration;
 
-use archivist_storage::commit::ConditionalCreateStore;
 use archivist_storage::control::ControlReadStore;
 use archivist_storage::ingest::IngestStorage;
 use archivist_storage::raw_write::RawWriteStore;
@@ -93,6 +104,31 @@ pub enum ShutdownOutcome {
     /// stopped waiting. Callers exiting the process treat this as the
     /// nonzero exit the plan reserves for an unfinished shutdown.
     DrainTimedOut,
+    /// The multipart-abort step ran and at least one abandoned session
+    /// could not be aborted — the nonzero exit the plan pins to a
+    /// failed abort. The failed sessions stay registered, so a later
+    /// drain retries them.
+    AbortsFailed,
+}
+
+impl ShutdownOutcome {
+    /// The exit code the plan pins to this outcome: a drained run exits
+    /// zero, and a drain that outlived its window or an abort that
+    /// failed exits nonzero ("stop accepting requests, drain for 30
+    /// seconds, then abort unfinished multipart uploads and exit
+    /// nonzero if an abort fails" — plan Phase 4).
+    ///
+    /// An abort failure outranks a timed-out drain in the reported
+    /// outcome — the abort is the run's last step and the narrower fact
+    /// — but both are nonzero, so a caller acting on the code alone
+    /// acts identically.
+    #[must_use]
+    pub const fn exit_code(self) -> i32 {
+        match self {
+            Self::Drained => 0,
+            Self::DrainTimedOut | Self::AbortsFailed => 1,
+        }
+    }
 }
 
 /// One replica ready to bind: the validated parts, held.
@@ -104,7 +140,7 @@ pub struct ArchivistServer<W, C> {
 
 impl<W, C> ArchivistServer<W, C>
 where
-    W: RawWriteStore + ConditionalCreateStore + Send + Sync + 'static,
+    W: RawWriteStore + Send + Sync + 'static,
     C: ControlReadStore + Send + Sync + 'static,
 {
     /// Compose a replica from validated parts. No I/O, no allocation of
@@ -165,7 +201,7 @@ pub struct BoundServer<W, C> {
 
 impl<W, C> BoundServer<W, C>
 where
-    W: RawWriteStore + ConditionalCreateStore + Send + Sync + 'static,
+    W: RawWriteStore + Send + Sync + 'static,
     C: ControlReadStore + Send + Sync + 'static,
 {
     /// The address the replica is listening on — the configured
@@ -187,16 +223,25 @@ where
 
     /// Serve until the cancellation signal fires.
     ///
-    /// The run has two phases. Before the signal there is no bound: the
+    /// The run has three steps. Before the signal there is no bound: the
     /// replica serves for as long as its operator says so, however many
     /// drain windows that spans. When the shutdown future resolves,
     /// acceptance stops, the gauge moves to `draining`, and the
     /// remaining in-flight work has the configured drain window — a hard
-    /// bound on that phase alone.
+    /// bound on that phase alone. The run's last step, on either drain
+    /// verdict, is the multipart-abort step: the gauge moves to
+    /// `aborting`, every session registered as abandoned is aborted
+    /// against the raw writer, and a failed abort ends the run in
+    /// [`ShutdownOutcome::AbortsFailed`].
     ///
     /// # Errors
     /// An I/O failure handing the socket to the async runtime or in the
-    /// accept loop itself — the socket died underneath the server.
+    /// accept loop itself — the socket died underneath the server. That
+    /// failure ends the run before the shutdown sequence begins, and
+    /// its I/O error is the outcome the caller reports; whatever the
+    /// run leaves registered is abandoned with the process, and the
+    /// backend sessions it names are the deployment's 24-hour
+    /// incomplete-multipart lifecycle rule's to reap.
     pub async fn serve(
         self,
         shutdown: impl Future<Output = ()> + Send + 'static,
@@ -226,7 +271,7 @@ where
         let mut serving = Box::pin(
             axum::serve(
                 tokio::net::TcpListener::from_std(self.listener)?,
-                routes::router(state),
+                routes::router(Arc::clone(&state)),
             )
             .with_graceful_shutdown(cancellation)
             .into_future(),
@@ -247,7 +292,23 @@ where
         }
 
         // Phase 2 — the bounded drain.
-        bounded_drain(serving.as_mut(), drain).await
+        let drained = bounded_drain(serving.as_mut(), drain).await?;
+
+        // Phase 3 — the multipart-abort step, on either drain verdict:
+        // every session the run left registered as abandoned is aborted
+        // against the raw writer, and a failure is the run's outcome.
+        // Sessions still live at this point belong to writers that may
+        // still commit; the registry contract leaves them to their own
+        // terminal operation, and one whose cleanup abort fails there
+        // lands back here as abandoned — residue for a later drain and
+        // for the deployment's 24-hour lifecycle rule.
+        state.metrics().set_shutdown_phase(ShutdownPhase::Aborting);
+        let failures = state.uploads().abort_abandoned(state.storage().raw()).await;
+        if failures.is_empty() {
+            Ok(drained)
+        } else {
+            Ok(ShutdownOutcome::AbortsFailed)
+        }
     }
 }
 
@@ -333,22 +394,27 @@ pub async fn shutdown_on_signal() {
 mod tests {
     use super::{ArchivistServer, ShutdownOutcome, StartupError, shutdown_channel};
     use crate::config::ServerConfig;
-    use crate::state::signed_test_control_record;
+    use crate::metrics::ShutdownPhase;
+    use crate::state::{ServerState, signed_test_control_record};
     use crate::trust::{TenantTrustRoot, TrustConfig};
     use archivist_auth::ed25519;
+    use archivist_protocol::derivation::blob_digest;
     use archivist_protocol::object_key::BlobObjectKey;
     use archivist_protocol::vocabulary::{
-        ClientId, Ed25519PublicKey, KeyId, StorageOutcome, TenantId,
+        ClientId, Ed25519PublicKey, KeyId, StorageOutcome, StorageProfile, TenantId,
     };
     use archivist_storage::capability::StoreCapabilities;
-    use archivist_storage::commit::ConditionalCreateStore;
     use archivist_storage::control::{AuthorizationEpoch, ControlReadStore, ControlRecord};
     use archivist_storage::error::{StorageError, StorageErrorKind};
     use archivist_storage::ingest::IngestStorage;
+    use archivist_storage::metadata::ObjectTag;
+    use archivist_storage::multipart::{MultipartWriter, PART_BYTES};
     use archivist_storage::raw_write::{
         ManifestKey, MultipartUploadId, PartCommitment, PartNumber, RawWriteStore,
     };
     use std::io;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
@@ -410,11 +476,6 @@ mod tests {
             unavailable()
         }
     }
-
-    // The writer-only adoption: the trait's default answers every atomic
-    // primitive request with capability-unavailable, matching the mock's
-    // unprobed report.
-    impl ConditionalCreateStore for MockRawStore {}
 
     #[derive(Clone, Copy, Debug)]
     struct MockControlStore;
@@ -841,5 +902,270 @@ mod tests {
             left.is_empty(),
             "replica wrote durable local state: {left:?}"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // The multipart-abort step: the plan's third shutdown phase.
+    // ------------------------------------------------------------------
+
+    struct AbortProbeStore {
+        state: std::sync::Mutex<ProbeState>,
+        refuse_aborts: AtomicBool,
+    }
+
+    #[derive(Default)]
+    struct ProbeState {
+        begun: usize,
+        part_bytes: usize,
+        aborted: Vec<String>,
+        abort_attempts: usize,
+        committed: Vec<String>,
+    }
+
+    impl AbortProbeStore {
+        fn new() -> Self {
+            Self {
+                state: std::sync::Mutex::new(ProbeState::default()),
+                refuse_aborts: AtomicBool::new(false),
+            }
+        }
+
+        fn part_bytes(&self) -> usize {
+            self.state.lock().expect("probe store lock").part_bytes
+        }
+
+        fn aborted(&self) -> Vec<String> {
+            self.state.lock().expect("probe store lock").aborted.clone()
+        }
+
+        fn committed(&self) -> Vec<String> {
+            self.state
+                .lock()
+                .expect("probe store lock")
+                .committed
+                .clone()
+        }
+
+        fn abort_attempts(&self) -> usize {
+            self.state.lock().expect("probe store lock").abort_attempts
+        }
+    }
+
+    impl RawWriteStore for AbortProbeStore {
+        fn capabilities(&self) -> StoreCapabilities {
+            StoreCapabilities::unprobed()
+        }
+
+        async fn write_manifest(
+            &self,
+            _key: &ManifestKey,
+            _bytes: &[u8],
+        ) -> Result<StorageOutcome, StorageError> {
+            unavailable()
+        }
+
+        async fn begin_multipart(
+            &self,
+            _blob: &BlobObjectKey,
+        ) -> Result<MultipartUploadId, StorageError> {
+            let mut state = self.state.lock().expect("probe store lock");
+            state.begun += 1;
+            MultipartUploadId::parse(&format!("shutdown-probe-{}", state.begun))
+                .map_err(|_| StorageError::of_kind(StorageErrorKind::MalformedInput))
+        }
+
+        async fn write_part(
+            &self,
+            _upload: &MultipartUploadId,
+            part: PartNumber,
+            bytes: &[u8],
+        ) -> Result<PartCommitment, StorageError> {
+            let mut state = self.state.lock().expect("probe store lock");
+            state.part_bytes += bytes.len();
+            let tag = ObjectTag::parse("serve-shutdown-probe").expect("tag grammar");
+            Ok(PartCommitment::new(part, tag))
+        }
+
+        async fn commit_multipart(
+            &self,
+            upload: &MultipartUploadId,
+            _parts: &[PartCommitment],
+        ) -> Result<StorageOutcome, StorageError> {
+            let mut state = self.state.lock().expect("probe store lock");
+            state.committed.push(upload.to_string());
+            state.part_bytes = 0;
+            Ok(StorageOutcome::Created)
+        }
+
+        async fn abort_multipart(&self, upload: &MultipartUploadId) -> Result<(), StorageError> {
+            let mut state = self.state.lock().expect("probe store lock");
+            state.abort_attempts += 1;
+            if self.refuse_aborts.load(Ordering::SeqCst) {
+                return unavailable();
+            }
+            state.aborted.push(upload.to_string());
+            state.part_bytes = 0;
+            Ok(())
+        }
+    }
+
+    fn probe_server(drain_seconds: u64) -> ArchivistServer<AbortProbeStore, MockControlStore> {
+        let config = ServerConfig::builder()
+            .listen_address("127.0.0.1:0")
+            .shutdown_drain_seconds(drain_seconds)
+            .build()
+            .unwrap();
+        ArchivistServer::new(
+            config,
+            test_trust(),
+            IngestStorage::compose(AbortProbeStore::new(), MockControlStore),
+        )
+    }
+
+    /// Open one streaming session against the replica's own registry and
+    /// store, exactly the way the ingest route does.
+    async fn open_session<'a>(
+        state: &'a Arc<ServerState<AbortProbeStore, MockControlStore>>,
+        payload: &[u8],
+    ) -> MultipartWriter<'a, AbortProbeStore> {
+        let tenant = TenantId::parse(TENANT_A).expect("tenant grammar");
+        let blob = BlobObjectKey::new(&tenant, StorageProfile::ZstdV1, &blob_digest(payload));
+        MultipartWriter::begin(state.storage().raw(), &blob, state.uploads())
+            .await
+            .expect("session begins")
+    }
+
+    #[tokio::test]
+    async fn shutdown_aborts_what_forced_termination_orphaned() {
+        let (trigger, signal) = shutdown_channel();
+        let bound = probe_server(5).bind().unwrap();
+        let state = bound.state().clone();
+        let handle = tokio::spawn(async move { bound.serve(signal.wait()).await });
+        tokio::task::yield_now().await;
+
+        // A writer mid-stream dies the forced-termination death: the
+        // writer goes away with no terminal operation, and the registry
+        // holds the session as abandoned. The payload crosses one part
+        // boundary, so the backend holds a real uploaded part — the
+        // orphan parts the cleanup has to cover; the tail sits in the
+        // writer's buffer and never reaches the backend.
+        let payload = vec![0xAB_u8; PART_BYTES + 1024];
+        {
+            let mut writer = open_session(&state, &payload).await;
+            writer
+                .write_chunk(&payload)
+                .await
+                .expect("the probe store never refuses a part");
+            // The scope ends the writer's life: registered abandoned,
+            // no I/O performed.
+        }
+        let store = state.storage().raw();
+        assert_eq!(state.uploads().abandoned_count(), 1);
+        assert_eq!(store.part_bytes(), PART_BYTES, "orphan parts standing");
+
+        trigger.trigger();
+        let outcome = tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("serve ends after cancellation")
+            .unwrap()
+            .unwrap();
+        assert_eq!(outcome, ShutdownOutcome::Drained);
+
+        // The abort step covered the residual orphan parts: the session
+        // was aborted against the backend, its bytes are gone, and
+        // nothing committed — no invalid committed object exists.
+        assert_eq!(store.aborted().len(), 1);
+        assert_eq!(store.part_bytes(), 0);
+        assert!(store.committed().is_empty());
+        assert_eq!(state.uploads().live_count(), 0);
+        assert_eq!(state.uploads().abandoned_count(), 0);
+        // The gauge ends in the phase the step moved it to.
+        assert_eq!(state.metrics().shutdown_phase(), ShutdownPhase::Aborting);
+    }
+
+    #[tokio::test]
+    async fn a_failed_abort_ends_the_run_in_aborts_failed() {
+        let (trigger, signal) = shutdown_channel();
+        let bound = probe_server(5).bind().unwrap();
+        let state = bound.state().clone();
+        let handle = tokio::spawn(async move { bound.serve(signal.wait()).await });
+        tokio::task::yield_now().await;
+
+        let payload = vec![0xCD_u8; 512];
+        {
+            let mut writer = open_session(&state, &payload).await;
+            writer
+                .write_chunk(&payload)
+                .await
+                .expect("the probe store never refuses a part");
+        }
+        // Every abort the step attempts is refused: the unavailable
+        // class the closed mapping reserves for a backend that cannot
+        // answer.
+        state
+            .storage()
+            .raw()
+            .refuse_aborts
+            .store(true, Ordering::SeqCst);
+
+        trigger.trigger();
+        let outcome = tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("serve ends after cancellation")
+            .unwrap()
+            .unwrap();
+        assert_eq!(outcome, ShutdownOutcome::AbortsFailed);
+
+        let store = state.storage().raw();
+        assert_eq!(store.abort_attempts(), 1, "the step attempted the abort");
+        assert!(store.aborted().is_empty(), "no abort succeeded");
+        assert!(store.committed().is_empty(), "nothing committed");
+        // The failed session stays registered, so a later drain retries
+        // it — the nonzero exit is the report, not a silent give-up.
+        assert_eq!(state.uploads().abandoned_count(), 1);
+        assert_eq!(state.metrics().shutdown_phase(), ShutdownPhase::Aborting);
+    }
+
+    #[tokio::test]
+    async fn the_abort_step_leaves_live_sessions_to_their_writers() {
+        let (trigger, signal) = shutdown_channel();
+        let bound = probe_server(5).bind().unwrap();
+        let state = bound.state().clone();
+        let handle = tokio::spawn(async move { bound.serve(signal.wait()).await });
+        tokio::task::yield_now().await;
+
+        // A writer still streaming when the cancellation lands: the
+        // registry contract leaves its live session alone, because the
+        // writer may still lawfully commit it.
+        let payload = vec![0x11_u8; 256];
+        let mut writer = open_session(&state, &payload).await;
+        writer
+            .write_chunk(&payload)
+            .await
+            .expect("the probe store never refuses a part");
+
+        trigger.trigger();
+        let outcome = tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("serve ends after cancellation")
+            .unwrap()
+            .unwrap();
+        assert_eq!(outcome, ShutdownOutcome::Drained);
+
+        let store = state.storage().raw();
+        assert_eq!(store.abort_attempts(), 0, "live sessions are not touched");
+        assert_eq!(state.uploads().live_count(), 1);
+        // The writer still ends its own session lawfully.
+        writer.finish().await.expect("the tail part flushes");
+        writer.commit().await.expect("the attempt commits");
+        assert_eq!(store.committed().len(), 1);
+        assert_eq!(state.uploads().live_count(), 0);
+    }
+
+    #[test]
+    fn the_outcome_carries_the_exit_code_the_plan_pins() {
+        assert_eq!(ShutdownOutcome::Drained.exit_code(), 0);
+        assert_ne!(ShutdownOutcome::DrainTimedOut.exit_code(), 0);
+        assert_ne!(ShutdownOutcome::AbortsFailed.exit_code(), 0);
     }
 }
