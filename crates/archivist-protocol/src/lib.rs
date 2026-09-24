@@ -92,6 +92,7 @@ pub mod envelope;
 pub mod inference_artifact;
 pub mod json;
 pub mod object_key;
+pub mod orchestrator_correlation;
 pub mod sha256;
 pub mod usage_summary;
 pub mod vocabulary;

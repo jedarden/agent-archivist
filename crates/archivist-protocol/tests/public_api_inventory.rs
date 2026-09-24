@@ -167,6 +167,32 @@ fn type_inventory() -> Vec<(&'static str, &'static str)> {
             type_name::<archivist_protocol::object_key::OccurrenceObjectKey>(),
         ),
         (
+            "orchestrator_correlation::AttemptProvenance",
+            type_name::<archivist_protocol::orchestrator_correlation::AttemptProvenance>(),
+        ),
+        (
+            "orchestrator_correlation::OccurrenceReference",
+            type_name::<archivist_protocol::orchestrator_correlation::OccurrenceReference>(),
+        ),
+        (
+            "orchestrator_correlation::OperationProvenance",
+            type_name::<archivist_protocol::orchestrator_correlation::OperationProvenance>(),
+        ),
+        (
+            "orchestrator_correlation::OrchestratorCorrelation",
+            type_name::<archivist_protocol::orchestrator_correlation::OrchestratorCorrelation>(),
+        ),
+        (
+            "orchestrator_correlation::OrchestratorCorrelationError",
+            type_name::<archivist_protocol::orchestrator_correlation::OrchestratorCorrelationError>(
+            ),
+        ),
+        (
+            "orchestrator_correlation::OrchestratorCorrelationGraph",
+            type_name::<archivist_protocol::orchestrator_correlation::OrchestratorCorrelationGraph>(
+            ),
+        ),
+        (
             "sha256::Sha256",
             type_name::<archivist_protocol::sha256::Sha256>(),
         ),
@@ -367,7 +393,7 @@ fn type_inventory() -> Vec<(&'static str, &'static str)> {
 
 /// Number of documented public types in [`type_inventory`]; the boundary gate
 /// cross-checks the literal against the source.
-const PUBLIC_TYPES: usize = 81;
+const PUBLIC_TYPES: usize = 87;
 
 /// Number of pinned signatures in [`function_inventory`]; the boundary gate
 /// cross-checks the literal against the source.
@@ -483,6 +509,7 @@ fn constant_inventory() -> Vec<&'static str> {
         "inference_artifact::RESERVED_FIELDS",
         "json::DEFAULT_MAX_BYTES",
         "json::DEFAULT_MAX_DEPTH",
+        "orchestrator_correlation::ORCHESTRATOR_CORRELATION_VERSION",
         "usage_summary::PIPELINE_ID",
         "usage_summary::PIPELINE_VERSION",
         "usage_summary::USAGE_SUMMARY_VERSION",
@@ -522,7 +549,7 @@ fn public_constants_pin_wire_values() {
     let inventory = constant_inventory();
     assert_eq!(
         inventory.len(),
-        12,
+        13,
         "the constant inventory drifted from its count"
     );
     assert_eq!(protocol::envelope::PROTOCOL_VERSION, 1);
@@ -605,6 +632,10 @@ fn public_constants_pin_wire_values() {
     assert_eq!(protocol::json::DEFAULT_MAX_BYTES, 8 * 1024 * 1024);
     assert_eq!(protocol::json::DEFAULT_MAX_DEPTH, 64);
     assert_eq!(protocol::usage_summary::USAGE_SUMMARY_VERSION, 1);
+    assert_eq!(
+        protocol::orchestrator_correlation::ORCHESTRATOR_CORRELATION_VERSION,
+        1
+    );
     assert_eq!(protocol::usage_summary::PIPELINE_ID, "usage");
     assert_eq!(protocol::usage_summary::PIPELINE_VERSION, "1");
 }
