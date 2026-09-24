@@ -1,11 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-#![allow(
-    clippy::doc_markdown,
-    clippy::missing_errors_doc,
-    clippy::missing_panics_doc
-)]
-
 //! Pi's durable-session adapter.
 //!
 //! Pi stores durable sessions below an account-configured session root. The
@@ -23,6 +17,12 @@
 //! Explicit ephemeral and no-session roots are reported as coverage gaps.
 //! Environment construction honors PI_CODING_AGENT_SESSION_DIR,
 //! PI_CODING_AGENT_DIR, and the HOME fallback.
+
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc
+)]
 
 use std::collections::BTreeSet;
 use std::env;
