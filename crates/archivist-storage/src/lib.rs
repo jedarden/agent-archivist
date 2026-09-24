@@ -74,6 +74,13 @@
 //!   validating iteration over a frozen tenant raw prefix (occurrences,
 //!   attestations, referenced blobs) for offline catalog rebuild and
 //!   reference scans; reachable only through the audit/restore identity.
+//! - [`export`] — the authorized archive exporter: the offline act that
+//!   binds one verified `export-approval-v1`'s frozen inventory, exact
+//!   occurrence selection, and window before reading the selection's
+//!   closure through the audit/restore identity, staging byte-exact,
+//!   resumable output — each key read at most once per run — into the
+//!   approved destination and emitting the receipt core a receipt key
+//!   signs (plan Phase 10).
 //! - [`collection`] — the disabled-by-default two-pass blob collector:
 //!   retention-aware reference planning, simulation, pre-delete metadata
 //!   revalidation, and canonical audit evidence.
@@ -119,6 +126,7 @@ pub mod collection;
 pub mod commit;
 pub mod control;
 pub mod error;
+pub mod export;
 pub mod ingest;
 pub mod manifests;
 pub mod metadata;

@@ -442,10 +442,15 @@ impl OccurrenceManifest {
     /// inventory — so a fabricated object is named by the shallowest
     /// applicable fault (PI-07).
     ///
+    /// Crate-visible for the authorized exporter
+    /// ([`crate::export`](crate::export)), which resolves one selected
+    /// occurrence's blob reference through the same validation — at the
+    /// manifest's single read — rather than duplicating it.
+    ///
     /// # Errors
     /// [`StorageErrorKind::IntegrityConflict`](crate::error::StorageErrorKind)
     /// for every fault the module documents.
-    fn validate(
+    pub(crate) fn validate(
         bytes: &[u8],
         key: &OccurrenceObjectKey,
         blobs: &RawCatalogIndex,
@@ -706,10 +711,15 @@ impl AttestationManifest {
     /// Validate the stored bytes of one upload attestation against its
     /// storage key.
     ///
+    /// Crate-visible for the authorized exporter
+    /// ([`crate::export`](crate::export)), which validates exactly the
+    /// attestations joining a selected occurrence through the same rules,
+    /// each at its single read.
+    ///
     /// # Errors
     /// [`StorageErrorKind::IntegrityConflict`](crate::error::StorageErrorKind)
     /// for every fault the module documents.
-    fn validate(bytes: &[u8], key: &AttestationObjectKey) -> Result<Self, StorageError> {
+    pub(crate) fn validate(bytes: &[u8], key: &AttestationObjectKey) -> Result<Self, StorageError> {
         let value = json::parse(bytes).map_err(|_| fault(ATT_MALFORMED))?;
         let Value::Object(object) = &value else {
             return Err(fault(ATT_NOT_OBJECT));

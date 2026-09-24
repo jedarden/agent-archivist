@@ -371,7 +371,7 @@ const PUBLIC_TYPES: usize = 81;
 
 /// Number of pinned signatures in [`function_inventory`]; the boundary gate
 /// cross-checks the literal against the source.
-const FREE_FUNCTIONS: usize = 18;
+const FREE_FUNCTIONS: usize = 19;
 
 /// The documented public free functions, each with its exact signature pinned
 /// by a function-pointer binding in [`pinned_signatures`].
@@ -387,6 +387,7 @@ fn function_inventory() -> Vec<&'static str> {
         "derivation::artifact_hash",
         "derivation::attestation_id",
         "derivation::blob_digest",
+        "derivation::export_selection_digest",
         "derivation::ingest_attempt_signing_input",
         "derivation::occurrence_id",
         "derivation::session_hash",
@@ -436,6 +437,8 @@ fn pinned_signatures() {
         &str,
     ) -> ArtifactHash = protocol::derivation::artifact_hash;
     let _blob_digest: fn(&[u8]) -> BlobDigest = protocol::derivation::blob_digest;
+    let _export_selection_digest: fn(&TenantId, &BlobDigest, &[&str]) -> BlobDigest =
+        protocol::derivation::export_selection_digest;
     let _occurrence_id: fn(
         &SessionHash,
         &ArtifactHash,

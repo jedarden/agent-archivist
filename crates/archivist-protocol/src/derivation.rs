@@ -178,6 +178,36 @@ pub fn attestation_id(
     AttestationId::from_raw(frame.finish())
 }
 
+/// The digest over one raw-export approval's exact occurrence selection
+/// (`export-selection-v1`; plan Phase 10).
+///
+/// Names the tenant, the frozen `inventory-v1` digest the selection was
+/// drawn from, and the complete set of selected occurrence-manifest keys —
+/// so an approval bound to this digest authorizes exactly those occurrences
+/// under exactly that freeze, and no other: the authorized exporter
+/// re-derives this digest over the keys it was handed and refuses to read
+/// until it equals the approval's. Keys hash in canonical key-byte
+/// order regardless of the order supplied, so the issuer and the offline
+/// verifier converge on one digest from any enumeration order; the count is
+/// part of the frame, so a subset or superset is a different digest.
+#[must_use]
+pub fn export_selection_digest(
+    tenant_id: &TenantId,
+    inventory_digest: &BlobDigest,
+    occurrence_keys: &[&str],
+) -> BlobDigest {
+    let mut ordered = occurrence_keys.to_vec();
+    ordered.sort_unstable();
+    let mut frame = FrameBuilder::new("export-selection-v1");
+    frame.push_text(tenant_id.as_str());
+    frame.push_digest32(inventory_digest.as_raw());
+    frame.push_u63(ordered.len() as u64);
+    for key in &ordered {
+        frame.push_text(key);
+    }
+    BlobDigest::from_raw(frame.finish())
+}
+
 /// The bytes an ingest attempt's Ed25519 signature covers, assembled per the
 /// `ingest-attempt-v1` registry entry in the pinned order. Exposed so the
 /// signing crate (`archivist-auth`) and offline verifiers reproduce the
@@ -370,5 +400,41 @@ mod tests {
             + 8 /* authorization epoch */
             + 20 /* authorization timestamp */;
         assert_eq!(input.len(), 17 + 1 + 10 * 8 + content);
+    }
+
+    #[test]
+    fn export_selection_digest_is_order_independent_and_bound() {
+        let tenant = TenantId::parse("0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b").unwrap();
+        let inventory = BlobDigest::from_raw([7; 32]);
+        let a = "tenants/t/v1/raw/occurrences/c/a/aa/a.json";
+        let b = "tenants/t/v1/raw/occurrences/c/b/bb/b.json";
+        // Any enumeration order converges on one digest.
+        assert_eq!(
+            export_selection_digest(&tenant, &inventory, &[a, b]),
+            export_selection_digest(&tenant, &inventory, &[b, a])
+        );
+        // The tenant, the freeze, the count, and a key are each load-bearing.
+        let other_tenant = TenantId::parse("1a2b3c4d-5e6f-4a1b-9c2d-3e4f5a6b7c8d").unwrap();
+        assert_ne!(
+            export_selection_digest(&tenant, &inventory, &[a, b]),
+            export_selection_digest(&other_tenant, &inventory, &[a, b])
+        );
+        assert_ne!(
+            export_selection_digest(&tenant, &inventory, &[a, b]),
+            export_selection_digest(&tenant, &BlobDigest::from_raw([8; 32]), &[a, b])
+        );
+        assert_ne!(
+            export_selection_digest(&tenant, &inventory, &[a, b]),
+            export_selection_digest(&tenant, &inventory, &[a])
+        );
+        assert_ne!(
+            export_selection_digest(&tenant, &inventory, &[a, b]),
+            export_selection_digest(&tenant, &inventory, &[a, "different.json"])
+        );
+        // Empty selection is a defined, still-bound digest.
+        assert_ne!(
+            export_selection_digest(&tenant, &inventory, &[]),
+            export_selection_digest(&other_tenant, &inventory, &[])
+        );
     }
 }
