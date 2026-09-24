@@ -1,0 +1,79 @@
+{
+  "schema": "archivist.zstd-v1.golden-blobs/v1",
+  "profile": "zstd-v1",
+  "encoder": {
+    "libzstd": "1.5.7",
+    "compression_level": 3,
+    "single_threaded": true,
+    "dictionary": "none",
+    "pledged_content_size": true,
+    "embedded_checksum": true
+  },
+  "generator": "crates/archivist-storage/tests/zstd_v1_golden_blobs.rs regenerate_fixtures",
+  "files": [
+    {
+      "name": "empty.zst",
+      "shape": "empty",
+      "canonical_len": 0,
+      "canonical_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_len": 13,
+      "stored_sha256": "f96deff1816083fdff8bc3e46c3fe6ca46a6bb49f4d5a00627616c13237a512c"
+    },
+    {
+      "name": "single-byte.zst",
+      "shape": "single-byte",
+      "canonical_len": 1,
+      "canonical_sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+      "stored_len": 14,
+      "stored_sha256": "a381180f02b3220490a6a96473cc5b1cdc1e773815be503a889dcbf2ad76b883"
+    },
+    {
+      "name": "text-lines-768.zst",
+      "shape": "text-lines-768",
+      "canonical_len": 57600,
+      "canonical_sha256": "dc947c3d6137b78ae12ae05549674af468cc5a47999942413f94227dae08f7ae",
+      "stored_len": 851,
+      "stored_sha256": "b5efc0dea4db5322d0bed98a576153446fa50f48c99f5bc35e01247f464c3c16"
+    },
+    {
+      "name": "mixed-lines-40.zst",
+      "shape": "mixed-lines-40",
+      "canonical_len": 7040,
+      "canonical_sha256": "1443a4ffeac64c2455fa71b7d518550118d91f1ec17b3d45b1d5e64a71772105",
+      "stored_len": 251,
+      "stored_sha256": "78c21bb0d72f3d5651d0abbaaf2bb9e86b2189196efd57fbb351aa42fe2a58cf"
+    },
+    {
+      "name": "odd-9997.zst",
+      "shape": "odd-9997",
+      "canonical_len": 9997,
+      "canonical_sha256": "fb9745be9ecb4b006f695d4010b3c6da581a6676b9f277295fe1e78f83f67495",
+      "stored_len": 10011,
+      "stored_sha256": "de9b0bb98ae34226fcffc2294d45ad11e6cbdcbae6f9052563b8047309fd157e"
+    },
+    {
+      "name": "redundant-64k.zst",
+      "shape": "redundant-64k",
+      "canonical_len": 70000,
+      "canonical_sha256": "4f772cad45a568461aeb93ed8e3451422e5ba92d94c01a3355cb02e75c4b387e",
+      "stored_len": 26,
+      "stored_sha256": "b7b33bd5d6751ad1182f0086a87fc2e4960373084e5b2a21d5c2115e26903b83"
+    },
+    {
+      "name": "sparse-noise-16k.zst",
+      "shape": "sparse-noise-16k",
+      "canonical_len": 16384,
+      "canonical_sha256": "57f2cedf72e0332528fd957bccf64d3727c9d5352aea539b93aecc3ebaeb64db",
+      "stored_len": 173,
+      "stored_sha256": "5b3fcb91488101b1338a7529bf4c634d094bf046611264643aef5733bdee1c62"
+    },
+    {
+      "name": "incompressible-64k.zst",
+      "shape": "incompressible-64k",
+      "canonical_len": 70000,
+      "canonical_sha256": "9727cc1b765ff667fd7d006fb6a5679be589c62cb6ccb0a475e7dc115bb015df",
+      "stored_len": 70016,
+      "stored_sha256": "3933b0cbcde571c18cc6baa4dfdd07ee47a71e2e3fb56b36bc7893207782edbb"
+    }
+  ]
+}
