@@ -77,6 +77,16 @@
 //!   every capture-contract breach. The `synthetic_append_only` example
 //!   is the executable shape a community adapter starts from; this suite
 //!   is what it is held to.
+//! - [`parity`]: the database parity oracle's comparison core (plan
+//!   Phase 6, the Database-adapter parity decision; AC-07 in
+//!   docs/security/threats/adapter-capture.md): the content-free
+//!   observation vocabulary — ordered storage-class keys, presence bits,
+//!   class- and length-bound SHA-256 field digests — and the [`compare`]
+//!   that names every divergence class by table, row, and field ordinal
+//!   alone, never by source content. The parity tuple, not a
+//!   whole-database hash, is what "the adapter captured the store" means;
+//!   the end-to-end evidence that drives both sides independently is the
+//!   `database_parity_oracle` suite in `archivist-adapter-opencode`.
 //!
 //!
 //! # Dependency boundary
@@ -103,6 +113,7 @@ pub mod lifecycle;
 pub mod openai_compat;
 pub mod openai_conformance;
 pub mod openai_http1;
+pub mod parity;
 pub mod session_identity;
 pub mod status;
 
@@ -153,6 +164,10 @@ pub use lifecycle::{AdapterLifecycle, LifecycleState};
 pub use openai_conformance::{
     CONFORMANCE_CREDENTIAL, CheckId, ConformanceError, ConformanceReport, ConformanceSink,
     OpenAiWireFixture, ReceivedExchange, SceneId, SceneOutcome, TransportConformance, WireScript,
+};
+pub use parity::{
+    DatabaseObservation, Divergence, FieldDigest, FieldObservation, ObservedValue, RowObservation,
+    StorageClass, TableObservation, Verdict, compare,
 };
 pub use session_identity::{SessionIdentity, SessionIdentityError};
 pub use status::{
