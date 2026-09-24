@@ -20,9 +20,20 @@
 //!    distinct value tuples have one framing as a proper prefix of the
 //!    other — hammered with random values plus adversarial empty,
 //!    1-byte, sizing-boundary, and `u63`-extreme fields.
+//! 2. domain separation: an identical field tuple framed under two
+//!    different labels never hashes to one digest, and the four labeled
+//!    identity constructions stay pairwise distinct — while the one
+//!    label-less construction, `blob_digest`, never equals a labeled
+//!    frame over the same payload bytes or over its own raw digest.
 
-use archivist_protocol::derivation::FrameBuilder;
-use archivist_protocol::sha256::digest;
+use archivist_protocol::derivation::{
+    FrameBuilder, artifact_hash, attestation_id, blob_digest, occurrence_id, session_hash,
+};
+use archivist_protocol::sha256::{digest, encode_hex};
+use archivist_protocol::vocabulary::{
+    AdapterId, ArtifactKind, BlobDigest, ClientId, GenerationId, HarnessId, RangeKind, RequestId,
+    TenantId, VersionToken,
+};
 
 // --- deterministic generator -------------------------------------------------
 
@@ -74,6 +85,51 @@ fn opaque_text(prng: &mut Prng) -> String {
     (0..len)
         .map(|_| TEXT_BYTES[prng.below_usize(TEXT_BYTES.len())] as char)
         .collect()
+}
+
+/// A `short-token` (`^[a-z0-9][a-z0-9._-]{0,63}$`) — the grammar of the
+/// harness and adapter identifiers and of the registry's own labels.
+fn short_token(prng: &mut Prng) -> String {
+    const HEAD: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    const TAIL: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789._-";
+    let len = 1 + prng.below_usize(16);
+    let mut token = String::new();
+    token.push(HEAD[prng.below_usize(HEAD.len())] as char);
+    for _ in 1..len {
+        token.push(TAIL[prng.below_usize(TAIL.len())] as char);
+    }
+    token
+}
+
+/// A `version-token` (`^[0-9A-Za-z._+-]{1,32}$`) adapter projection
+/// version.
+fn version_token_text(prng: &mut Prng) -> String {
+    const ALPHABET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._+-";
+    let len = 1 + prng.below_usize(12);
+    (0..len)
+        .map(|_| ALPHABET[prng.below_usize(ALPHABET.len())] as char)
+        .collect()
+}
+
+/// Canonical `uuid-v4`/`uuid-v7` wire text: random bytes with the version
+/// and variant nibbles pinned exactly as the vocabulary's UUID grammar
+/// requires, so a generated value always parses.
+fn uuid_text(prng: &mut Prng, version: u8) -> String {
+    let mut bytes = [0u8; 16];
+    for byte in &mut bytes {
+        *byte = prng.byte();
+    }
+    bytes[6] = (bytes[6] & 0x0f) | (version << 4);
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex = encode_hex(&bytes);
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
 }
 
 // --- independent framing -----------------------------------------------------
@@ -265,6 +321,17 @@ fn pinned_shapes() -> Vec<Vec<Field>> {
     ]
 }
 
+/// The registry's labeled constructions (registry order) — the frames the
+/// one label-less construction must never reproduce.
+const REGISTRY_LABELS: &[&str] = &[
+    "session-v1",
+    "artifact-v1",
+    "occurrence-v1",
+    "attestation-v1",
+    "ingest-attempt-v1",
+    "export-selection-v1",
+];
+
 // --- the properties ----------------------------------------------------------
 
 /// Framing fidelity plus self-description: the crate's digest is the hash
@@ -383,5 +450,158 @@ fn framings_of_distinct_tuples_are_never_prefixes_of_each_other() {
                 );
             }
         }
+    }
+}
+
+/// Domain separation over the label alone: one identical field tuple
+/// framed under two different labels never hashes to one digest —
+/// otherwise two constructions could silently certify each other's
+/// identities. The label pairs are drawn from the same `short-token`
+/// grammar the registry's labels speak, and every fourth pair is a
+/// deliberate prefix extension — the shape a delimiter-splicing framing
+/// bug collapses first, since the two frames then share their whole
+/// label byte-run and must still diverge at the 0x00 delimiter.
+#[test]
+fn different_labels_never_share_a_digest_over_identical_fields() {
+    const ITERATIONS: usize = 2000;
+    let mut prng = Prng::new(0x5EED_0003);
+    for index in 0..ITERATIONS {
+        let field_count = prng.below_usize(7);
+        let fields: Vec<Field> = (0..field_count)
+            .map(|position| Field::random(position, &mut prng))
+            .collect();
+        let left = short_token(&mut prng);
+        let right = if index % 4 == 0 {
+            let mut extended = left.clone();
+            extended.push('-');
+            extended.push_str(&short_token(&mut prng));
+            extended
+        } else {
+            let mut candidate = short_token(&mut prng);
+            while candidate == left {
+                candidate = short_token(&mut prng);
+            }
+            candidate
+        };
+        assert_ne!(left, right, "label generation produced one label twice");
+        assert_ne!(
+            crate_digest(&left, &fields),
+            crate_digest(&right, &fields),
+            "labels {left:?} and {right:?} collided over {fields:?}"
+        );
+    }
+}
+
+/// Random payload bytes for the label-less digest: usually opaque, but
+/// every fourth draw is itself a well-formed labeled frame, which the
+/// plain digest must still read as opaque bytes.
+fn generated_payload(prng: &mut Prng) -> Vec<u8> {
+    if prng.below_usize(4) == 0 {
+        let fields: Vec<Field> = (0..prng.below_usize(4))
+            .map(|position| Field::random(position, prng))
+            .collect();
+        frame(&short_token(prng), &fields)
+    } else {
+        let length = prng.below_usize(256);
+        (0..length).map(|_| prng.byte()).collect()
+    }
+}
+
+/// Derive the four labeled identity constructions over one generated
+/// identity tuple, each digest paired with its construction's wire name.
+fn named_digests(prng: &mut Prng, blob: &BlobDigest) -> [(&'static str, [u8; 32]); 4] {
+    let tenant = TenantId::parse(&uuid_text(prng, 4)).expect("generated uuid-v4 parses");
+    let origin = ClientId::parse(&uuid_text(prng, 4)).expect("generated uuid-v4 parses");
+    let harness = HarnessId::parse(&short_token(prng)).expect("generated short-token parses");
+    let session = session_hash(&tenant, &origin, &harness, &opaque_text(prng));
+
+    let artifact_kind =
+        ArtifactKind::parse(ArtifactKind::tokens()[prng.below_usize(ArtifactKind::tokens().len())])
+            .expect("registry token parses");
+    let adapter = AdapterId::parse(&short_token(prng)).expect("generated short-token parses");
+    let projection =
+        VersionToken::parse(&version_token_text(prng)).expect("generated version-token parses");
+    let artifact = artifact_hash(
+        &session,
+        artifact_kind,
+        &adapter,
+        &projection,
+        &opaque_text(prng),
+    );
+
+    let generation = GenerationId::parse(&uuid_text(prng, 7)).expect("generated uuid-v7 parses");
+    let range_kind =
+        RangeKind::parse(RangeKind::tokens()[prng.below_usize(RangeKind::tokens().len())])
+            .expect("registry token parses");
+    let range_start = prng.u63();
+    let range_end = prng.u63();
+    let occurrence = occurrence_id(
+        &session,
+        &artifact,
+        &generation,
+        range_kind,
+        range_start,
+        range_end,
+        blob,
+    );
+
+    let uploader = ClientId::parse(&uuid_text(prng, 4)).expect("generated uuid-v4 parses");
+    let request = RequestId::parse(&uuid_text(prng, 7)).expect("generated uuid-v7 parses");
+    let attestation = attestation_id(&occurrence, &uploader, &request);
+
+    [
+        ("session-v1", *session.as_raw()),
+        ("artifact-v1", *artifact.as_raw()),
+        ("occurrence-v1", *occurrence.as_raw()),
+        ("attestation-v1", *attestation.as_raw()),
+    ]
+}
+
+/// The four labeled identity constructions stay pairwise distinct over
+/// generated identity tuples — `session-v1`, `artifact-v1`,
+/// `occurrence-v1`, and `attestation-v1` may never agree on one digest,
+/// whatever the inputs, or two different identities would be
+/// indistinguishable on the wire. The single label-less construction,
+/// `blob_digest`, must additionally never equal a labeled frame: not
+/// over the same payload bytes, and not over its own raw digest.
+#[test]
+fn named_constructions_are_pairwise_distinct() {
+    const ITERATIONS: usize = 512;
+    let mut prng = Prng::new(0x5EED_0004);
+    for index in 0..ITERATIONS {
+        let payload = generated_payload(&mut prng);
+        let blob = blob_digest(&payload);
+        let named = named_digests(&mut prng, &blob);
+
+        for (position, (left_name, left)) in named.iter().enumerate() {
+            for (right_name, right) in named.iter().skip(position + 1) {
+                assert_ne!(
+                    left, right,
+                    "constructions {left_name} and {right_name} agreed on one digest"
+                );
+            }
+        }
+
+        // The label-less construction never agrees with a labeled frame:
+        // one registry label per iteration, cycled, plus one ad-hoc
+        // short-token label.
+        let label = REGISTRY_LABELS[index % REGISTRY_LABELS.len()];
+        let ad_hoc_label = short_token(&mut prng);
+        let raw = *blob.as_raw();
+        assert_ne!(
+            blob.as_raw(),
+            &crate_digest(label, &[Field::Bytes(payload.clone())]),
+            "blob_digest collided with a {label} frame over the same payload bytes"
+        );
+        assert_ne!(
+            blob.as_raw(),
+            &crate_digest(&ad_hoc_label, &[Field::Bytes(payload.clone())]),
+            "blob_digest collided with an ad-hoc {ad_hoc_label:?} frame over the same payload bytes"
+        );
+        assert_ne!(
+            blob.as_raw(),
+            &crate_digest(label, &[Field::Digest32(raw)]),
+            "blob_digest collided with a {label} frame over its own raw digest"
+        );
     }
 }
