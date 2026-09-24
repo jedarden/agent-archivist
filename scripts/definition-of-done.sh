@@ -10,6 +10,7 @@
 #     gate, config-key registry gate, wire-schema coherence gate, CLI
 #     command registry gate,
 #     release container baseline gate, storage-profile registry gate,
+#     adapter compatibility-matrix gate,
 #     control trust schema gate, threat-model acceptance gate,
 #     synthetic-fixture, conformance-corpus, compat-corpus,
 #     inference-corpus, usage-summary-corpus, and control-corpus
@@ -208,6 +209,16 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # the retirement of the unevidenced usability claim; `--self-test`
   # proves the rejection paths.
   run_check "storage profiles"  python3 tools/check-storage-profiles.py --self-test
+  # Adapter compatibility matrix (docs/notes/compatibility-matrix.md): the
+  # published per-adapter fingerprint allowlists, projection versions,
+  # artifact kinds, and known gaps, reconciled row-for-row against the
+  # adapter source constants and every fingerprint the fleet inventory
+  # observed, with the six-state coverage vocabulary pinned to status.rs
+  # (plan Phase 6 exit gate; threat AC-11's support-claim rule); a
+  # fingerprint that is not in the note is a claim the project does not
+  # make, and the three records cannot drift apart silently.
+  # `--self-test` proves the rejection paths.
+  run_check "compatibility matrix"  python3 tools/check-compatibility-matrix.py --self-test
   # Rotation-drill probe (docs/notes/armor-storage-provisioning.md,
   # "Rotation procedure" steps 1/5/6): the live instrument takes credential
   # pairs via environment only and prints only HTTP status and S3 error
