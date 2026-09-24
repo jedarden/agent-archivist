@@ -51,6 +51,7 @@ use std::net::TcpListener as StdListener;
 use std::sync::Arc;
 use std::time::Duration;
 
+use archivist_storage::commit::ConditionalCreateStore;
 use archivist_storage::control::ControlReadStore;
 use archivist_storage::ingest::IngestStorage;
 use archivist_storage::raw_write::RawWriteStore;
@@ -140,7 +141,7 @@ pub struct ArchivistServer<W, C> {
 
 impl<W, C> ArchivistServer<W, C>
 where
-    W: RawWriteStore + Send + Sync + 'static,
+    W: RawWriteStore + ConditionalCreateStore + Send + Sync + 'static,
     C: ControlReadStore + Send + Sync + 'static,
 {
     /// Compose a replica from validated parts. No I/O, no allocation of
@@ -201,7 +202,7 @@ pub struct BoundServer<W, C> {
 
 impl<W, C> BoundServer<W, C>
 where
-    W: RawWriteStore + Send + Sync + 'static,
+    W: RawWriteStore + ConditionalCreateStore + Send + Sync + 'static,
     C: ControlReadStore + Send + Sync + 'static,
 {
     /// The address the replica is listening on — the configured
@@ -287,12 +288,18 @@ where
             _ = fired_rx.wait_for(|fired| *fired) => None,
             result = serving.as_mut() => Some(result),
         };
-        if let Some(result) = early {
-            return result.map(|()| ShutdownOutcome::Drained);
-        }
 
-        // Phase 2 — the bounded drain.
-        let drained = bounded_drain(serving.as_mut(), drain).await?;
+        // Phase 2 — the bounded drain. A serve future that completes
+        // ahead of the fired watch has already finished the shutdown
+        // inside its own poll — a replica with no in-flight work at the
+        // instant the cancellation landed drains in that poll — so its
+        // `Ok` is the drained verdict and only its `Err`, the socket
+        // dying underneath the server, ends the run before the shutdown
+        // sequence begins.
+        let drained = match early {
+            Some(result) => result.map(|()| ShutdownOutcome::Drained)?,
+            None => bounded_drain(serving.as_mut(), drain).await?,
+        };
 
         // Phase 3 — the multipart-abort step, on either drain verdict:
         // every session the run left registered as abandoned is aborted
@@ -404,6 +411,7 @@ mod tests {
         ClientId, Ed25519PublicKey, KeyId, StorageOutcome, StorageProfile, TenantId,
     };
     use archivist_storage::capability::StoreCapabilities;
+    use archivist_storage::commit::ConditionalCreateStore;
     use archivist_storage::control::{AuthorizationEpoch, ControlReadStore, ControlRecord};
     use archivist_storage::error::{StorageError, StorageErrorKind};
     use archivist_storage::ingest::IngestStorage;
@@ -476,6 +484,11 @@ mod tests {
             unavailable()
         }
     }
+
+    // The writer-only adoption: the trait's default answers every atomic
+    // primitive request with capability-unavailable, matching the mock's
+    // unprobed report.
+    impl ConditionalCreateStore for MockRawStore {}
 
     #[derive(Clone, Copy, Debug)]
     struct MockControlStore;
@@ -1008,6 +1021,10 @@ mod tests {
             Ok(())
         }
     }
+
+    // The writer-only adoption, matching the other mocks: the trait's
+    // defaults answer every atomic primitive with capability-unavailable.
+    impl ConditionalCreateStore for AbortProbeStore {}
 
     fn probe_server(drain_seconds: u64) -> ArchivistServer<AbortProbeStore, MockControlStore> {
         let config = ServerConfig::builder()

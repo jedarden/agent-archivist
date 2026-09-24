@@ -1264,7 +1264,10 @@ mod tests {
         // second attempt stands at the key, so the conditional create
         // dedupes it (protocol Section 4.4); the attestation's earlier
         // fault fired before any write, so it lands created.
-        assert_eq!(repaired.occurrence().outcome(), StorageOutcome::AlreadyPresent);
+        assert_eq!(
+            repaired.occurrence().outcome(),
+            StorageOutcome::AlreadyPresent
+        );
         assert_eq!(repaired.attestation().outcome(), StorageOutcome::Created);
     }
 
