@@ -224,6 +224,7 @@ pub struct PiSource {
     path: PathBuf,
     format: PiFormat,
     fingerprint: SourceFingerprint,
+    read_classification: Option<ScanClassification>,
 }
 
 impl PiSource {
@@ -233,7 +234,18 @@ impl PiSource {
             path,
             format,
             fingerprint: format.fingerprint(),
+            read_classification: None,
         }
+    }
+
+    fn unreadable(
+        account: &AccountLabel,
+        path: PathBuf,
+        classification: ScanClassification,
+    ) -> Self {
+        let mut source = Self::new(account, path, PiFormat::Unknown);
+        source.read_classification = Some(classification);
+        source
     }
 
     /// The configured account owning this source.
@@ -264,6 +276,10 @@ impl PiSource {
     #[must_use]
     pub const fn is_supported(&self) -> bool {
         self.format.is_supported()
+    }
+
+    fn read_classification(&self) -> Option<ScanClassification> {
+        self.read_classification
     }
 }
 
@@ -568,6 +584,7 @@ impl PiAdapter {
         let mut sources = Vec::new();
         let mut gaps = Vec::new();
         let mut saw_read_error = false;
+        let mut saw_permission_denied = false;
         for root in roots {
             if !root.mode().is_durable() {
                 gaps.push(match root.mode() {
@@ -582,6 +599,7 @@ impl PiAdapter {
                     gaps.push(CoverageGap::RootAbsent);
                 }
                 RootInventoryResult::RootAbsent => gaps.push(CoverageGap::RootAbsent),
+                RootInventoryResult::PermissionDenied => saw_permission_denied = true,
                 RootInventoryResult::ReadError => saw_read_error = true,
                 RootInventoryResult::Ok { .. } => {}
             }
@@ -591,7 +609,9 @@ impl PiAdapter {
             .filter(|source| source.is_supported())
             .count();
         let unsupported = sources.len().saturating_sub(supported);
-        let classification = if saw_read_error {
+        let classification = if saw_permission_denied {
+            ScanClassification::PermissionDenied
+        } else if saw_read_error {
             ScanClassification::ReadError
         } else if supported == 0 && unsupported > 0 {
             ScanClassification::FingerprintUnsupported
@@ -618,6 +638,12 @@ impl PiAdapter {
 
     /// Open one source after exact fingerprint admission.
     pub fn open(&self, source: &PiSource) -> Result<PiCapture, PiCaptureError> {
+        if let Some(classification) = source.read_classification() {
+            return Err(match classification {
+                ScanClassification::PermissionDenied => PiCaptureError::PermissionDenied,
+                _ => PiCaptureError::ReadError,
+            });
+        }
         self.descriptor
             .fingerprints
             .admit(source.fingerprint())
@@ -905,6 +931,7 @@ impl ImmutableCapture {
 enum RootInventoryResult {
     Ok { files_seen: usize },
     RootAbsent,
+    PermissionDenied,
     ReadError,
 }
 
@@ -957,18 +984,32 @@ fn inventory_root(root: &ConfiguredRoot, output: &mut Vec<PiSource>) -> RootInve
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return RootInventoryResult::RootAbsent;
         }
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            return RootInventoryResult::PermissionDenied;
+        }
         Err(_) => return RootInventoryResult::ReadError,
     };
     let mut files_seen = 0;
     if metadata.is_file() {
-        output.push(inspect_source(root.account(), root.path().to_path_buf()));
+        let source = inspect_source(root.account(), root.path().to_path_buf());
+        let read_classification = source.read_classification();
+        output.push(source);
         files_seen = 1;
+        if let Some(classification) = read_classification {
+            return match classification {
+                ScanClassification::PermissionDenied => RootInventoryResult::PermissionDenied,
+                _ => RootInventoryResult::ReadError,
+            };
+        }
         return RootInventoryResult::Ok { files_seen };
     }
     let mut stack = vec![match fs::read_dir(root.path()) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return RootInventoryResult::RootAbsent;
+        }
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            return RootInventoryResult::PermissionDenied;
         }
         Err(_) => return RootInventoryResult::ReadError,
     }];
@@ -981,17 +1022,33 @@ fn inventory_root(root: &ConfiguredRoot, output: &mut Vec<PiSource>) -> RootInve
             let metadata = match entry.metadata() {
                 Ok(metadata) => metadata,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                    return RootInventoryResult::PermissionDenied;
+                }
                 Err(_) => return RootInventoryResult::ReadError,
             };
             if metadata.is_dir() {
                 match fs::read_dir(path) {
                     Ok(nested) => stack.push(nested),
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                        return RootInventoryResult::PermissionDenied;
+                    }
                     Err(_) => return RootInventoryResult::ReadError,
                 }
             } else if metadata.is_file() {
-                output.push(inspect_source(root.account(), path));
+                let source = inspect_source(root.account(), path);
+                let read_classification = source.read_classification();
+                output.push(source);
                 files_seen += 1;
+                if let Some(classification) = read_classification {
+                    return match classification {
+                        ScanClassification::PermissionDenied => {
+                            RootInventoryResult::PermissionDenied
+                        }
+                        _ => RootInventoryResult::ReadError,
+                    };
+                }
             }
         }
     }
@@ -1000,8 +1057,9 @@ fn inventory_root(root: &ConfiguredRoot, output: &mut Vec<PiSource>) -> RootInve
 }
 
 fn inspect_source(account: &AccountLabel, path: PathBuf) -> PiSource {
-    let Ok(prefix) = read_prefix(&path) else {
-        return PiSource::new(account, path, PiFormat::Unknown);
+    let prefix = match read_prefix(&path) {
+        Ok(prefix) => prefix,
+        Err(error) => return PiSource::unreadable(account, path, error.classification()),
     };
     PiSource::new(account, path.clone(), detect_format(&path, &prefix))
 }
