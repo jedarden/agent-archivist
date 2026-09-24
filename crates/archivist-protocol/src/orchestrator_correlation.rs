@@ -292,7 +292,7 @@ impl OrchestratorCorrelation {
             }
         };
         let mut without_digest = object.clone();
-        without_digest.remove("correlation_digest");
+        let _removed = without_digest.remove("correlation_digest");
         let mut frame = FrameBuilder::new(DIGEST_LABEL);
         frame.push_bytes(&Value::Object(without_digest).canonical_bytes());
         let derived = sha256::encode_hex(&frame.finish());
@@ -478,9 +478,9 @@ pub struct AttemptProvenance {
 /// referenced one occurrence.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct OccurrenceReference {
-    trace_id: TraceId,
-    orchestrator_attempt_id: OpaqueId,
-    inference_request_id: Option<InferenceRequestId>,
+    trace: TraceId,
+    orchestrator_attempt: OpaqueId,
+    inference_request: Option<InferenceRequestId>,
 }
 
 impl OrchestratorCorrelationGraph {
@@ -499,9 +499,9 @@ impl OrchestratorCorrelationGraph {
                 .entry(record.orchestrator_attempt_id.clone())
                 .or_default();
             let reference = OccurrenceReference {
-                trace_id: record.trace_id.clone(),
-                orchestrator_attempt_id: record.orchestrator_attempt_id.clone(),
-                inference_request_id: record.inference_request_id.clone(),
+                trace: record.trace_id.clone(),
+                orchestrator_attempt: record.orchestrator_attempt_id.clone(),
+                inference_request: record.inference_request_id.clone(),
             };
             for occurrence in &record.occurrence_ids {
                 match &record.inference_request_id {
@@ -510,15 +510,15 @@ impl OrchestratorCorrelationGraph {
                             .inference_occurrences
                             .entry(inference_request_id.clone())
                             .or_default()
-                            .insert(occurrence.clone());
+                            .insert(*occurrence);
                     }
                     None => {
-                        attempt.attempt_occurrences.insert(occurrence.clone());
+                        attempt.attempt_occurrences.insert(*occurrence);
                     }
                 }
                 graph
                     .occurrence_references
-                    .entry(occurrence.clone())
+                    .entry(*occurrence)
                     .or_default()
                     .insert(reference.clone());
             }
@@ -527,7 +527,6 @@ impl OrchestratorCorrelationGraph {
     }
 
     /// The reconstructed operations, in trace order.
-    #[must_use]
     pub fn operations(&self) -> impl Iterator<Item = (&TraceId, &OperationProvenance)> {
         self.operations.iter()
     }
@@ -540,7 +539,6 @@ impl OrchestratorCorrelationGraph {
 
     /// The record-set provenance that referenced one occurrence, in
     /// reference order — the reverse join an occurrence-side reader needs.
-    #[must_use]
     pub fn referencing(
         &self,
         occurrence_id: &OccurrenceId,
@@ -554,7 +552,6 @@ impl OrchestratorCorrelationGraph {
 
 impl OperationProvenance {
     /// The operation's reconstructed attempts, in attempt-identifier order.
-    #[must_use]
     pub fn attempts(&self) -> impl Iterator<Item = (&OpaqueId, &AttemptProvenance)> {
         self.attempts.iter()
     }
@@ -568,7 +565,6 @@ impl OperationProvenance {
 
 impl AttemptProvenance {
     /// The occurrences referenced per logical inference, in inference order.
-    #[must_use]
     pub fn inference_occurrences(
         &self,
     ) -> impl Iterator<Item = (&InferenceRequestId, &BTreeSet<OccurrenceId>)> {
@@ -577,14 +573,12 @@ impl AttemptProvenance {
 
     /// The occurrences referenced at the attempt's own scope — records that
     /// named no inference — in digest order.
-    #[must_use]
     pub fn attempt_occurrences(&self) -> impl Iterator<Item = &OccurrenceId> {
         self.attempt_occurrences.iter()
     }
 
     /// Every distinct occurrence this attempt's records referenced,
     /// deduplicated across both scopes, in digest order.
-    #[must_use]
     pub fn occurrences(&self) -> impl Iterator<Item = &OccurrenceId> {
         self.inference_occurrences
             .values()
@@ -599,19 +593,19 @@ impl OccurrenceReference {
     /// The referencing record's operation trace.
     #[must_use]
     pub fn trace_id(&self) -> &TraceId {
-        &self.trace_id
+        &self.trace
     }
 
     /// The referencing record's orchestrator attempt.
     #[must_use]
     pub fn orchestrator_attempt_id(&self) -> &OpaqueId {
-        &self.orchestrator_attempt_id
+        &self.orchestrator_attempt
     }
 
     /// The referencing record's logical inference, when it stated one.
     #[must_use]
     pub fn inference_request_id(&self) -> Option<&InferenceRequestId> {
-        self.inference_request_id.as_ref()
+        self.inference_request.as_ref()
     }
 }
 
