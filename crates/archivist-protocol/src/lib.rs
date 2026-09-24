@@ -48,6 +48,11 @@
 //!   (token accounting): the deterministic derivation from an adapter
 //!   projection's reading of captured inference records to the canonical
 //!   record, its digest, and its object key.
+//! - [`redaction_policy`] — the `redaction-v1` policy and immutable
+//!   detector corpus of plan Phase 10: the fixed structured-field
+//!   allowlist, the ordered detector registry, the typed irreversible
+//!   marker and pseudonym vocabularies, and the corpus digest the derived
+//!   episode carries as `detector_corpus_digest`.
 //! - [`envelope`] — the version 1 ingest envelope: field-level bounded
 //!   validation, unknown-field retention, reserved-name rejection, and
 //!   identity re-derivation.
@@ -70,8 +75,9 @@
 //! the corpus-pinned tests; the Phase 9 capture and read sides — the
 //! exact-inference capture artifact ([`schemas/v1/examples/inference`]),
 //! its correlation identities, the capture-side sequencing state machine,
-//! and the read-side reconstruction fold; and the Phase 10 usage-summary
-//! derivation. Signing and signature verification live in `archivist-auth`;
+//! and the read-side reconstruction fold; the Phase 10 usage-summary
+//! derivation; and the Phase 10 `redaction-v1` policy and detector-corpus
+//! seam. Signing and signature verification live in `archivist-auth`;
 //! the ingest-attempt signing preimage they sign over is fixed in
 //! [`derivation`]. Not implemented in this crate: multipart framing beyond
 //! the bounded envelope metadata part, any compression codec (the wire
@@ -93,6 +99,7 @@ pub mod inference_artifact;
 pub mod json;
 pub mod object_key;
 pub mod orchestrator_correlation;
+pub mod redaction_policy;
 pub mod sha256;
 pub mod usage_summary;
 pub mod vocabulary;
