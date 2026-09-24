@@ -60,6 +60,10 @@
 //!   path: the two durable raw-provenance documents built from a validated
 //!   envelope and committed at their derived keys with server-side
 //!   identity re-derivation and dedupe-not-conflict semantics.
+//! - [`sequence`] — the three-object commit sequence: blob, occurrence
+//!   manifest, then upload attestation in the protocol's normative order,
+//!   with the durable partial state a failed attempt stands in and the
+//!   convergence an identical retry performs over what already stands.
 //! - [`zstd_v1`] — the pinned `zstd-v1` storage codec: the deterministic
 //!   Zstandard encoder behind the blob commit path's
 //!   [`blob::BlobEncoder`] seam and the matching window-capped decoder,
@@ -105,7 +109,12 @@
 //! occurrence manifest and upload attestation at their derived keys with
 //! server-side identity re-derivation and dedupe-not-conflict semantics,
 //! and the pinned `zstd-v1` codec ([`zstd_v1`]) is the storage transform
-//! that path drives. The raw catalog source reader ([`catalog_source`]) reads that committed
+//! that path drives. The three-object commit sequence ([`sequence`])
+//! composes those layers into the protocol's normative write order —
+//! blob, occurrence manifest, upload attestation — reporting the exactly
+//! three durable partial states a failed attempt can stand in and
+//! converging an identical retry over what already stands.
+//! The raw catalog source reader ([`catalog_source`]) reads that committed
 //! raw provenance back — validating, deterministic iteration over a frozen
 //! tenant raw prefix for offline catalog rebuild and reference scans
 //! (plan Section 8, Phase 10).
@@ -134,4 +143,5 @@ pub mod multipart;
 pub mod probe;
 pub mod raw_write;
 pub mod scoped_write;
+pub mod sequence;
 pub mod zstd_v1;

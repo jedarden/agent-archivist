@@ -39,6 +39,7 @@ use std::net::TcpListener as StdListener;
 use std::sync::Arc;
 use std::time::Duration;
 
+use archivist_storage::commit::ConditionalCreateStore;
 use archivist_storage::control::ControlReadStore;
 use archivist_storage::ingest::IngestStorage;
 use archivist_storage::raw_write::RawWriteStore;
@@ -103,7 +104,7 @@ pub struct ArchivistServer<W, C> {
 
 impl<W, C> ArchivistServer<W, C>
 where
-    W: RawWriteStore + Send + Sync + 'static,
+    W: RawWriteStore + ConditionalCreateStore + Send + Sync + 'static,
     C: ControlReadStore + Send + Sync + 'static,
 {
     /// Compose a replica from validated parts. No I/O, no allocation of
@@ -164,7 +165,7 @@ pub struct BoundServer<W, C> {
 
 impl<W, C> BoundServer<W, C>
 where
-    W: RawWriteStore + Send + Sync + 'static,
+    W: RawWriteStore + ConditionalCreateStore + Send + Sync + 'static,
     C: ControlReadStore + Send + Sync + 'static,
 {
     /// The address the replica is listening on — the configured
@@ -340,6 +341,7 @@ mod tests {
         ClientId, Ed25519PublicKey, KeyId, StorageOutcome, TenantId,
     };
     use archivist_storage::capability::StoreCapabilities;
+    use archivist_storage::commit::ConditionalCreateStore;
     use archivist_storage::control::{AuthorizationEpoch, ControlReadStore, ControlRecord};
     use archivist_storage::error::{StorageError, StorageErrorKind};
     use archivist_storage::ingest::IngestStorage;
@@ -408,6 +410,11 @@ mod tests {
             unavailable()
         }
     }
+
+    // The writer-only adoption: the trait's default answers every atomic
+    // primitive request with capability-unavailable, matching the mock's
+    // unprobed report.
+    impl ConditionalCreateStore for MockRawStore {}
 
     #[derive(Clone, Copy, Debug)]
     struct MockControlStore;

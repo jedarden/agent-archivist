@@ -38,9 +38,12 @@ use archivist_protocol::vocabulary::{
     RequestId, Timestamp,
 };
 use archivist_storage::blob::{BlobEncoder, BlobExpectation, commit_blob};
+use archivist_storage::commit::ConditionalCreateStore;
 use archivist_storage::control::ControlReadStore;
 use archivist_storage::error::{StorageError, StorageErrorKind};
+use archivist_storage::manifests::Delegation;
 use archivist_storage::raw_write::RawWriteStore;
+use archivist_storage::sequence::commit_provenance;
 use archivist_storage::zstd_v1::ZstdV1Encoder;
 use axum::Router;
 use axum::extract::{Request, State};
@@ -78,7 +81,7 @@ const LIVE_BODY: &str = "{\"live\":true}";
 /// `Send` by their trait contracts.
 pub fn router<W, C>(state: Arc<ServerState<W, C>>) -> Router
 where
-    W: RawWriteStore + Send + Sync + 'static,
+    W: RawWriteStore + ConditionalCreateStore + Send + Sync + 'static,
     C: ControlReadStore + Send + Sync + 'static,
 {
     Router::new()
@@ -150,7 +153,7 @@ async fn metrics<W, C>(State(state): State<Arc<ServerState<W, C>>>) -> Response 
 /// the route fails closed with the retryable unavailable response.
 async fn ingest<W, C>(State(state): State<Arc<ServerState<W, C>>>, request: Request) -> Response
 where
-    W: RawWriteStore + Send + Sync + 'static,
+    W: RawWriteStore + ConditionalCreateStore + Send + Sync + 'static,
     C: ControlReadStore + Send + Sync + 'static,
 {
     let attempt = within_deadline(state.config().request_deadline(), async {
@@ -213,7 +216,7 @@ async fn attempt_pipeline<W, C>(
     request: Request,
 ) -> (IngestOutcome, Response)
 where
-    W: RawWriteStore + Send + Sync + 'static,
+    W: RawWriteStore + ConditionalCreateStore + Send + Sync + 'static,
     C: ControlReadStore + Send + Sync + 'static,
 {
     // The framing is validated from the header alone, before any body
@@ -423,15 +426,42 @@ impl<R: io::Read> io::Read for DigestingPayload<R> {
 /// sizes, digests, and the request signature verify, exactly the plan's
 /// completion contract.
 ///
-/// What renders on a verified commit is this slice's honest outcome: the
-/// occurrence and attestation writes are not wired yet, so the attempt
-/// holds a durable blob and nothing more — the registry's
-/// `server.partial_commit`, retryable, no receipt, the identical retry
-/// repairing the rest (protocol Section 4.1; RCPT-005). The store's
-/// physical answer travels untouched behind the commit (RCPT-003):
-/// created stays created, already-present stays already-present, and the
-/// payload is streamed and verified in both cases — a known digest never
-/// exempts the bytes (plan Section 7.7).
+/// The wire class for a provenance-tail failure — the mapping that
+/// applies once the blob is already durable (protocol Section 4.5):
+/// unavailable storage or a refused primitive leaves the attempt
+/// standing in a named partial state, which is the retryable
+/// partial-commit class — never the plain storage failure, because
+/// objects stand and the identical retry converges rather than resubmits
+/// — an incompatible object at a derived key is the integrity conflict
+/// it is (EC-06), and anything else is a defect.
+#[must_use]
+fn provenance_failure(kind: StorageErrorKind) -> ServerFailure {
+    match kind {
+        StorageErrorKind::IntegrityConflict => ServerFailure::IntegrityConflict,
+        StorageErrorKind::Unavailable | StorageErrorKind::CapabilityUnavailable => {
+            ServerFailure::PartialCommit
+        }
+        StorageErrorKind::ScopeViolation
+        | StorageErrorKind::MalformedInput
+        | StorageErrorKind::StaleEpoch
+        | StorageErrorKind::InventoryFault => ServerFailure::Internal,
+    }
+}
+
+/// What renders after the durable blob is this slice's honest outcome:
+/// behind the commit the provenance tail lands the occurrence manifest
+/// and then the upload attestation (protocol Section 4.1), and when all
+/// three objects stand the attempt still holds no receipt — the
+/// registry's `server.partial_commit`, retryable, the receipt strand
+/// owning the success rendering (RCPT-005). A tail failure maps by how
+/// far it stands (protocol Section 4.5): unavailable storage is the same
+/// partial-commit class with named durable state, an incompatible object
+/// at a derived key is the integrity conflict, and the identical retry
+/// converges on whatever already stands. The store's physical answer
+/// travels untouched behind every commit (RCPT-003): created stays
+/// created, already-present stays already-present, and the payload is
+/// streamed and verified in both cases — a known digest never exempts
+/// the bytes (plan Section 7.7).
 async fn attempt_commit<W, C>(
     state: Arc<ServerState<W, C>>,
     envelope: Envelope,
@@ -441,7 +471,7 @@ async fn attempt_commit<W, C>(
     evidence: authorize::UploaderEvidence,
 ) -> (IngestOutcome, Response)
 where
-    W: RawWriteStore + Send + Sync + 'static,
+    W: RawWriteStore + ConditionalCreateStore + Send + Sync + 'static,
     C: ControlReadStore + Send + Sync + 'static,
 {
     let limits = DecodeLimits::new(
@@ -463,6 +493,17 @@ where
     // Captured here, where the runtime is current; the blocking task uses
     // it to drive the commit's async store calls.
     let handle = tokio::runtime::Handle::current();
+    // The provenance tail's inputs, captured before the drain takes the
+    // envelope and the evidence: the same frozen envelope re-derives the
+    // manifest identities (SID-005), and the presentation mode is the
+    // one the verified evidence established — a relay grant present
+    // means the attestation records the relay's presentation (STO-013).
+    let provenance_envelope = envelope.clone();
+    let delegation = if evidence.delegation.is_some() {
+        Delegation::Relay
+    } else {
+        Delegation::Direct
+    };
 
     // The one blocking task drives the whole streaming tail: the decode
     // reads block on the parse bridge's channel, and the commit's store
@@ -523,12 +564,24 @@ where
             return failure;
         }
         match commit {
-            // Verified against the store, and still only the blob: the
-            // partial-commit class is this slice's honest answer
-            // (RCPT-005), and the metric counts the attempt as the
-            // failure it reported — `committed` means committed *and*
-            // receipted.
-            Ok(_committed) => ServerFailure::PartialCommit,
+            // The blob is durable; the provenance tail lands the
+            // occurrence manifest and then the upload attestation behind
+            // it (protocol Section 4.1). All three standing is still not
+            // this slice's success — no receipt has been issued, so the
+            // honest answer is the partial-commit class (RCPT-005) and
+            // the metric counts the attempt as the failure it reported
+            // (`committed` means committed *and* receipted). A failed
+            // tail maps by how far it stands (protocol Section 4.5).
+            Ok(_committed) => {
+                match handle.block_on(commit_provenance(
+                    state.storage().raw(),
+                    &provenance_envelope,
+                    delegation,
+                )) {
+                    Ok(_provenance) => ServerFailure::PartialCommit,
+                    Err(error) => provenance_failure(error.kind()),
+                }
+            }
             // The commit layer's own validation or the store failed with
             // nothing left behind; the kind carries the wire class.
             Err(error) => ServerFailure::from_storage_kind(error.kind()),
@@ -898,6 +951,7 @@ mod tests {
         StorageProfile, TenantId, Timestamp, TransportEncoding,
     };
     use archivist_storage::capability::StoreCapabilities;
+    use archivist_storage::commit::ConditionalCreateStore;
     use archivist_storage::control::{AuthorizationEpoch, ControlReadStore, ControlRecord};
     use archivist_storage::error::{StorageError, StorageErrorKind};
     use archivist_storage::ingest::IngestStorage;
@@ -1379,6 +1433,11 @@ mod tests {
         }
     }
 
+    // The writer-only adoption: the trait's default answers every atomic
+    // primitive request with capability-unavailable, matching the
+    // silent store's unprobed report.
+    impl ConditionalCreateStore for SilentRawStore {}
+
     #[derive(Clone, Copy, Debug)]
     struct SilentControlStore;
 
@@ -1703,6 +1762,11 @@ mod tests {
         }
     }
 
+    // The writer-only adoption: the trait's default answers every atomic
+    // primitive request with capability-unavailable, matching the
+    // recording store's unprobed report.
+    impl ConditionalCreateStore for RecordingRawStore {}
+
     /// The observation assertions over one store's recordings, so the
     /// tests read as what happened rather than as lock choreography.
     struct Observed {
@@ -1864,7 +1928,7 @@ mod tests {
     /// and dies with the test runtime.
     async fn serve<W, C>(state: Arc<ServerState<W, C>>) -> SocketAddr
     where
-        W: RawWriteStore + Send + Sync + 'static,
+        W: RawWriteStore + ConditionalCreateStore + Send + Sync + 'static,
         C: ControlReadStore + Send + Sync + 'static,
     {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
