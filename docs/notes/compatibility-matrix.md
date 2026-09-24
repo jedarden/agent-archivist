@@ -14,7 +14,11 @@ fingerprint absent here is a claim the project does not make.
 This note is the **source-adapter** matrix (plan Phase 6). The
 provider-capture route registry is a separate matrix with separate evidence
 (`archivist-adapter-sdk::compatibility`, plan Phase 9); neither subsumes the
-other, and a row in one confers nothing in the other.
+other, and a row in one confers nothing in the other. The SDK's synthetic
+reference adapter (`synthetic-append-only-jsonl-v1`) is deliberately not a
+row: it is the conformance suite's own subject, not a released source, and
+support for it is a statement about the SDK contracts, not about any
+harness.
 
 Content-free like the inventory it reconciles: tokens, versions, counts, and
 verdicts only — no host, user, path, session, account, or credential text.
