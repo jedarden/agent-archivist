@@ -133,10 +133,10 @@ impl StructuredField {
     /// Every allowlisted field, in the pinned allowlist order — the order
     /// the corpus document and [`RedactionCorpus::allowlist`] both use.
     pub const ALL: [Self; 4] = [
-        Self::Role,
-        Self::Ordinal,
-        Self::SourceTime,
-        Self::ParentOrdinals,
+        crate::redaction_policy::StructuredField::Role,
+        crate::redaction_policy::StructuredField::Ordinal,
+        crate::redaction_policy::StructuredField::SourceTime,
+        crate::redaction_policy::StructuredField::ParentOrdinals,
     ];
 
     /// The wire token the corpus document carries.
@@ -181,11 +181,11 @@ impl MarkerClass {
     /// Every marker class, in registry order (the order the pinned
     /// detectors that emit them run in).
     pub const ALL: [Self; 5] = [
-        Self::PinnedCredential,
-        Self::AuthorizationHeader,
-        Self::PrivateKeyBlock,
-        Self::EnvironmentSecret,
-        Self::HighEntropyToken,
+        crate::redaction_policy::MarkerClass::PinnedCredential,
+        crate::redaction_policy::MarkerClass::AuthorizationHeader,
+        crate::redaction_policy::MarkerClass::PrivateKeyBlock,
+        crate::redaction_policy::MarkerClass::EnvironmentSecret,
+        crate::redaction_policy::MarkerClass::HighEntropyToken,
     ];
 
     /// The class token the corpus document, the marker text, and the
@@ -245,11 +245,11 @@ pub enum PseudonymClass {
 impl PseudonymClass {
     /// Every pseudonym class, in registry order.
     pub const ALL: [Self; 5] = [
-        Self::AbsolutePath,
-        Self::Hostname,
-        Self::Username,
-        Self::EmailAddress,
-        Self::IpAddress,
+        crate::redaction_policy::PseudonymClass::AbsolutePath,
+        crate::redaction_policy::PseudonymClass::Hostname,
+        crate::redaction_policy::PseudonymClass::Username,
+        crate::redaction_policy::PseudonymClass::EmailAddress,
+        crate::redaction_policy::PseudonymClass::IpAddress,
     ];
 
     /// The class token the corpus document and the episode census carry.

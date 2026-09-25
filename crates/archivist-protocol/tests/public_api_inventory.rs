@@ -193,6 +193,34 @@ fn type_inventory() -> Vec<(&'static str, &'static str)> {
             ),
         ),
         (
+            "redaction_policy::CorpusError",
+            type_name::<archivist_protocol::redaction_policy::CorpusError>(),
+        ),
+        (
+            "redaction_policy::DetectorEmit",
+            type_name::<archivist_protocol::redaction_policy::DetectorEmit>(),
+        ),
+        (
+            "redaction_policy::DetectorEntry",
+            type_name::<archivist_protocol::redaction_policy::DetectorEntry>(),
+        ),
+        (
+            "redaction_policy::MarkerClass",
+            type_name::<archivist_protocol::redaction_policy::MarkerClass>(),
+        ),
+        (
+            "redaction_policy::PseudonymClass",
+            type_name::<archivist_protocol::redaction_policy::PseudonymClass>(),
+        ),
+        (
+            "redaction_policy::RedactionCorpus",
+            type_name::<archivist_protocol::redaction_policy::RedactionCorpus>(),
+        ),
+        (
+            "redaction_policy::StructuredField",
+            type_name::<archivist_protocol::redaction_policy::StructuredField>(),
+        ),
+        (
             "sha256::Sha256",
             type_name::<archivist_protocol::sha256::Sha256>(),
         ),
@@ -393,7 +421,7 @@ fn type_inventory() -> Vec<(&'static str, &'static str)> {
 
 /// Number of documented public types in [`type_inventory`]; the boundary gate
 /// cross-checks the literal against the source.
-const PUBLIC_TYPES: usize = 87;
+const PUBLIC_TYPES: usize = 94;
 
 /// Number of pinned signatures in [`function_inventory`]; the boundary gate
 /// cross-checks the literal against the source.
@@ -510,6 +538,14 @@ fn constant_inventory() -> Vec<&'static str> {
         "json::DEFAULT_MAX_BYTES",
         "json::DEFAULT_MAX_DEPTH",
         "orchestrator_correlation::ORCHESTRATOR_CORRELATION_VERSION",
+        "redaction_policy::CORPUS_VERSION",
+        "redaction_policy::MARKER_FORMAT",
+        "redaction_policy::PIPELINE_ID",
+        "redaction_policy::PIPELINE_VERSION",
+        "redaction_policy::PSEUDONYM_FORMAT",
+        "redaction_policy::PSEUDONYM_KEY_ID_CONSTRUCTION",
+        "redaction_policy::PSEUDONYM_KEY_ID_LABEL",
+        "redaction_policy::TEST_SUITE_CORPUS",
         "usage_summary::PIPELINE_ID",
         "usage_summary::PIPELINE_VERSION",
         "usage_summary::USAGE_SUMMARY_VERSION",
