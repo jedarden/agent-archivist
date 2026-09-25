@@ -29,12 +29,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
 use std::time::Instant;
 
+use archivist_auth::receipt::Receipt;
 use archivist_auth::request_verification::AttemptAuthorization;
 use archivist_protocol::envelope::{Envelope, EnvelopeError};
 use archivist_protocol::json::{Object, Value};
 use archivist_protocol::sha256::Sha256;
 use archivist_protocol::vocabulary::{
-    EnvelopeDigest, PayloadCanonicalDigest, PayloadTransportDigest, RequestContentDigest,
+    EnvelopeDigest, KeyId, PayloadCanonicalDigest, PayloadTransportDigest, RequestContentDigest,
     RequestId, Timestamp,
 };
 use archivist_storage::blob::{BlobEncoder, BlobExpectation, commit_blob};
@@ -448,13 +449,20 @@ fn provenance_failure(kind: StorageErrorKind) -> ServerFailure {
     }
 }
 
-/// What renders after the durable blob is this slice's honest outcome:
-/// behind the commit the provenance tail lands the occurrence manifest
-/// and then the upload attestation (protocol Section 4.1), and when all
-/// three objects stand the attempt still holds no receipt — the
-/// registry's `server.partial_commit`, retryable, the receipt strand
-/// owning the success rendering (RCPT-005). A tail failure maps by how
-/// far it stands (protocol Section 4.5): unavailable storage is the same
+/// What renders after the durable blob: behind the commit the
+/// provenance tail lands the occurrence manifest and then the upload
+/// attestation (protocol Section 4.1), and when all three objects stand
+/// the receipt strand renders success — the tenant's retained signing
+/// schedule issues the authenticated receipt binding the identities, the
+/// server-derived keys, the per-object outcomes, the successful
+/// authorization key and epoch, the signer chain, and the commit
+/// instant, as the HTTP 200 body (RCPT-001, RCPT-002, RCPT-006). A
+/// tenant without a retained schedule — and a commit instant every
+/// retained key refuses — still holds no receipt, so the honest answer
+/// stays the registry's `server.partial_commit`, retryable (RCPT-005):
+/// success is only what a receipt can prove, and the identical retry
+/// converges on the standing objects. A tail failure maps by how far it
+/// stands (protocol Section 4.5): unavailable storage is the same
 /// partial-commit class with named durable state, an incompatible object
 /// at a derived key is the integrity conflict, and the identical retry
 /// converges on whatever already stands. The store's physical answer
@@ -462,6 +470,66 @@ fn provenance_failure(kind: StorageErrorKind) -> ServerFailure {
 /// created, already-present stays already-present, and the payload is
 /// streamed and verified in both cases — a known digest never exempts
 /// the bytes (plan Section 7.7).
+/// Land the provenance tail behind a durable blob and sign the
+/// attempt's receipt when all three objects stand (RCPT-001): the
+/// schedule signs the evidence and the attempt answers success. When
+/// no retained key can sign this tenant's commit, or the instant falls
+/// outside every window, the honest answer stays the partial-commit
+/// class (RCPT-005): the objects stand, the identical retry converges
+/// on them, and success is only what a receipt can prove. A failed
+/// tail maps by how far it stands (protocol Section 4.5).
+fn land_tail_and_receipt<W, C>(
+    state: &ServerState<W, C>,
+    handle: &tokio::runtime::Handle,
+    provenance_envelope: &Envelope,
+    delegation: Delegation,
+    blob: &archivist_storage::blob::BlobCommit,
+    authorization_key_id: &KeyId,
+    authorization_epoch: u64,
+) -> Result<Receipt, ServerFailure>
+where
+    W: RawWriteStore + ConditionalCreateStore,
+    C: ControlReadStore,
+{
+    match handle.block_on(commit_provenance(
+        state.storage().raw(),
+        provenance_envelope,
+        delegation,
+    )) {
+        Ok(provenance) => {
+            // The commit instant is read where the third object stood:
+            // the receipt names the commit that exists, not the attempt
+            // that started.
+            let commit_time = authorize::now_timestamp();
+            crate::receipts::issue(
+                state.receipts(),
+                provenance_envelope,
+                blob,
+                &provenance,
+                authorization_key_id,
+                authorization_epoch,
+                &commit_time,
+            )
+            .map_err(|_unreceipted| ServerFailure::PartialCommit)
+        }
+        Err(error) => Err(provenance_failure(error.kind())),
+    }
+}
+
+/// The success contract (protocol Section 5.1): HTTP 200, the receipt
+/// media type, and the signed canonical bytes as the body — the
+/// acceptance evidence itself, nothing else.
+fn receipt_outcome(receipt: &Receipt) -> (IngestOutcome, Response) {
+    (
+        IngestOutcome::Committed,
+        response(
+            StatusCode::OK,
+            crate::receipts::RECEIPT_MEDIA_TYPE,
+            receipt.canonical_bytes(),
+        ),
+    )
+}
+
 async fn attempt_commit<W, C>(
     state: Arc<ServerState<W, C>>,
     envelope: Envelope,
@@ -504,98 +572,118 @@ where
     } else {
         Delegation::Direct
     };
+    // The receipt's authorization evidence, captured before the drain
+    // takes the record: the key and epoch the verified signed request
+    // presented are the ones that authorized the commit, and the receipt
+    // is their one sanctioned home (RCPT-002; protocol Section 5.1) —
+    // they exist nowhere durable, so they travel to the signing site by
+    // value.
+    let authorization_key_id = *record.uploader_key_id();
+    let authorization_epoch = record.authorization_epoch();
 
     // The one blocking task drives the whole streaming tail: the decode
     // reads block on the parse bridge's channel, and the commit's store
-    // futures run under the runtime handle on this same thread.
-    let attempt = tokio::task::spawn_blocking(move || {
-        let source = DigestingPayload {
-            inner: stream,
-            transport: Sha256::new(),
-        };
-        let decoder = match TransportDecoder::new(encoding, source, limits) {
-            Ok(decoder) => decoder,
-            Err(error) => return decode_failure(error),
-        };
-        // The pledge is the envelope's declared canonical extent — the
-        // declaration the whole stream is held to; the encoder enforces
-        // it, and a rejection here is a build or version drift.
-        let Ok(encoder) = ZstdV1Encoder::new(expectation.uncompressed_bytes()) else {
-            return ServerFailure::Internal;
-        };
-        // The drain's verdict gates the commit: until the drain has
-        // verified the framing closure, the declared size, and the
-        // signed request over the digests it computed, the encoder
-        // refuses its epilogue, which is what aborts the live session.
-        // The verdict is shared by reference with the drain and the
-        // encoder, so it carries across the encoder trait's `Sync`
-        // bound.
-        let gate = AtomicBool::new(true);
-        let cause = Mutex::new(None);
-        let mut gated = GateEncoder {
-            inner: encoder,
-            gate: &gate,
-        };
-        let mut chunks = DrainChunks {
-            decoder: Some(decoder),
-            declared_bytes: expectation.uncompressed_bytes(),
-            drained_bytes: 0,
-            canonical: Sha256::new(),
-            envelope,
-            envelope_digest,
-            record,
-            evidence,
-            now,
-            request_hasher,
-            gate: &gate,
-            cause: &cause,
-        };
-        let commit = handle.block_on(commit_blob(
-            state.storage().raw(),
-            &uploads,
-            &tenant,
-            expectation,
-            &mut gated,
-            &mut chunks,
-        ));
-        // A recorded cause is the attempt's true failure: the commit
-        // result behind it is only the abort the gate forced.
-        if let Some(failure) = cause.lock().expect("cause lock").take() {
-            return failure;
-        }
-        match commit {
-            // The blob is durable; the provenance tail lands the
-            // occurrence manifest and then the upload attestation behind
-            // it (protocol Section 4.1). All three standing is still not
-            // this slice's success — no receipt has been issued, so the
-            // honest answer is the partial-commit class (RCPT-005) and
-            // the metric counts the attempt as the failure it reported
-            // (`committed` means committed *and* receipted). A failed
-            // tail maps by how far it stands (protocol Section 4.5).
-            Ok(_committed) => {
-                match handle.block_on(commit_provenance(
-                    state.storage().raw(),
+    // futures run under the runtime handle on this same thread. Its
+    // success value is the signed receipt.
+    let attempt: Result<Result<Receipt, ServerFailure>, _> =
+        tokio::task::spawn_blocking(move || {
+            let source = DigestingPayload {
+                inner: stream,
+                transport: Sha256::new(),
+            };
+            let decoder = match TransportDecoder::new(encoding, source, limits) {
+                Ok(decoder) => decoder,
+                Err(error) => return Err(decode_failure(error)),
+            };
+            // The pledge is the envelope's declared canonical extent — the
+            // declaration the whole stream is held to; the encoder enforces
+            // it, and a rejection here is a build or version drift.
+            let Ok(encoder) = ZstdV1Encoder::new(expectation.uncompressed_bytes()) else {
+                return Err(ServerFailure::Internal);
+            };
+            // The drain's verdict gates the commit: until the drain has
+            // verified the framing closure, the declared size, and the
+            // signed request over the digests it computed, the encoder
+            // refuses its epilogue, which is what aborts the live session.
+            // The verdict is shared by reference with the drain and the
+            // encoder, so it carries across the encoder trait's `Sync`
+            // bound.
+            let gate = AtomicBool::new(true);
+            let cause = Mutex::new(None);
+            let mut gated = GateEncoder {
+                inner: encoder,
+                gate: &gate,
+            };
+            let mut chunks = DrainChunks {
+                decoder: Some(decoder),
+                declared_bytes: expectation.uncompressed_bytes(),
+                drained_bytes: 0,
+                canonical: Sha256::new(),
+                envelope,
+                envelope_digest,
+                record,
+                evidence,
+                now,
+                request_hasher,
+                gate: &gate,
+                cause: &cause,
+            };
+            let commit = handle.block_on(commit_blob(
+                state.storage().raw(),
+                &uploads,
+                &tenant,
+                expectation,
+                &mut gated,
+                &mut chunks,
+            ));
+            // A recorded cause is the attempt's true failure: the commit
+            // result behind it is only the abort the gate forced.
+            if let Some(failure) = cause.lock().expect("cause lock").take() {
+                return Err(failure);
+            }
+            match commit {
+                // The blob is durable; the provenance tail lands the
+                // occurrence manifest and then the upload attestation behind
+                // it (protocol Section 4.1). All three standing is the
+                // receipt's precondition (RCPT-001): the schedule signs the
+                // evidence and the attempt answers success — and when no
+                // retained key can sign this tenant's commit, or the instant
+                // falls outside every window, the honest answer stays the
+                // partial-commit class (RCPT-005): the objects stand, the
+                // identical retry converges on them, and success is only
+                // what a receipt can prove. A failed tail maps by how far it
+                // stands (protocol Section 4.5).
+                Ok(blob) => land_tail_and_receipt(
+                    &state,
+                    &handle,
                     &provenance_envelope,
                     delegation,
-                )) {
-                    Ok(_provenance) => ServerFailure::PartialCommit,
-                    Err(error) => provenance_failure(error.kind()),
-                }
+                    &blob,
+                    &authorization_key_id,
+                    authorization_epoch,
+                ),
+                // The commit layer's own validation or the store failed with
+                // nothing left behind; the kind carries the wire class.
+                Err(error) => Err(ServerFailure::from_storage_kind(error.kind())),
             }
-            // The commit layer's own validation or the store failed with
-            // nothing left behind; the kind carries the wire class.
-            Err(error) => ServerFailure::from_storage_kind(error.kind()),
-        }
-    })
-    .await;
-    let failure = match attempt {
+        })
+        .await;
+    match attempt {
         // A panicked commit task is a defect, not a wire condition; the
         // aborting writer's Drop already abandoned the session.
-        Err(_join) => ServerFailure::Internal,
-        Ok(failure) => failure,
-    };
-    let outcome = failure.outcome();
-    (outcome, failure_response(failure, Some(request_id)))
+        Err(_join) => {
+            let failure = ServerFailure::Internal;
+            (
+                failure.outcome(),
+                failure_response(failure, Some(request_id)),
+            )
+        }
+        Ok(Err(failure)) => (
+            failure.outcome(),
+            failure_response(failure, Some(request_id)),
+        ),
+        Ok(Ok(receipt)) => receipt_outcome(&receipt),
+    }
 }
 
 /// The route failure for a transport-decode refusal: the two limit
@@ -945,13 +1033,15 @@ mod tests {
     use archivist_auth::ed25519;
     use archivist_auth::request_verification::AttemptAuthorization;
     use archivist_protocol::json;
+    use archivist_protocol::object_key::AttestationObjectKey;
     use archivist_protocol::object_key::BlobObjectKey;
+    use archivist_protocol::object_key::OccurrenceObjectKey;
     use archivist_protocol::vocabulary::{
         ClientId, Ed25519PublicKey, IncomingChecksum, KeyId, RequestId, StorageOutcome,
         StorageProfile, TenantId, Timestamp, TransportEncoding,
     };
-    use archivist_storage::capability::StoreCapabilities;
-    use archivist_storage::commit::ConditionalCreateStore;
+    use archivist_storage::capability::{ConditionalCreate, StoreCapabilities};
+    use archivist_storage::commit::{ConditionalCreateStore, CreateIfAbsent, ExistingObject};
     use archivist_storage::control::{AuthorizationEpoch, ControlReadStore, ControlRecord};
     use archivist_storage::error::{StorageError, StorageErrorKind};
     use archivist_storage::ingest::IngestStorage;
@@ -1655,6 +1745,17 @@ mod tests {
         scripted: std::sync::Mutex<std::collections::VecDeque<StorageOutcome>>,
         /// The outcomes `commit_multipart` answered with, in order.
         answered: std::sync::Mutex<Vec<StorageOutcome>>,
+        /// Whether the store reports the atomic create-if-absent
+        /// capability — flipped only by the three-object scripts, so
+        /// every default store keeps today's writer-only manifests.
+        conditional: std::sync::atomic::AtomicBool,
+        /// The primitive answers `create_manifest_if_absent` resolves
+        /// from, in commit order (occurrence, then attestation).
+        creates: std::sync::Mutex<std::collections::VecDeque<StorageOutcome>>,
+        /// The primitive answers `create_manifest_if_absent` gave, in
+        /// order — the raw script, before the decision layer classifies
+        /// it into the outcome the receipt binds.
+        manifest_answers: std::sync::Mutex<Vec<StorageOutcome>>,
         /// The blob keys sessions were begun under, in order.
         begun_keys: std::sync::Mutex<Vec<BlobObjectKey>>,
         /// The stored bytes written into parts, in write order.
@@ -1687,6 +1788,27 @@ mod tests {
             store
         }
 
+        /// The three-object commit double the receipt tests drive: blob
+        /// sessions answer `blob` in order, the store reports the atomic
+        /// create-if-absent capability, and manifest creates resolve as
+        /// `manifests` in commit order (occurrence, then attestation).
+        ///
+        /// A manifest's `created` reports the primitive's created answer;
+        /// `already_present` reports byte-equivalent readable evidence
+        /// (the stored-content SHA-256 the decision layer classifies as
+        /// convergence); `logically_committed_unknown_physical_result`
+        /// reports bare presence with nothing readable (RCPT-004). The
+        /// fourth token, `replaced_equivalent`, names an overwrite
+        /// result the conditional primitive cannot produce, so scripting
+        /// it for a manifest refuses rather than lies.
+        fn scripted_three_object(blob: &[StorageOutcome], manifests: &[StorageOutcome]) -> Self {
+            let store = Self::scripted(blob);
+            store.recordings.conditional.store(true, Ordering::SeqCst);
+            *store.recordings.creates.lock().expect("creates lock") =
+                manifests.iter().copied().collect();
+            store
+        }
+
         /// The shared observation handle.
         fn recordings(&self) -> Arc<Recordings> {
             Arc::clone(&self.recordings)
@@ -1695,7 +1817,15 @@ mod tests {
 
     impl RawWriteStore for RecordingRawStore {
         fn capabilities(&self) -> StoreCapabilities {
-            StoreCapabilities::unprobed()
+            let mut capabilities = StoreCapabilities::unprobed();
+            if self
+                .recordings
+                .conditional
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                capabilities.conditional_create = ConditionalCreate::Supported;
+            }
+            capabilities
         }
 
         async fn write_manifest(
@@ -1762,10 +1892,57 @@ mod tests {
         }
     }
 
-    // The writer-only adoption: the trait's default answers every atomic
-    // primitive request with capability-unavailable, matching the
-    // recording store's unprobed report.
-    impl ConditionalCreateStore for RecordingRawStore {}
+    // The atomic primitive over manifest keys: scripted only for the
+    // three-object stores, and the honest absence — capability
+    // unavailable, matching the unprobed report — for every store the
+    // conditional flag never armed.
+    impl ConditionalCreateStore for RecordingRawStore {
+        async fn create_manifest_if_absent(
+            &self,
+            _key: &ManifestKey,
+            bytes: &[u8],
+        ) -> Result<CreateIfAbsent, StorageError> {
+            if !self
+                .recordings
+                .conditional
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return unavailable();
+            }
+            let scripted = self
+                .recordings
+                .creates
+                .lock()
+                .expect("creates lock")
+                .pop_front();
+            let Some(answer) = scripted else {
+                return unavailable();
+            };
+            self.recordings
+                .manifest_answers
+                .lock()
+                .expect("manifest answers lock")
+                .push(answer);
+            Ok(match answer {
+                StorageOutcome::Created => CreateIfAbsent::Created,
+                StorageOutcome::AlreadyPresent => CreateIfAbsent::AlreadyExists(
+                    ExistingObject::new()
+                        .with_stored_sha256(archivist_protocol::sha256::digest(bytes)),
+                ),
+                // Presence without readable evidence either way: the
+                // decision layer resolves it as the unknown physical
+                // result, never as deduplication (RCPT-004).
+                StorageOutcome::LogicallyCommittedUnknownPhysicalResult => {
+                    CreateIfAbsent::AlreadyExists(ExistingObject::new())
+                }
+                // The conditional primitive has no overwrite answer to
+                // report; a script that names one is a test defect.
+                StorageOutcome::ReplacedEquivalent => {
+                    unreachable!("the atomic create-if-absent primitive cannot report replacement")
+                }
+            })
+        }
+    }
 
     /// The observation assertions over one store's recordings, so the
     /// tests read as what happened rather than as lock choreography.
@@ -1809,6 +1986,15 @@ mod tests {
                 .expect("answered outcomes lock")
                 .clone()
         }
+
+        /// The manifest primitives' scripted answers, in commit order.
+        fn manifest_answers(&self) -> Vec<StorageOutcome> {
+            self.recordings
+                .manifest_answers
+                .lock()
+                .expect("manifest answers lock")
+                .clone()
+        }
     }
 
     /// [`test_state`]'s configuration: the registry defaults.
@@ -1848,6 +2034,7 @@ mod tests {
                 config,
                 trust,
                 IngestStorage::compose(store, LinkedControlStore::for_envelope(envelope)),
+                crate::receipts::ReceiptSigners::new(),
             )),
             observed,
         )
@@ -1862,6 +2049,250 @@ mod tests {
         BlobEncoder::update(&mut encoder, canonical, &mut frame).expect("frame body");
         BlobEncoder::finish(&mut encoder, &mut frame).expect("frame epilogue");
         frame
+    }
+
+    /// The test tenant as a parsed identifier.
+    fn test_tenant() -> TenantId {
+        TEST_TENANT.parse().expect("the test tenant parses")
+    }
+
+    /// One UTC instant `days` before now: the receipt-window anchor the
+    /// schedule helper keeps relative to the wall clock, so the tests'
+    /// 37-day signing windows never rot behind a pinned date.
+    fn utc_days_ago(days: u64) -> Timestamp {
+        let seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs());
+        authorize::render_timestamp(seconds.saturating_sub(days * 86_400))
+            .expect("a calendar-era instant renders")
+    }
+
+    /// Write one 32-byte seed to a mode-restricted file and return its
+    /// protected reference with the file's path — the only constructor
+    /// the private halves accept (SEC-006). The reference resolves
+    /// eagerly at load, so the file must outlive every key load it
+    /// feeds; the caller removes both files once its key material is
+    /// loaded, the way a replica reads keys at startup and never again.
+    fn seed_reference(
+        seed: [u8; 32],
+        slot: u8,
+    ) -> (
+        archivist_auth::reference::ProtectedReference,
+        std::path::PathBuf,
+    ) {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir().join(format!(
+            "archivist-routes-receipt-{}-{slot}.key",
+            std::process::id()
+        ));
+        std::fs::write(&path, seed).expect("seed file");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("seed mode");
+        let reference = archivist_auth::reference::ProtectedReference::parse(&format!(
+            "file:{}",
+            path.display()
+        ))
+        .expect("the seed reference parses");
+        (reference, path)
+    }
+
+    /// One certified receipt-key schedule for the test tenant, signed
+    /// into existence by the same authority seed the trust anchors pin,
+    /// with a signing window starting `days` days ago (the window spans
+    /// 37 days: the 30-day rotation plus the seven-day overlap).
+    fn test_receipt_schedule(days_ago: u64) -> archivist_auth::receipt::ReceiptKeySchedule {
+        use archivist_auth::receipt::{
+            AuthoritySigner, CertifiedReceiptKey, ReceiptKeySchedule, ReceiptSigningKey,
+        };
+        let valid_from = utc_days_ago(days_ago);
+        let (signing_reference, signing_path) = seed_reference([0x42; 32], 1);
+        let signing = ReceiptSigningKey::from_secret_reference(test_tenant(), &signing_reference)
+            .expect("the receipt key loads");
+        let (authority_reference, authority_path) = seed_reference(TEST_AUTHORITY_SEED, 2);
+        let authority = AuthoritySigner::from_secret_reference(test_tenant(), &authority_reference)
+            .expect("the authority key loads");
+        let certified =
+            CertifiedReceiptKey::certify(signing, &authority, valid_from.clone(), valid_from)
+                .expect("the test authority certifies the receipt key");
+        let _ = std::fs::remove_file(signing_path);
+        let _ = std::fs::remove_file(authority_path);
+        ReceiptKeySchedule::new(certified)
+    }
+
+    /// The route's state over one recording store, linked evidence for
+    /// one envelope's uploader, and a receipt signing schedule for the
+    /// test tenant — the composition the receipt tests drive.
+    fn receipt_state_with_evidence(
+        store: RecordingRawStore,
+        envelope: &Envelope,
+        schedule: archivist_auth::receipt::ReceiptKeySchedule,
+    ) -> (
+        Arc<ServerState<RecordingRawStore, LinkedControlStore>>,
+        Observed,
+    ) {
+        let observed = Observed {
+            recordings: store.recordings(),
+        };
+        let trust = TrustConfig::from_roots(vec![
+            TenantTrustRoot::new(
+                TEST_TENANT,
+                &Ed25519PublicKey::from_raw(ed25519::public_key_from_seed(&TEST_AUTHORITY_SEED))
+                    .to_hex(),
+            )
+            .expect("test tenant root validates"),
+        ])
+        .expect("one-tenant anchor set validates");
+        let mut receipts = crate::receipts::ReceiptSigners::new();
+        receipts.install(schedule);
+        (
+            Arc::new(ServerState::new(
+                test_config(),
+                trust,
+                IngestStorage::compose(store, LinkedControlStore::for_envelope(envelope)),
+                receipts,
+            )),
+            observed,
+        )
+    }
+
+    /// The pinned authority root the test tenant's receipts verify
+    /// against — the same seed the trust anchors and the schedule's
+    /// certification used, so the offline walk succeeds exactly when the
+    /// chain itself holds (RCPT-006).
+    fn pinned_test_root() -> archivist_auth::authority::PinnedAuthorityRoot {
+        archivist_auth::authority::PinnedAuthorityRoot::new(
+            test_tenant(),
+            Ed25519PublicKey::from_raw(ed25519::public_key_from_seed(&TEST_AUTHORITY_SEED)),
+        )
+    }
+
+    /// Parse and verify a served receipt body the way a client does,
+    /// with nothing but its pinned root (RCPT-006): the chain walk, the
+    /// window check, and the signature over the canonical unsigned
+    /// bytes.
+    fn verify_served_receipt(body: &[u8]) -> archivist_auth::receipt::Receipt {
+        let receipt =
+            archivist_auth::receipt::Receipt::parse(body).expect("the served body is a receipt");
+        receipt
+            .verify(&pinned_test_root(), |_| None)
+            .expect("the served receipt verifies offline");
+        receipt
+    }
+
+    /// The member names the receipt contract pins, canonically sorted —
+    /// the closed nineteen-member shape of `ingest-receipt.json`.
+    fn receipt_member_names() -> Vec<&'static str> {
+        vec![
+            "attestation_id",
+            "attestation_object_key",
+            "attestation_outcome",
+            "authorization_epoch",
+            "authorization_key_id",
+            "blob_digest",
+            "blob_object_key",
+            "blob_outcome",
+            "certificate",
+            "commit_time",
+            "occurrence_id",
+            "occurrence_object_key",
+            "occurrence_outcome",
+            "receipt_key_id",
+            "receipt_version",
+            "request_id",
+            "signature",
+            "signature_algorithm",
+            "tenant_id",
+        ]
+    }
+
+    /// A receipt object's text member, as a `&str`.
+    fn receipt_text<'a>(object: &'a json::Object, member: &str) -> &'a str {
+        match object.get(member) {
+            Some(json::Value::Text(text)) => text,
+            other => panic!("{member} is text, found {other:?}"),
+        }
+    }
+
+    /// The receipt's identity and object-key members against the
+    /// envelope the client sent: the five frozen identities (RCPT-002),
+    /// and the three server-derived keys re-derived from those
+    /// identities alone (ID-008: a receipt reports them, never
+    /// delegates them). A client needs nothing but its own request to
+    /// run this cross-check (protocol Section 5.2).
+    fn assert_receipt_identities_and_keys(object: &json::Object, envelope: &Envelope) {
+        // The identities the envelope froze (RCPT-002) — the client
+        // never takes the signature's word for them (protocol 5.2).
+        assert_eq!(
+            receipt_text(object, "tenant_id"),
+            envelope.tenant_id.as_str()
+        );
+        assert_eq!(
+            receipt_text(object, "request_id"),
+            envelope.request_id.as_str()
+        );
+        assert_eq!(
+            receipt_text(object, "occurrence_id"),
+            &envelope.occurrence_id.to_hex()
+        );
+        assert_eq!(
+            receipt_text(object, "attestation_id"),
+            &envelope.attestation_id.to_hex()
+        );
+        assert_eq!(
+            receipt_text(object, "blob_digest"),
+            &envelope.blob_digest.to_hex()
+        );
+        // The server-derived keys: the blob's content address, and the
+        // manifest keys the commits landed at.
+        let session = envelope.rederive_session_hash();
+        assert_eq!(
+            receipt_text(object, "blob_object_key"),
+            BlobObjectKey::new(
+                &envelope.tenant_id,
+                StorageProfile::ZstdV1,
+                &envelope.blob_digest
+            )
+            .as_str()
+        );
+        assert_eq!(
+            receipt_text(object, "occurrence_object_key"),
+            OccurrenceObjectKey::new(
+                &envelope.tenant_id,
+                &envelope.origin_client_id,
+                &envelope.harness,
+                &session,
+                &envelope.occurrence_id
+            )
+            .as_str()
+        );
+        assert_eq!(
+            receipt_text(object, "attestation_object_key"),
+            AttestationObjectKey::new(
+                &envelope.tenant_id,
+                &envelope.occurrence_id,
+                &envelope.attestation_id
+            )
+            .as_str()
+        );
+    }
+
+    /// Post the signed corpus attempt for `id` and return the exchange,
+    /// asserting nothing — each test names what it checks.
+    async fn post_signed_attempt(address: SocketAddr, id: &str) -> Exchanged {
+        let body = corpus_file(id, "request_body");
+        let envelope =
+            Envelope::parse(&corpus_file(id, "envelope")).expect("the fixture envelope parses");
+        let canonical = corpus_file(id, "payload");
+        exchange_bytes(
+            address,
+            &signed_ingest_request(
+                &corpus_content_type(id),
+                &body,
+                &envelope,
+                &canonical,
+                &canonical,
+            ),
+        )
+        .await
     }
 
     /// The SHA-256 of `bytes` as the envelope's hex digest text.
@@ -1921,6 +2352,7 @@ mod tests {
             config,
             trust,
             IngestStorage::compose(SilentRawStore, SilentControlStore),
+            crate::receipts::ReceiptSigners::new(),
         ))
     }
 
@@ -2280,6 +2712,448 @@ mod tests {
             vec![StorageOutcome::Created, StorageOutcome::AlreadyPresent]
         );
         assert_eq!(state.uploads().live_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_complete_commit_answers_the_signed_receipt() {
+        let id = "valid-direct-baseline";
+        let envelope =
+            Envelope::parse(&corpus_file(id, "envelope")).expect("the fixture envelope parses");
+        let (state, store) = receipt_state_with_evidence(
+            RecordingRawStore::scripted_three_object(
+                &[StorageOutcome::Created],
+                &[StorageOutcome::Created, StorageOutcome::Created],
+            ),
+            &envelope,
+            test_receipt_schedule(1),
+        );
+        let address = serve(Arc::clone(&state)).await;
+        let response = post_signed_attempt(address, id).await;
+
+        // The success contract (protocol Section 5.1): HTTP 200, the
+        // receipt media type, and the signed canonical bytes as the
+        // body — the wire object is the bare canonicalization, no file
+        // convention bytes.
+        assert_eq!(response.status, 200);
+        assert_eq!(
+            response.content_type.as_deref(),
+            Some(crate::receipts::RECEIPT_MEDIA_TYPE)
+        );
+        let receipt = verify_served_receipt(&response.body);
+        assert_eq!(receipt.canonical_bytes(), response.body);
+
+        // The closed shape: exactly the nineteen pinned members,
+        // canonically sorted.
+        let parsed = json::parse(&response.body).expect("the receipt is canonical JSON");
+        let json::Value::Object(object) = &parsed else {
+            panic!("the receipt body is an object");
+        };
+        let members: Vec<&str> = object.iter().map(|(name, _)| name).collect();
+        assert_eq!(members, receipt_member_names(), "{members:?}");
+
+        // The identities the envelope froze and the server-derived keys,
+        // cross-checked against the request the client knows it sent.
+        assert_receipt_identities_and_keys(object, &envelope);
+
+        // Per-object outcomes exactly as the store answered (RCPT-003):
+        // one fresh object per commit, never strengthened.
+        assert_eq!(receipt_text(object, "blob_outcome"), "created");
+        assert_eq!(receipt_text(object, "occurrence_outcome"), "created");
+        assert_eq!(receipt_text(object, "attestation_outcome"), "created");
+
+        // The successful authorization evidence (RCPT-002; IA-11): the
+        // key and epoch the verified signed request presented — the
+        // uploader seed's public half and epoch one, exactly the record
+        // the test transmitted.
+        let uploader_half =
+            Ed25519PublicKey::from_raw(ed25519::public_key_from_seed(&TEST_UPLOADER_SEED));
+        assert_eq!(
+            receipt_text(object, "authorization_key_id"),
+            &KeyId::from_public_key(&uploader_half).to_hex()
+        );
+        match object.get("authorization_epoch") {
+            Some(json::Value::Int(epoch)) => assert_eq!(*epoch, 1),
+            other => panic!("authorization_epoch is an integer, found {other:?}"),
+        }
+        match object.get("receipt_version") {
+            Some(json::Value::Int(version)) => assert_eq!(*version, 1),
+            other => panic!("receipt_version is an integer, found {other:?}"),
+        }
+        assert_eq!(receipt_text(object, "signature_algorithm"), "ed25519");
+        // The certificate is embedded by value and names the signer the
+        // signature verified under.
+        match object.get("certificate") {
+            Some(json::Value::Object(certificate)) => {
+                assert_eq!(
+                    receipt_text(certificate, "key_id"),
+                    receipt_text(object, "receipt_key_id")
+                );
+                assert_eq!(
+                    receipt_text(certificate, "tenant_id"),
+                    envelope.tenant_id.as_str()
+                );
+            }
+            other => panic!("certificate is an object, found {other:?}"),
+        }
+        // The commit instant is the calendar shape the contract pins.
+        Timestamp::parse(receipt_text(object, "commit_time"))
+            .expect("commit_time is a calendar timestamp");
+
+        // The store saw the whole three-object sequence: one blob
+        // session and both manifest creates, nothing aborted.
+        assert_eq!(store.commits(), 1);
+        assert_eq!(
+            store.manifest_answers(),
+            vec![StorageOutcome::Created, StorageOutcome::Created]
+        );
+        assert_eq!(store.aborts(), 0);
+        assert_eq!(state.uploads().live_count(), 0);
+
+        // The metric counts the success it reported: `committed` means
+        // committed and receipted.
+        let metrics = exchange(address, &get_request("/metrics")).await;
+        let text = String::from_utf8(metrics.body).expect("exposition is text");
+        assert!(
+            text.contains(
+                "archivist_server_ingest_requests_total{archivist_ingest_outcome=\"committed\"} 1"
+            ),
+            "{text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn receipt_outcomes_report_what_the_backend_established_per_object() {
+        let id = "valid-direct-baseline";
+        let envelope =
+            Envelope::parse(&corpus_file(id, "envelope")).expect("the fixture envelope parses");
+        // Three different physical truths in one attempt: an overwrite
+        // the store itself calls a replacement (the blob), readable
+        // byte-equivalent evidence of prior presence (the occurrence),
+        // and bare presence with nothing readable (the attestation) —
+        // the weakest claim, never deduplication (RCPT-004).
+        let (state, _store) = receipt_state_with_evidence(
+            RecordingRawStore::scripted_three_object(
+                &[StorageOutcome::ReplacedEquivalent],
+                &[
+                    StorageOutcome::AlreadyPresent,
+                    StorageOutcome::LogicallyCommittedUnknownPhysicalResult,
+                ],
+            ),
+            &envelope,
+            test_receipt_schedule(1),
+        );
+        let address = serve(state).await;
+        let response = post_signed_attempt(address, id).await;
+        assert_eq!(response.status, 200);
+        verify_served_receipt(&response.body);
+
+        let parsed = json::parse(&response.body).expect("the receipt is canonical JSON");
+        let json::Value::Object(object) = &parsed else {
+            panic!("the receipt body is an object");
+        };
+        // Created, equivalent, and unknown — distinguished per object,
+        // exactly as the scripted store answered, and no stronger
+        // anywhere (RCPT-003).
+        assert_eq!(receipt_text(object, "blob_outcome"), "replaced_equivalent");
+        assert_eq!(
+            receipt_text(object, "occurrence_outcome"),
+            "already_present"
+        );
+        assert_eq!(
+            receipt_text(object, "attestation_outcome"),
+            "logically_committed_unknown_physical_result"
+        );
+        // The honest outcomes are still authenticated evidence: the
+        // chain and signature hold over exactly these claims.
+        assert_eq!(
+            receipt_text(object, "blob_digest"),
+            &envelope.blob_digest.to_hex()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_lost_response_retry_receives_converged_receipts_with_identical_identities() {
+        let id = "valid-direct-baseline";
+        let envelope =
+            Envelope::parse(&corpus_file(id, "envelope")).expect("the fixture envelope parses");
+        // The retry path's convergence script (EC-04; protocol Section
+        // 5.4): the first attempt creates every object; the identical
+        // retry meets readable equivalents at all three derived keys.
+        let (state, _store) = receipt_state_with_evidence(
+            RecordingRawStore::scripted_three_object(
+                &[StorageOutcome::Created, StorageOutcome::AlreadyPresent],
+                &[
+                    StorageOutcome::Created,
+                    StorageOutcome::Created,
+                    StorageOutcome::AlreadyPresent,
+                    StorageOutcome::AlreadyPresent,
+                ],
+            ),
+            &envelope,
+            test_receipt_schedule(1),
+        );
+        let address = serve(state).await;
+        let first = post_signed_attempt(address, id).await;
+        let retry = post_signed_attempt(address, id).await;
+        assert_eq!(first.status, 200);
+        assert_eq!(retry.status, 200);
+        verify_served_receipt(&first.body);
+        verify_served_receipt(&retry.body);
+
+        let first_value = json::parse(&first.body).expect("the first receipt is canonical JSON");
+        let retry_value = json::parse(&retry.body).expect("the retry receipt is canonical JSON");
+        let (json::Value::Object(first_object), json::Value::Object(retry_object)) =
+            (&first_value, &retry_value)
+        else {
+            panic!("both receipts are objects");
+        };
+        // Every identity member is identical — the frozen request, its
+        // objects, the authorization that admitted it, and the signer.
+        for member in [
+            "attestation_id",
+            "attestation_object_key",
+            "authorization_epoch",
+            "authorization_key_id",
+            "blob_digest",
+            "blob_object_key",
+            "occurrence_id",
+            "occurrence_object_key",
+            "receipt_key_id",
+            "receipt_version",
+            "request_id",
+            "signature_algorithm",
+            "tenant_id",
+        ] {
+            assert_eq!(
+                first_object.get(member),
+                retry_object.get(member),
+                "{member} is identical across the retry"
+            );
+        }
+        // The per-object outcomes are the converged values: the retry's
+        // receipt reports what the second pass actually established
+        // (RCPT-003; STO-004).
+        for member in ["blob_outcome", "occurrence_outcome", "attestation_outcome"] {
+            assert_eq!(
+                (first_object.get(member), retry_object.get(member)),
+                (
+                    Some(&json::Value::Text("created".to_owned())),
+                    Some(&json::Value::Text("already_present".to_owned()))
+                ),
+                "{member} converges from created to already_present"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn altered_receipts_fail_offline_verification() {
+        let id = "valid-direct-baseline";
+        let envelope =
+            Envelope::parse(&corpus_file(id, "envelope")).expect("the fixture envelope parses");
+        let (state, _store) = receipt_state_with_evidence(
+            RecordingRawStore::scripted_three_object(
+                &[StorageOutcome::Created],
+                &[StorageOutcome::Created, StorageOutcome::Created],
+            ),
+            &envelope,
+            test_receipt_schedule(1),
+        );
+        let address = serve(state).await;
+        let response = post_signed_attempt(address, id).await;
+        assert_eq!(response.status, 200);
+        let body = String::from_utf8(response.body.clone()).expect("the receipt is text");
+        let root = pinned_test_root();
+
+        // Three alterations, each inside the signed bytes: an identity
+        // digest, a strengthened physical claim, and the commit instant.
+        // Each still parses — and each fails the signature, so a client
+        // retains none of them as evidence.
+        let digest = envelope.blob_digest.to_hex();
+        let next_hex = |text: &str| {
+            let last = text.bytes().last().expect("a digest has a last byte");
+            (if last == b'f' { b'0' } else { last + 1 }) as char
+        };
+        // The instant moves one minute on: still inside the retained
+        // key's 37-day window, so the refusal the client sees is the
+        // signature's, not the window's (`verify` checks the window
+        // first, and a moved year would read as an out-of-window
+        // receipt — rejected either way, but by the wrong gate).
+        let time_member = "\"commit_time\":\"";
+        let stamp_at = body
+            .find(time_member)
+            .expect("the receipt names commit_time")
+            + time_member.len();
+        let stamp = &body[stamp_at..stamp_at + 20];
+        let minute_tens = stamp.as_bytes()[14];
+        let shifted_minute = b'0' + ((minute_tens - b'0') + 1) % 6;
+        let moved = format!("{}{}{}", &stamp[..14], shifted_minute as char, &stamp[15..]);
+        let alterations = [
+            body.replacen(
+                &digest,
+                &format!("{}{}", &digest[..63], next_hex(&digest)),
+                1,
+            ),
+            body.replace(
+                "\"blob_outcome\":\"created\"",
+                "\"blob_outcome\":\"already_present\"",
+            ),
+            body.replacen(stamp, &moved, 1),
+        ];
+        assert_eq!(alterations.len(), 3);
+        for altered in alterations {
+            let parsed = archivist_auth::receipt::Receipt::parse(altered.as_bytes())
+                .expect("an altered receipt still parses as JSON");
+            assert_eq!(
+                parsed.verify(&root, |_| None),
+                Err(archivist_auth::receipt::ReceiptKeyError::Signature),
+                "an altered receipt fails the signature: {altered}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_well_signed_receipt_for_another_request_is_not_evidence_for_this_one() {
+        let id = "valid-direct-baseline";
+        let envelope =
+            Envelope::parse(&corpus_file(id, "envelope")).expect("the fixture envelope parses");
+        let (state, _store) = receipt_state_with_evidence(
+            RecordingRawStore::scripted_three_object(
+                &[StorageOutcome::Created],
+                &[StorageOutcome::Created, StorageOutcome::Created],
+            ),
+            &envelope,
+            test_receipt_schedule(1),
+        );
+        let address = serve(Arc::clone(&state)).await;
+        let response = post_signed_attempt(address, id).await;
+        assert_eq!(response.status, 200);
+
+        // A second, perfectly valid receipt over the same signer for a
+        // different frozen request: built by re-signing the served
+        // body's members with the request identifier changed — the
+        // signature and chain hold, so only the client's field
+        // comparison against its spool entry can reject it (ERR-025;
+        // protocol Section 5.2).
+        let served = json::parse(&response.body).expect("the served receipt is canonical JSON");
+        let json::Value::Object(served_object) = &served else {
+            panic!("the served receipt is an object");
+        };
+        let mut other = json::Object::new();
+        for (member, value) in served_object.iter() {
+            if !matches!(
+                member,
+                "signature"
+                    | "receipt_key_id"
+                    | "receipt_version"
+                    | "certificate"
+                    | "signature_algorithm"
+            ) {
+                other.set(member, value.clone());
+            }
+        }
+        let other_request = "1a07b201-7000-7000-8000-000000000002";
+        other.set("request_id", json::Value::Text(other_request.to_owned()));
+        let signed = test_receipt_schedule(1)
+            .sign_receipt(other)
+            .expect("the same signer key signs the other request");
+        let verified = signed
+            .verify(&pinned_test_root(), |_| None)
+            .expect("the other receipt's chain holds");
+        let _ = verified;
+        let bytes = signed.canonical_bytes();
+        let reparsed = json::parse(&bytes).expect("the other receipt is canonical JSON");
+        let json::Value::Object(object) = &reparsed else {
+            panic!("the other receipt is an object");
+        };
+        // The client's cross-check: the identities disagree with the
+        // frozen request it spooled — not evidence, whatever the
+        // signature says.
+        assert_ne!(
+            receipt_text(object, "request_id"),
+            envelope.request_id.as_str()
+        );
+        assert_eq!(receipt_text(object, "request_id"), other_request);
+    }
+
+    #[tokio::test]
+    async fn a_schedule_less_tenant_commits_three_objects_without_issuing_a_receipt() {
+        let id = "valid-direct-baseline";
+        let envelope =
+            Envelope::parse(&corpus_file(id, "envelope")).expect("the fixture envelope parses");
+        // The full three-object commit against a replica holding no
+        // signing schedule for the tenant: everything stands, no key
+        // may sign, and the honest answer is the retryable
+        // partial-commit class (RCPT-005; protocol Section 5.1).
+        let observed_store = RecordingRawStore::scripted_three_object(
+            &[StorageOutcome::Created],
+            &[StorageOutcome::Created, StorageOutcome::Created],
+        );
+        let (state, store) = commit_state_with_evidence(observed_store, test_config(), &envelope);
+        let address = serve(Arc::clone(&state)).await;
+        let response = post_signed_attempt(address, id).await;
+        let request_id = corpus_request_id(id);
+        let text = assert_exchange_contract(
+            &response,
+            503,
+            "server.partial_commit",
+            true,
+            Some(&request_id),
+        );
+        for receipt_member in receipt_member_names() {
+            // `request_id` is shared vocabulary: the failure contract's
+            // own six-member shape carries it, so only its absence from
+            // the *receipt's* other eighteen members proves the body
+            // carries no receipt content.
+            if receipt_member == "request_id" {
+                continue;
+            }
+            assert!(
+                !text.contains(&format!("\"{receipt_member}\"")),
+                "no receipt member {receipt_member} rides the unreceipted body: {text}"
+            );
+        }
+        // The objects all stand: the retry this answer invites converges
+        // rather than resubmits.
+        assert_eq!(store.commits(), 1);
+        assert_eq!(
+            store.manifest_answers(),
+            vec![StorageOutcome::Created, StorageOutcome::Created]
+        );
+        assert_eq!(store.aborts(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_expired_signing_window_refuses_to_sign_and_reports_the_partial_commit() {
+        let id = "valid-direct-baseline";
+        let envelope =
+            Envelope::parse(&corpus_file(id, "envelope")).expect("the fixture envelope parses");
+        // A schedule whose whole 37-day window ended weeks ago: the
+        // three objects commit, no retained key may sign the present
+        // instant, and the attempt answers without a receipt rather
+        // than backdate evidence (RCPT-005).
+        let (state, store) = receipt_state_with_evidence(
+            RecordingRawStore::scripted_three_object(
+                &[StorageOutcome::Created],
+                &[StorageOutcome::Created, StorageOutcome::Created],
+            ),
+            &envelope,
+            test_receipt_schedule(60),
+        );
+        let address = serve(Arc::clone(&state)).await;
+        let response = post_signed_attempt(address, id).await;
+        let request_id = corpus_request_id(id);
+        assert_exchange_contract(
+            &response,
+            503,
+            "server.partial_commit",
+            true,
+            Some(&request_id),
+        );
+        assert_eq!(store.commits(), 1);
+        assert_eq!(
+            store.manifest_answers(),
+            vec![StorageOutcome::Created, StorageOutcome::Created]
+        );
     }
 
     #[tokio::test]

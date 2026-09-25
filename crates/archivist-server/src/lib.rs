@@ -97,18 +97,31 @@
 //! decode stage and a `commit_blob` session begun under the envelope's
 //! derived key, with the store-side abort its failures demand — the
 //! drain's verdict gates the encoder, a failed attempt aborts its live
-//! session, and nothing is stored. The verified blob is this slice's
-//! whole commit, so the attempt answers the retryable
-//! `server.partial_commit` class (RCPT-005) with no receipt; the store's
-//! physical answer passes through untouched (RCPT-003), and the payload
-//! limits and digest verification are the real checks, not placeholders.
+//! session, and nothing is stored. Behind the durable blob the
+//! provenance tail lands the occurrence manifest and then the upload
+//! attestation, and when all three objects stand the receipt strand
+//! renders success: the tenant's retained signing schedule issues the
+//! authenticated receipt — identities, server-derived object keys,
+//! per-object outcomes, successful authorization key and epoch, signer
+//! chain, and commit time — as the HTTP 200 body (RCPT-001, RCPT-002,
+//! RCPT-006). The store's physical answer passes through untouched
+//! (RCPT-003), and the payload limits and digest verification are the
+//! real checks, not placeholders. A tenant with no retained schedule —
+//! and any attempt whose provenance tail fails — still answers the
+//! retryable `server.partial_commit` class with no receipt (RCPT-005).
+//!
+//! The **receipt signing schedules** are implemented: [`receipts`]
+//! holds the per-tenant [`receipts::ReceiptSigners`], composed once at
+//! startup from certified keys loaded through protected references and
+//! threaded through [`state`] into the commit path, plus the one
+//! assembly site that signs a complete commit's evidence; the offline
+//! chain a client verifies — pinned authority root over the embedded
+//! certificate, certificate key over the receipt — is `archivist-auth`'s
+//! receipt module.
 //!
 //! The Phase 4 bootstrap surface is complete: configuration, trust
-//! anchors, replica state, metrics, the routes, the serve lifecycle, and
-//! the request resource guards. Still ahead on those contracts:
-//! signature verification and the per-client admission share on the
-//! ingest path, the occurrence → attestation writes that complete the
-//! three-object commit order, and signed receipts.
+//! anchors, replica state, metrics, the routes, the serve lifecycle, the
+//! request resource guards, and signed receipts.
 //!
 //! # Dependency boundary
 //!
@@ -123,6 +136,7 @@ pub mod error;
 pub mod guard;
 pub mod metrics;
 pub mod parse;
+pub mod receipts;
 pub mod routes;
 pub mod serve;
 pub mod state;

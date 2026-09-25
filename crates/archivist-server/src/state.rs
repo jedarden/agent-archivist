@@ -231,6 +231,12 @@ pub struct ServerState<W, C> {
     config: ServerConfig,
     trust: TrustConfig,
     storage: IngestStorage<W, C>,
+    /// The per-tenant receipt signing schedules: the keys a fully
+    /// committed attempt's receipt is signed with (plan Section 7.8;
+    /// RCPT-002, RCPT-006). Composed once at startup from certified
+    /// keys loaded through protected references; a tenant without a
+    /// schedule commits without issuing evidence.
+    receipts: crate::receipts::ReceiptSigners,
     /// The process-wide multipart-session registry: every blob commit any
     /// handler opens registers here, so a failed attempt's abort and the
     /// shutdown path's abandoned-session drain see one shared set
@@ -248,7 +254,12 @@ impl<W, C> ServerState<W, C> {
     /// Construction performs no I/O and writes nothing: this is the
     /// property the no-durable-local-state acceptance names.
     #[must_use]
-    pub fn new(config: ServerConfig, trust: TrustConfig, storage: IngestStorage<W, C>) -> Self {
+    pub fn new(
+        config: ServerConfig,
+        trust: TrustConfig,
+        storage: IngestStorage<W, C>,
+        receipts: crate::receipts::ReceiptSigners,
+    ) -> Self {
         let metrics = Arc::new(ServerMetrics::new());
         Self {
             readiness: ReadinessTracker::new(&trust),
@@ -258,6 +269,7 @@ impl<W, C> ServerState<W, C> {
             config,
             trust,
             storage,
+            receipts,
         }
     }
 
@@ -277,6 +289,14 @@ impl<W, C> ServerState<W, C> {
     #[must_use]
     pub const fn storage(&self) -> &IngestStorage<W, C> {
         &self.storage
+    }
+
+    /// The per-tenant receipt signing schedules: the lookup a complete
+    /// three-object commit issues its receipt through, and the reason a
+    /// schedule-less tenant's commits answer without one.
+    #[must_use]
+    pub const fn receipts(&self) -> &crate::receipts::ReceiptSigners {
+        &self.receipts
     }
 
     /// The process-wide multipart-session registry every blob commit

@@ -756,6 +756,12 @@ impl fmt::Debug for ReceiptKeySchedule {
 }
 
 impl ReceiptKeySchedule {
+    /// The tenant every retained key of this schedule serves.
+    #[must_use]
+    pub const fn tenant_id(&self) -> &TenantId {
+        &self.tenant_id
+    }
+
     /// Start a schedule with the first certified key.
     #[must_use]
     pub fn new(initial: CertifiedReceiptKey) -> Self {

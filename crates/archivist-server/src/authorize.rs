@@ -272,7 +272,7 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 /// Render one Unix-seconds instant as a calendar timestamp. `None` for
 /// a clock before the epoch — a broken clock fails toward refusing
 /// stale proofs, never toward accepting them.
-fn render_timestamp(unix_seconds: u64) -> Option<Timestamp> {
+pub(crate) fn render_timestamp(unix_seconds: u64) -> Option<Timestamp> {
     let days = i64::try_from(unix_seconds / 86_400).ok()?;
     let rest = unix_seconds % 86_400;
     let (year, month, day) = civil_from_days(days);

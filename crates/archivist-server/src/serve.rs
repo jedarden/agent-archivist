@@ -137,6 +137,7 @@ pub struct ArchivistServer<W, C> {
     config: ServerConfig,
     trust: TrustConfig,
     storage: IngestStorage<W, C>,
+    receipts: crate::receipts::ReceiptSigners,
 }
 
 impl<W, C> ArchivistServer<W, C>
@@ -147,11 +148,17 @@ where
     /// Compose a replica from validated parts. No I/O, no allocation of
     /// request-scale resources, nothing durable.
     #[must_use]
-    pub fn new(config: ServerConfig, trust: TrustConfig, storage: IngestStorage<W, C>) -> Self {
+    pub fn new(
+        config: ServerConfig,
+        trust: TrustConfig,
+        storage: IngestStorage<W, C>,
+        receipts: crate::receipts::ReceiptSigners,
+    ) -> Self {
         Self {
             config,
             trust,
             storage,
+            receipts,
         }
     }
 
@@ -173,6 +180,13 @@ where
         &self.storage
     }
 
+    /// The per-tenant receipt signing schedules this replica issues
+    /// complete commits' evidence under.
+    #[must_use]
+    pub const fn receipts(&self) -> &crate::receipts::ReceiptSigners {
+        &self.receipts
+    }
+
     /// Open the listening socket.
     ///
     /// # Errors
@@ -189,7 +203,12 @@ where
         listener
             .set_nonblocking(true)
             .map_err(|source| StartupError { address, source })?;
-        let state = Arc::new(ServerState::new(self.config, self.trust, self.storage));
+        let state = Arc::new(ServerState::new(
+            self.config,
+            self.trust,
+            self.storage,
+            self.receipts,
+        ));
         Ok(BoundServer { listener, state })
     }
 }
@@ -556,6 +575,7 @@ mod tests {
             config,
             test_trust(),
             IngestStorage::compose(MockRawStore, MockControlStore),
+            crate::receipts::ReceiptSigners::new(),
         )
     }
 
@@ -839,6 +859,7 @@ mod tests {
             config,
             test_trust(),
             IngestStorage::compose(MockRawStore, MockControlStore),
+            crate::receipts::ReceiptSigners::new(),
         );
         let error: StartupError = match second.bind() {
             Err(error) => error,
@@ -1036,6 +1057,7 @@ mod tests {
             config,
             test_trust(),
             IngestStorage::compose(AbortProbeStore::new(), MockControlStore),
+            crate::receipts::ReceiptSigners::new(),
         )
     }
 
