@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use archivist_client_core::cli::Router;
+use archivist_client_core::cli::parse::{self, Parsed};
+use archivist_client_core::cli::registry::Registry;
 use archivist_client_core::config::{ConfigSources, ResolvedConfig};
 use archivist_client_core::daemon::{Cancel, LoopStop, ScheduleConfig, Sleeper};
 use archivist_client_core::state::lock::StateDirLock;
@@ -19,7 +21,7 @@ use archivist_protocol::json::Value;
 use rusqlite::params;
 
 use super::{
-    INTERNAL, LOCK_HELD, daemon_loop, doctor_over, handlers, inventory_over, run_once_over,
+    INTERNAL, LOCK_HELD, daemon_loop, doctor, doctor_over, handlers, inventory_over, run_once_over,
     status_over, verify_state_over,
 };
 
@@ -388,6 +390,39 @@ fn doctor_over_emits_the_document_only_when_every_check_passes() {
     assert!(text.contains("\"lock\":\"free\""));
     assert!(text.contains("\"receipt_count\":1"));
     assert!(!text.contains("degraded"));
+}
+
+#[test]
+fn doctor_refuses_an_unresolvable_configuration_before_the_examination() {
+    // The configuration-resolution failure row, induced hermetically: an
+    // explicit `--config` that cannot be read is a registered usage
+    // refusal taken before the examination, so the doctor creates and
+    // opens no state at all.
+    let dir = TempDir::new("doctor-config");
+    let absent = dir.path().join("absent.toml");
+    let args = [
+        std::ffi::OsString::from("--non-interactive"),
+        std::ffi::OsString::from("--config"),
+        absent.into_os_string(),
+        std::ffi::OsString::from("doctor"),
+    ];
+    let registry = Registry::pinned();
+    let parsed = parse::parse(&args, registry).expect("the invocation parses");
+    let invocation = match parsed {
+        Parsed::Command(invocation) => invocation,
+        other => panic!("the parser returned {other:?} for a command invocation"),
+    };
+    let error = doctor(&invocation).expect_err("the explicit configuration file is mandatory");
+    assert_eq!(error.code(), "cli.usage_error");
+    assert_eq!(error.exit_code(), 64);
+    let body = String::from_utf8(error.body_bytes()).expect("diagnostic utf-8");
+    assert!(!body.contains(dir.path().to_string_lossy().as_ref()));
+    assert_eq!(
+        std::fs::read_dir(dir.path())
+            .expect("the fixture directory is readable")
+            .count(),
+        0
+    );
 }
 
 #[test]
