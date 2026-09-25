@@ -123,6 +123,14 @@ pub mod status;
 // parts without a protocol edge of its own.
 pub use archivist_protocol::vocabulary::{AdapterId, VersionToken};
 
+// Usage projections belong to source adapters, but their normalized reading
+// is protocol data. Re-export both through the SDK so an adapter does not
+// acquire a direct protocol dependency just to hand a catalog pipeline its
+// bounded, content-free usage result.
+pub use archivist_protocol::json;
+pub use archivist_protocol::usage_summary;
+pub use archivist_protocol::usage_summary::{MessageUsage, SourceUsageCounts, UsageRegion};
+
 pub use capability::{AdapterCapability, CapabilitySet, MAX_CAPABILITIES};
 pub use capture_alignment::{AlignmentError, CaptureAlignment, InferenceAlignment, align_attempts};
 pub use compatibility::{

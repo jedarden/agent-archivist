@@ -78,6 +78,13 @@
 //!   validating iteration over a frozen tenant raw prefix (occurrences,
 //!   attestations, referenced blobs) for offline catalog rebuild and
 //!   reference scans; reachable only through the audit/restore identity.
+//! - [`catalog_rebuild`] — the deterministic catalog rebuild engine
+//!   (plan Section 7.10, Phase 10): one pass over the frozen raw prefix
+//!   that emits content-addressed `usage-summary-v1` rows and
+//!   self-verifying, content-addressed checkpoint documents, byte-
+//!   identically for one raw prefix and pipeline version, with validated
+//!   skip-based resume; composes the audit/restore reader and the two
+//!   scoped writers ([`catalog_source`], [`scoped_write`]).
 //! - [`export`] — the authorized archive exporter: the offline act that
 //!   binds one verified `export-approval-v1`'s frozen inventory, exact
 //!   occurrence selection, and window before reading the selection's
@@ -130,6 +137,7 @@
 pub mod audit_restore;
 pub mod blob;
 pub mod capability;
+pub mod catalog_rebuild;
 pub mod catalog_source;
 pub mod collection;
 pub mod commit;

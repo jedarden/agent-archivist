@@ -1002,6 +1002,20 @@ impl RawCatalogSource {
         }))
     }
 
+    /// Advance past the next occurrence without reading its stored blob,
+    /// returning the skipped occurrence's key, or `None` when exhausted.
+    ///
+    /// The catalog rebuild's resume path uses this to hold the canonical
+    /// key-byte order across the occurrences a trusted earlier run
+    /// already processed: their derived rows are content-addressed, so
+    /// skipping the re-read changes no rebuilt byte and costs none of
+    /// the payload traffic.
+    #[must_use]
+    pub fn skip_next(&mut self) -> Option<OccurrenceObjectKey> {
+        let prepared = self.prepared.pop_front()?;
+        Some(prepared.manifest.key().clone())
+    }
+
     /// The number of occurrence records not yet yielded.
     #[must_use]
     pub fn len(&self) -> usize {

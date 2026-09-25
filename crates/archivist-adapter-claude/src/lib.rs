@@ -115,6 +115,9 @@ pub const JSONL_FINGERPRINTS: [&str; 2] = ["claude-jsonl-v1", "claude-jsonl-v2"]
 /// The supported single-object sidecar fingerprint.
 pub const SIDECAR_FINGERPRINT: &str = "claude-sidecar-v1";
 
+/// The normalized usage reader used by the deterministic catalog pipeline.
+pub mod usage_projection;
+
 const UNKNOWN_JSONL_FINGERPRINT: &str = "claude-jsonl-unknown";
 const UNKNOWN_FILE_FINGERPRINT: &str = "claude-unknown-format";
 

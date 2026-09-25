@@ -41,5 +41,6 @@
 
 pub mod admin;
 pub mod approve;
+pub mod catalog;
 pub mod operator;
 pub mod revoke;
