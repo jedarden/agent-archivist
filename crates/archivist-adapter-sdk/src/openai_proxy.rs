@@ -20,7 +20,7 @@
 //! it was sending to its provider — is dropped unread. Archived
 //! response metadata is the closed allowlist [`response_metadata`]
 //! alone. And buffering is bounded end to end: request bodies are
-//! capped at [`openai_http1::DEFAULT_MAX_BODY_BYTES`] by default, and
+//! capped at [`crate::openai_http1::DEFAULT_MAX_BODY_BYTES`] by default, and
 //! the relay between the provider read and the caller write holds at
 //! most one decoded event, so a slow caller cannot grow it past
 //! [`RELAY_MAX_BUFFERED_BYTES`] — the provider's own bytes stay in the
