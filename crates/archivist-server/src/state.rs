@@ -53,13 +53,15 @@ use std::time::{Duration, Instant};
 
 use archivist_auth::authority::{AuthorityChainError, PinnedAuthorityRoot, verify_control_record};
 use archivist_protocol::vocabulary::{Ed25519PublicKey, KeyId, TenantId};
-use archivist_storage::control::ControlRecord;
+use archivist_storage::control::{ControlReadStore, ControlRecord};
 use archivist_storage::ingest::IngestStorage;
 use archivist_storage::multipart::OpenUploads;
+use archivist_storage::raw_write::RawWriteStore;
+use archivist_storage::telemetry::{MeasuredRawStore, StorageTelemetry};
 
 use crate::config::ServerConfig;
 use crate::guard::AdmissionGate;
-use crate::metrics::ServerMetrics;
+use crate::metrics::{ServerMetrics, TrustRefreshOutcome};
 use crate::trust::TrustConfig;
 
 /// How long one successful tenant trust-record read stays fresh
@@ -230,7 +232,14 @@ impl ReadinessTracker {
 pub struct ServerState<W, C> {
     config: ServerConfig,
     trust: TrustConfig,
-    storage: IngestStorage<W, C>,
+    /// The composed storage identities behind the measurement seam: every
+    /// raw-write operation any handler or the shutdown drain drives is
+    /// timed and classified into the storage telemetry snapshot before
+    /// the backend's own answer travels through untouched.
+    storage: IngestStorage<MeasuredRawStore<W>, C>,
+    /// The process-local storage telemetry snapshot the measurement seam
+    /// records into and the `/metrics` scrape renders from.
+    telemetry: Arc<StorageTelemetry>,
     /// The per-tenant receipt signing schedules: the keys a fully
     /// committed attempt's receipt is signed with (plan Section 7.8;
     /// RCPT-002, RCPT-006). Composed once at startup from certified
@@ -259,16 +268,23 @@ impl<W, C> ServerState<W, C> {
         trust: TrustConfig,
         storage: IngestStorage<W, C>,
         receipts: crate::receipts::ReceiptSigners,
-    ) -> Self {
+    ) -> Self
+    where
+        W: RawWriteStore + Sync,
+        C: ControlReadStore,
+    {
         let metrics = Arc::new(ServerMetrics::new());
+        let telemetry = Arc::new(StorageTelemetry::new());
+        let (raw, control) = storage.into_parts();
         Self {
             readiness: ReadinessTracker::new(&trust),
             gate: AdmissionGate::new(&config, Arc::clone(&metrics)),
             metrics,
+            telemetry: Arc::clone(&telemetry),
             uploads: Arc::new(OpenUploads::new()),
             config,
             trust,
-            storage,
+            storage: IngestStorage::compose(MeasuredRawStore::new(raw, telemetry), control),
             receipts,
         }
     }
@@ -285,10 +301,18 @@ impl<W, C> ServerState<W, C> {
         &self.trust
     }
 
-    /// The two storage identities.
+    /// The two storage identities, the raw writer behind the measurement
+    /// seam.
     #[must_use]
-    pub const fn storage(&self) -> &IngestStorage<W, C> {
+    pub const fn storage(&self) -> &IngestStorage<MeasuredRawStore<W>, C> {
         &self.storage
+    }
+
+    /// The process-local storage telemetry snapshot: the measurement seam
+    /// records into it, the `/metrics` scrape renders from it.
+    #[must_use]
+    pub fn storage_telemetry(&self) -> &StorageTelemetry {
+        &self.telemetry
     }
 
     /// The per-tenant receipt signing schedules: the lookup a complete
@@ -350,6 +374,28 @@ impl<W, C> ServerState<W, C> {
     /// configured, or the corresponding closed authority-verification
     /// error for an invalid record, signer, or chain.
     pub fn record_verified_control_read(
+        &self,
+        tenant: &TenantId,
+        record: &ControlRecord,
+        fetch_authority_rotation: impl FnMut(&KeyId) -> Option<Vec<u8>>,
+    ) -> Result<(), AuthorityChainError> {
+        let outcome =
+            self.record_verified_control_read_inner(tenant, record, fetch_authority_rotation);
+        // The refresh family counts the attempt: a read that verified and
+        // refreshed the freshness lease is `refreshed`, and every refusal
+        // — unconfigured tenant, malformed record, broken chain, or a
+        // verification the pinned root rejects — is `unavailable`. There
+        // is no cache-hit producer on this surface: the lease is the
+        // cache, and reading under it is what expiry evaluates, not a
+        // refresh attempt (EC-09).
+        self.metrics.record_trust_refresh(match &outcome {
+            Ok(()) => TrustRefreshOutcome::Refreshed,
+            Err(_) => TrustRefreshOutcome::Unavailable,
+        });
+        outcome
+    }
+
+    fn record_verified_control_read_inner(
         &self,
         tenant: &TenantId,
         record: &ControlRecord,

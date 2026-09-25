@@ -25,7 +25,7 @@
 use std::io;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
 use std::time::Instant;
 
@@ -45,6 +45,7 @@ use archivist_storage::error::{StorageError, StorageErrorKind};
 use archivist_storage::manifests::Delegation;
 use archivist_storage::raw_write::RawWriteStore;
 use archivist_storage::sequence::commit_provenance;
+use archivist_storage::telemetry::SpanRecord;
 use archivist_storage::zstd_v1::ZstdV1Encoder;
 use axum::Router;
 use axum::extract::{Request, State};
@@ -57,7 +58,7 @@ use tokio::sync::mpsc;
 use crate::authorize::{self, EvidenceRejection};
 use crate::error::{AuthRejection, ErrorResponse, ServerFailure};
 use crate::guard::{DeadlineElapsed, within_deadline};
-use crate::metrics::IngestOutcome;
+use crate::metrics::{FailureCode, IngestOutcome, ObjectKind, ServerMetrics};
 use crate::parse::framing::{ByteSource, FramingError, RequestFraming};
 use crate::parse::ingest::{IngestParseError, parse_ingest_with_cap};
 use crate::parse::parts::{PayloadStream, TwoPartError};
@@ -69,6 +70,17 @@ pub const HEALTH_MEDIA_TYPE: &str = "application/json";
 
 /// Media type of the Prometheus text exposition served at `/metrics`.
 pub const METRICS_MEDIA_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
+
+/// The registered ingest-route span name (the registry's HTTP-route
+/// template, MET-031).
+const INGEST_ROUTE_SPAN: &str = "POST /v1/ingest";
+
+/// The registered proof-of-possession verification span name: signature,
+/// window, epoch, delegation.
+const AUTH_VERIFY_SPAN: &str = "archivist.server.auth.verify";
+
+/// The registered error-code span attribute key.
+const ERROR_CODE_ATTRIBUTE: &str = "archivist.error_code";
 
 /// The liveness body: process-only by design. A const so the handler
 /// cannot grow fields it does not have; a unit test pins it against the
@@ -123,8 +135,15 @@ async fn ready<W, C>(State(state): State<Arc<ServerState<W, C>>>) -> Response {
 }
 
 /// `GET /metrics` — the registered families in text exposition.
+///
+/// One scrape renders both surfaces this replica exports: the server's
+/// own families from its metrics snapshot, then the storage surface's
+/// from the measurement seam's snapshot. Each family is pre-emitted at
+/// zero by its snapshot, so the join stays possible before the first
+/// event of either kind.
 async fn metrics<W, C>(State(state): State<Arc<ServerState<W, C>>>) -> Response {
-    let text = state.metrics().exposition(state.newest_trust_age_seconds());
+    let mut text = state.metrics().exposition(state.newest_trust_age_seconds());
+    text.push_str(&state.storage_telemetry().exposition());
     response(StatusCode::OK, METRICS_MEDIA_TYPE, text.into_bytes())
 }
 
@@ -157,12 +176,10 @@ where
     W: RawWriteStore + ConditionalCreateStore + Send + Sync + 'static,
     C: ControlReadStore + Send + Sync + 'static,
 {
+    let started = Instant::now();
     let attempt = within_deadline(state.config().request_deadline(), async {
         match state.gate().try_admit_process() {
-            Err(_rejection) => {
-                let failure = ServerFailure::RateLimited;
-                (failure.outcome(), failure_response(failure, None))
-            }
+            Err(_rejection) => refused(state.metrics(), ServerFailure::RateLimited, None),
             // The admission is held across the whole parse attempt —
             // that is the concurrency bound doing its job — and released
             // when the outcome is rendered.
@@ -174,19 +191,25 @@ where
         }
     })
     .await;
-    match attempt {
+    let (outcome, response) = match attempt {
         // The deadline is a real bound on the attempt, so its elapse is
         // the deadline guard's refusal — throttle class, retryable.
-        Err(DeadlineElapsed) => {
-            let failure = ServerFailure::DeadlineElapsed;
-            state.metrics().record_ingest(failure.outcome());
-            failure_response(failure, None)
-        }
-        Ok((outcome, response)) => {
-            state.metrics().record_ingest(outcome);
-            response
-        }
+        Err(DeadlineElapsed) => refused(state.metrics(), ServerFailure::DeadlineElapsed, None),
+        Ok(pair) => pair,
+    };
+    state.metrics().record_ingest(outcome);
+    state.metrics().record_ingest_duration(started.elapsed());
+    if outcome == IngestOutcome::Committed {
+        // One route span per attempt: the successful close carries the
+        // registered name and no attributes — every failing close already
+        // recorded its span with its bounded error code where the failure
+        // rendered.
+        state
+            .metrics()
+            .spans()
+            .record(SpanRecord::unset(INGEST_ROUTE_SPAN, &[]));
     }
+    response
 }
 
 /// The one rendering site for every Section 7.8 failure this route maps:
@@ -197,6 +220,39 @@ where
 /// before that.
 fn failure_response(failure: ServerFailure, request_id: Option<RequestId>) -> Response {
     ErrorResponse::for_failure_with(failure, request_id).into_response()
+}
+
+/// Record one rendered failure's telemetry at the one site every failing
+/// attempt passes through: its bounded code in the ingest-failures family
+/// (the only error-derived label the surface exports, MET-020) and the
+/// route span closing as an error carrying that code. The mapping is
+/// exhaustive over [`ServerFailure`], so the recorded code can never fall
+/// outside the registry's closed value set; a code without a mapping —
+/// impossible for every variant today — still closes the span, with no
+/// attribute rather than an unregistered value.
+fn record_refusal(metrics: &ServerMetrics, failure: &ServerFailure) {
+    let attributes: &[(&'static str, &'static str)] = match FailureCode::of_failure(failure) {
+        Some(code) => {
+            metrics.record_failure(code);
+            &[(ERROR_CODE_ATTRIBUTE, code.token())]
+        }
+        None => &[],
+    };
+    metrics
+        .spans()
+        .record(SpanRecord::error(INGEST_ROUTE_SPAN, attributes));
+}
+
+/// Render one refusal and record its telemetry: the outcome the failure
+/// earned, the bounded code, and the route span's error close.
+fn refused(
+    metrics: &ServerMetrics,
+    failure: ServerFailure,
+    request_id: Option<RequestId>,
+) -> (IngestOutcome, Response) {
+    let outcome = failure.outcome();
+    record_refusal(metrics, &failure);
+    (outcome, failure_response(failure, request_id))
 }
 
 /// The authorized pipeline of an admitted attempt: framing and safe
@@ -232,22 +288,37 @@ where
         Err(error) => {
             let failure =
                 ServerFailure::Parse(IngestParseError::Framing(TwoPartError::from(error)));
-            return (failure.outcome(), failure_response(failure, None));
+            return refused(state.metrics(), failure, None);
         }
     };
 
     // The record and its safe header-only claims are checked before the
     // request body is opened. No body, control read, or raw write belongs
     // to an attempt whose proof is absent, malformed, stale, or bound to
-    // another framing boundary.
+    // another framing boundary. The verification stage is one registered
+    // span: unset when the record is fresh and covers the framing, an
+    // error naming the bounded auth code when it is not.
     let record = match authorize::attempt_record_from_header(request.headers()) {
         Ok(record) => record,
-        Err(rejection) => return authorization_refusal(rejection, None),
+        Err(rejection) => return authorization_refusal(state.metrics(), rejection, None),
     };
-    if let Err(rejection) =
-        authorize::pre_authorize(&record, content_type, &authorize::now_timestamp())
-    {
-        return authorization_refusal(rejection, None);
+    match authorize::pre_authorize(&record, content_type, &authorize::now_timestamp()) {
+        Ok(()) => state
+            .metrics()
+            .spans()
+            .record(SpanRecord::unset(AUTH_VERIFY_SPAN, &[])),
+        Err(rejection) => {
+            let code = FailureCode::of_failure(&ServerFailure::Authorization(rejection));
+            let attributes: &[(&'static str, &'static str)] = match code {
+                Some(code) => &[(ERROR_CODE_ATTRIBUTE, code.token())],
+                None => &[],
+            };
+            state
+                .metrics()
+                .spans()
+                .record(SpanRecord::error(AUTH_VERIFY_SPAN, attributes));
+            return authorization_refusal(state.metrics(), rejection, None);
+        }
     }
 
     // The body streams into the blocking parse through a bounded
@@ -292,17 +363,16 @@ where
     match parse.await {
         // A panicked parse committed nothing and is a defect, not a wire
         // condition: the internal-failure class, never a 200-shaped lie.
-        Err(_join) => {
-            let failure = ServerFailure::Internal;
-            (failure.outcome(), failure_response(failure, None))
-        }
+        Err(_join) => refused(state.metrics(), ServerFailure::Internal, None),
         Ok(Err(rejection)) => {
-            let failure = ServerFailure::Parse(rejection.error);
-            let outcome = failure.outcome();
             // The parsed envelope's identifier is known, so the refusal
             // carries it (ERR-025) — a client correlating its attempt
             // sees the server that read it.
-            (outcome, failure_response(failure, rejection.request_id))
+            refused(
+                state.metrics(),
+                ServerFailure::Parse(rejection.error),
+                rejection.request_id,
+            )
         }
         Ok(Ok((envelope, stream))) => {
             // The uploader identity is the first request-derived fact the
@@ -316,10 +386,7 @@ where
                 Ok(admission) => admission,
                 Err(_rejection) => {
                     let failure = ServerFailure::RateLimited;
-                    return (
-                        failure.outcome(),
-                        failure_response(failure, Some(envelope.request_id)),
-                    );
+                    return refused(state.metrics(), failure, Some(envelope.request_id));
                 }
             };
 
@@ -353,18 +420,19 @@ where
                     )
                     .await
                 }
-                Err(EvidenceRejection::Unlinked) => {
-                    authorization_refusal(AuthRejection::Unlinked, Some(envelope.request_id))
-                }
-                Err(EvidenceRejection::Forbidden) => {
-                    authorization_refusal(AuthRejection::Forbidden, Some(envelope.request_id))
-                }
+                Err(EvidenceRejection::Unlinked) => authorization_refusal(
+                    state.metrics(),
+                    AuthRejection::Unlinked,
+                    Some(envelope.request_id),
+                ),
+                Err(EvidenceRejection::Forbidden) => authorization_refusal(
+                    state.metrics(),
+                    AuthRejection::Forbidden,
+                    Some(envelope.request_id),
+                ),
                 Err(EvidenceRejection::RegistryUnavailable) => {
                     let failure = ServerFailure::RegistryUnavailable;
-                    (
-                        failure.outcome(),
-                        failure_response(failure, Some(envelope.request_id)),
-                    )
+                    refused(state.metrics(), failure, Some(envelope.request_id))
                 }
             };
             drop(client_admission);
@@ -375,11 +443,11 @@ where
 
 /// Render one authorization refusal without exposing the presented proof.
 fn authorization_refusal(
+    metrics: &ServerMetrics,
     rejection: AuthRejection,
     request_id: Option<RequestId>,
 ) -> (IngestOutcome, Response) {
-    let failure = ServerFailure::Authorization(rejection);
-    (failure.outcome(), failure_response(failure, request_id))
+    refused(metrics, ServerFailure::Authorization(rejection), request_id)
 }
 
 /// A one-pass payload reader that records the bytes as transported while
@@ -387,6 +455,11 @@ fn authorization_refusal(
 struct DigestingPayload<R> {
     inner: R,
     transport: Sha256,
+    /// The transported byte count so far, shared with the attempt's
+    /// success path: the wire bytes this attempt actually accepted, read
+    /// only after validation completed (a rejected attempt accepts
+    /// nothing).
+    transported_bytes: Arc<AtomicU64>,
 }
 
 impl<R: io::Read> io::Read for DigestingPayload<R> {
@@ -394,6 +467,8 @@ impl<R: io::Read> io::Read for DigestingPayload<R> {
         let read = self.inner.read(buffer)?;
         if read != 0 {
             self.transport.update(&buffer[..read]);
+            self.transported_bytes
+                .fetch_add(u64::try_from(read).unwrap_or(u64::MAX), Ordering::Relaxed);
         }
         Ok(read)
     }
@@ -488,7 +563,7 @@ fn land_tail_and_receipt<W, C>(
     authorization_epoch: u64,
 ) -> Result<Receipt, ServerFailure>
 where
-    W: RawWriteStore + ConditionalCreateStore,
+    W: RawWriteStore + ConditionalCreateStore + Sync,
     C: ControlReadStore,
 {
     match handle.block_on(commit_provenance(
@@ -497,6 +572,16 @@ where
         delegation,
     )) {
         Ok(provenance) => {
+            // Each provenance object's commit lands in the registered
+            // family under the store's own physical answer (RCPT-003) —
+            // the per-object truth the receipt below binds, never
+            // strengthened.
+            state
+                .metrics()
+                .record_commit(ObjectKind::Occurrence, provenance.occurrence().outcome());
+            state
+                .metrics()
+                .record_commit(ObjectKind::Attestation, provenance.attestation().outcome());
             // The commit instant is read where the third object stood:
             // the receipt names the commit that exists, not the attempt
             // that started.
@@ -581,6 +666,16 @@ where
     let authorization_key_id = *record.uploader_key_id();
     let authorization_epoch = record.authorization_epoch();
 
+    // The telemetry captures, before the state moves into the blocking
+    // task: the declared canonical extent (the drain verifies the
+    // produced stream against exactly it), the counter the payload reader
+    // fills with the bytes as transported, and the state handle the
+    // post-commit recording uses.
+    let canonical_bytes = expectation.uncompressed_bytes();
+    let transported_bytes = Arc::new(AtomicU64::new(0));
+    let wire_bytes = Arc::clone(&transported_bytes);
+    let server = Arc::clone(&state);
+
     // The one blocking task drives the whole streaming tail: the decode
     // reads block on the parse bridge's channel, and the commit's store
     // futures run under the runtime handle on this same thread. Its
@@ -590,6 +685,7 @@ where
             let source = DigestingPayload {
                 inner: stream,
                 transport: Sha256::new(),
+                transported_bytes: wire_bytes,
             };
             let decoder = match TransportDecoder::new(encoding, source, limits) {
                 Ok(decoder) => decoder,
@@ -653,15 +749,23 @@ where
                 // identical retry converges on them, and success is only
                 // what a receipt can prove. A failed tail maps by how far it
                 // stands (protocol Section 4.5).
-                Ok(blob) => land_tail_and_receipt(
-                    &state,
-                    &handle,
-                    &provenance_envelope,
-                    delegation,
-                    &blob,
-                    &authorization_key_id,
-                    authorization_epoch,
-                ),
+                Ok(blob) => {
+                    // The blob's commit lands in the registered family
+                    // under the store's own physical answer (RCPT-003)
+                    // before the provenance tail runs.
+                    state
+                        .metrics()
+                        .record_commit(ObjectKind::Blob, blob.outcome());
+                    land_tail_and_receipt(
+                        &state,
+                        &handle,
+                        &provenance_envelope,
+                        delegation,
+                        &blob,
+                        &authorization_key_id,
+                        authorization_epoch,
+                    )
+                }
                 // The commit layer's own validation or the store failed with
                 // nothing left behind; the kind carries the wire class.
                 Err(error) => Err(ServerFailure::from_storage_kind(error.kind())),
@@ -671,18 +775,23 @@ where
     match attempt {
         // A panicked commit task is a defect, not a wire condition; the
         // aborting writer's Drop already abandoned the session.
-        Err(_join) => {
-            let failure = ServerFailure::Internal;
-            (
-                failure.outcome(),
-                failure_response(failure, Some(request_id)),
-            )
-        }
-        Ok(Err(failure)) => (
-            failure.outcome(),
-            failure_response(failure, Some(request_id)),
+        Err(_join) => refused(
+            server.metrics(),
+            ServerFailure::Internal,
+            Some(request_id),
         ),
-        Ok(Ok(receipt)) => receipt_outcome(&receipt),
+        Ok(Err(failure)) => refused(server.metrics(), failure, Some(request_id)),
+        Ok(Ok(receipt)) => {
+            // The attempt accepted exactly the bytes it validated: the
+            // wire extent the payload reader counted and the canonical
+            // extent the drain verified, recorded only now that a receipt
+            // proves the commit (a rejected attempt accepts nothing).
+            server
+                .metrics()
+                .record_received_bytes(transported_bytes.load(Ordering::Relaxed));
+            server.metrics().record_canonical_bytes(canonical_bytes);
+            receipt_outcome(&receipt)
+        }
     }
 }
 

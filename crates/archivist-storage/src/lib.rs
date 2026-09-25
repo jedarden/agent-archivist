@@ -152,4 +152,5 @@ pub mod probe;
 pub mod raw_write;
 pub mod scoped_write;
 pub mod sequence;
+pub mod telemetry;
 pub mod zstd_v1;

@@ -436,6 +436,7 @@ mod tests {
     use archivist_storage::ingest::IngestStorage;
     use archivist_storage::metadata::ObjectTag;
     use archivist_storage::multipart::{MultipartWriter, PART_BYTES};
+    use archivist_storage::telemetry::MeasuredRawStore;
     use archivist_storage::raw_write::{
         ManifestKey, MultipartUploadId, PartCommitment, PartNumber, RawWriteStore,
     };
@@ -1066,7 +1067,7 @@ mod tests {
     async fn open_session<'a>(
         state: &'a Arc<ServerState<AbortProbeStore, MockControlStore>>,
         payload: &[u8],
-    ) -> MultipartWriter<'a, AbortProbeStore> {
+    ) -> MultipartWriter<'a, MeasuredRawStore<AbortProbeStore>> {
         let tenant = TenantId::parse(TENANT_A).expect("tenant grammar");
         let blob = BlobObjectKey::new(&tenant, StorageProfile::ZstdV1, &blob_digest(payload));
         MultipartWriter::begin(state.storage().raw(), &blob, state.uploads())
@@ -1098,7 +1099,7 @@ mod tests {
             // The scope ends the writer's life: registered abandoned,
             // no I/O performed.
         }
-        let store = state.storage().raw();
+        let store = state.storage().raw().inner();
         assert_eq!(state.uploads().abandoned_count(), 1);
         assert_eq!(store.part_bytes(), PART_BYTES, "orphan parts standing");
 
@@ -1144,6 +1145,7 @@ mod tests {
         state
             .storage()
             .raw()
+            .inner()
             .refuse_aborts
             .store(true, Ordering::SeqCst);
 
@@ -1155,7 +1157,7 @@ mod tests {
             .unwrap();
         assert_eq!(outcome, ShutdownOutcome::AbortsFailed);
 
-        let store = state.storage().raw();
+        let store = state.storage().raw().inner();
         assert_eq!(store.abort_attempts(), 1, "the step attempted the abort");
         assert!(store.aborted().is_empty(), "no abort succeeded");
         assert!(store.committed().is_empty(), "nothing committed");
@@ -1191,7 +1193,7 @@ mod tests {
             .unwrap();
         assert_eq!(outcome, ShutdownOutcome::Drained);
 
-        let store = state.storage().raw();
+        let store = state.storage().raw().inner();
         assert_eq!(store.abort_attempts(), 0, "live sessions are not touched");
         assert_eq!(state.uploads().live_count(), 1);
         // The writer still ends its own session lawfully.

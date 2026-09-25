@@ -79,6 +79,13 @@ impl<W: RawWriteStore, C: ControlReadStore> IngestStorage<W, C> {
     pub const fn control(&self) -> &C {
         &self.control
     }
+
+    /// Destructure into the two identities, for a composer that re-wraps
+    /// one of them (the server's measurement seam) before re-composing.
+    #[must_use]
+    pub fn into_parts(self) -> (W, C) {
+        (self.raw, self.control)
+    }
 }
 
 #[cfg(test)]
