@@ -25,14 +25,20 @@
 //!    identity constructions stay pairwise distinct — while the one
 //!    label-less construction, `blob_digest`, never equals a labeled
 //!    frame over the same payload bytes or over its own raw digest.
+//! 3. identity disjointness: changing any single component of a
+//!    `(tenant, client, harness, upstream)` tuple changes the session
+//!    hash, and the derived occurrence and attestation identities and
+//!    the object keys downstream of them never collide within one
+//!    session namespace.
 
 use archivist_protocol::derivation::{
     FrameBuilder, artifact_hash, attestation_id, blob_digest, occurrence_id, session_hash,
 };
+use archivist_protocol::object_key::{AttestationObjectKey, BlobObjectKey, OccurrenceObjectKey};
 use archivist_protocol::sha256::{digest, encode_hex};
 use archivist_protocol::vocabulary::{
-    AdapterId, ArtifactKind, BlobDigest, ClientId, GenerationId, HarnessId, RangeKind, RequestId,
-    TenantId, VersionToken,
+    AdapterId, ArtifactHash, ArtifactKind, BlobDigest, ClientId, GenerationId, HarnessId,
+    RangeKind, RequestId, SessionHash, StorageProfile, TenantId, VersionToken,
 };
 
 // --- deterministic generator -------------------------------------------------
@@ -130,6 +136,14 @@ fn uuid_text(prng: &mut Prng, version: u8) -> String {
         &hex[16..20],
         &hex[20..32]
     )
+}
+
+/// A lowercase hex string of exactly `len` digits.
+fn hex_text(prng: &mut Prng, len: usize) -> String {
+    const HEX_DIGITS: &[u8] = b"0123456789abcdef";
+    (0..len)
+        .map(|_| HEX_DIGITS[prng.below_usize(HEX_DIGITS.len())] as char)
+        .collect()
 }
 
 // --- independent framing -----------------------------------------------------
@@ -602,6 +616,166 @@ fn named_constructions_are_pairwise_distinct() {
             blob.as_raw(),
             &crate_digest(label, &[Field::Digest32(raw)]),
             "blob_digest collided with a {label} frame over its own raw digest"
+        );
+    }
+}
+
+// --- identity disjointness ---------------------------------------------------
+
+/// Regenerate until the value differs from `current` (an exact repeat is
+/// astronomically unlikely and the loop keeps the intent explicit).
+fn distinct<T: PartialEq>(current: &T, mut generate: impl FnMut() -> T) -> T {
+    loop {
+        let candidate = generate();
+        if candidate != *current {
+            return candidate;
+        }
+    }
+}
+
+/// One generated `(tenant, origin, harness, upstream)` identity tuple.
+#[derive(Clone)]
+struct IdentityTuple {
+    tenant: TenantId,
+    origin: ClientId,
+    harness: HarnessId,
+    upstream: String,
+}
+
+impl IdentityTuple {
+    fn generate(prng: &mut Prng) -> Self {
+        Self {
+            tenant: TenantId::parse(&uuid_text(prng, 4)).expect("generated uuid-v4 parses"),
+            origin: ClientId::parse(&uuid_text(prng, 4)).expect("generated uuid-v4 parses"),
+            harness: HarnessId::parse(&short_token(prng)).expect("generated short-token parses"),
+            upstream: opaque_text(prng),
+        }
+    }
+
+    fn session(&self) -> SessionHash {
+        session_hash(&self.tenant, &self.origin, &self.harness, &self.upstream)
+    }
+}
+
+/// Identity ambiguity is impossible: changing any single component of an
+/// identity tuple changes the session hash.
+#[test]
+fn changing_any_identity_component_changes_the_session_hash() {
+    let mut prng = Prng::new(0x5EED_0005);
+    for _ in 0..512 {
+        let base = IdentityTuple::generate(&mut prng);
+        let base_session = base.session();
+
+        let mut variant = base.clone();
+        variant.tenant =
+            TenantId::parse(&uuid_text(&mut prng, 4)).expect("generated uuid-v4 parses");
+        assert_ne!(variant.session(), base_session, "tenant change collided");
+
+        let mut variant = base.clone();
+        variant.origin =
+            ClientId::parse(&uuid_text(&mut prng, 4)).expect("generated uuid-v4 parses");
+        assert_ne!(variant.session(), base_session, "origin change collided");
+
+        let mut variant = base.clone();
+        // `distinct` matters here: the short-token space includes
+        // single-character names, so an unguarded regenerate can mint the
+        // same harness the tuple already carries and fail the property
+        // vacuously.
+        let fresh = distinct(&base.harness.to_string(), || short_token(&mut prng));
+        variant.harness = HarnessId::parse(&fresh).expect("generated short-token parses");
+        assert_ne!(variant.session(), base_session, "harness change collided");
+
+        let mut variant = base.clone();
+        variant.upstream = distinct(&base.upstream, || opaque_text(&mut prng));
+        assert_ne!(variant.session(), base_session, "upstream change collided");
+    }
+}
+
+/// Downstream identity: distinct artifacts, occurrences, attestations, and
+/// object keys over the same session namespace never collide.
+#[test]
+fn downstream_ids_and_object_keys_stay_distinct() {
+    let mut prng = Prng::new(0x5EED_0006);
+    for _ in 0..512 {
+        let tenant = TenantId::parse(&uuid_text(&mut prng, 4)).expect("generated uuid-v4 parses");
+        let origin = ClientId::parse(&uuid_text(&mut prng, 4)).expect("generated uuid-v4 parses");
+        let harness =
+            HarnessId::parse(&short_token(&mut prng)).expect("generated short-token parses");
+        let session = IdentityTuple {
+            tenant: tenant.clone(),
+            origin: origin.clone(),
+            harness: harness.clone(),
+            upstream: opaque_text(&mut prng),
+        }
+        .session();
+
+        // Guaranteed-distinct digest pairs via a single flipped hex digit.
+        let base_hex = hex_text(&mut prng, 64);
+        let mut other_hex = base_hex.clone();
+        let flip = if other_hex.starts_with('0') { "1" } else { "0" };
+        other_hex.replace_range(0..1, flip);
+        let base_blob = BlobDigest::parse(&base_hex).expect("generated hex parses");
+        let other_blob = BlobDigest::parse(&other_hex).expect("generated hex parses");
+        let base_key = BlobObjectKey::new(&tenant, StorageProfile::ZstdV1, &base_blob);
+        let other_key = BlobObjectKey::new(&tenant, StorageProfile::ZstdV1, &other_blob);
+        assert_ne!(base_key.as_str(), other_key.as_str(), "blob keys collided");
+
+        let base_artifact = ArtifactHash::parse(&base_hex).expect("generated hex parses");
+        let other_artifact = ArtifactHash::parse(&other_hex).expect("generated hex parses");
+        let base_generation =
+            GenerationId::parse(&uuid_text(&mut prng, 7)).expect("generated uuid-v7 parses");
+        let other_generation = distinct(&base_generation.to_string(), || uuid_text(&mut prng, 7));
+        let other_generation =
+            GenerationId::parse(&other_generation).expect("generated uuid-v7 parses");
+        let base_occurrence = occurrence_id(
+            &session,
+            &base_artifact,
+            &base_generation,
+            RangeKind::Byte,
+            0,
+            1,
+            &base_blob,
+        );
+        let other_occurrence = occurrence_id(
+            &session,
+            &other_artifact,
+            &other_generation,
+            RangeKind::Event,
+            2,
+            3,
+            &other_blob,
+        );
+        assert_ne!(base_occurrence, other_occurrence, "occurrences collided");
+
+        let base_uploader =
+            ClientId::parse(&uuid_text(&mut prng, 4)).expect("generated uuid-v4 parses");
+        let other_uploader =
+            ClientId::parse(&uuid_text(&mut prng, 4)).expect("generated uuid-v4 parses");
+        let base_request =
+            RequestId::parse(&uuid_text(&mut prng, 7)).expect("generated uuid-v7 parses");
+        let other_request =
+            RequestId::parse(&uuid_text(&mut prng, 7)).expect("generated uuid-v7 parses");
+        let base_attestation = attestation_id(&base_occurrence, &base_uploader, &base_request);
+        let other_attestation = attestation_id(&other_occurrence, &other_uploader, &other_request);
+        assert_ne!(base_attestation, other_attestation, "attestations collided");
+
+        let occurrence_key =
+            OccurrenceObjectKey::new(&tenant, &origin, &harness, &session, &base_occurrence);
+        let other_occurrence_key =
+            OccurrenceObjectKey::new(&tenant, &origin, &harness, &session, &other_occurrence);
+        assert_ne!(
+            occurrence_key.as_str(),
+            other_occurrence_key.as_str(),
+            "occurrence keys collided"
+        );
+        let attestation_key =
+            AttestationObjectKey::new(&tenant, &base_occurrence, &base_attestation);
+        let other_attestation_key =
+            AttestationObjectKey::new(&tenant, &other_occurrence, &other_attestation);
+        assert_ne!(
+            attestation_key.as_str(),
+            other_attestation_key.as_str(),
+            "attestation keys collided"
         );
     }
 }
