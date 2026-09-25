@@ -43,8 +43,9 @@ use crate::openai_http1::{
 };
 
 /// Upper bound on one retry's effective backoff, so a hostile
-/// `retry-after` cannot stall teardown without bound.
-const MAX_BACKOFF_MS: u64 = 30_000;
+/// `retry-after` cannot stall teardown without bound. Shared with the
+/// proxy, which applies the same ceiling to the same policy.
+pub(crate) const MAX_BACKOFF_MS: u64 = 30_000;
 
 /// The HTTP status the OpenAI-compatible rate-limit rejection uses.
 const RATE_LIMIT_STATUS: u16 = 429;
@@ -129,6 +130,15 @@ impl OpenAiEndpoint {
     #[must_use]
     pub fn path(&self) -> &str {
         &self.path
+    }
+
+    /// The bearer credential, for same-crate integrations that render
+    /// it into the request's `authorization` header and nowhere else.
+    /// There is no public accessor: a credential leaves this type only
+    /// onto the wire.
+    #[must_use]
+    pub(crate) fn credential(&self) -> &str {
+        &self.credential
     }
 }
 
@@ -739,7 +749,7 @@ impl<S: crate::inference_observer::InferenceArtifactSink> OpenAiInference<S> {
 /// UTC calendar instant. A clock before the epoch (or a timestamp the
 /// protocol grammar refuses) yields `None`, and the record simply
 /// carries no capture time — never a fabricated one.
-fn now() -> Option<Timestamp> {
+pub(crate) fn now() -> Option<Timestamp> {
     let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
     let seconds = elapsed.as_secs();
     let (year, month, day) = civil_from_days(i64::try_from(seconds / 86_400).ok()?)?;

@@ -557,6 +557,15 @@ impl<S> InferenceObserverV1<S> {
         &mut self.sink
     }
 
+    /// Consume the observer and return the sink, for per-exchange
+    /// integrations — the proxy route — that construct a fresh observer
+    /// around a fresh sink for every served exchange and hand the
+    /// captured records back through the normal delivery path at close.
+    #[must_use]
+    pub fn into_sink(self) -> S {
+        self.sink
+    }
+
     /// The active logical-inference start record, when started.
     #[must_use]
     pub const fn logical_inference(&self) -> Option<&LogicalInferenceStart> {

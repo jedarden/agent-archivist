@@ -47,6 +47,14 @@
 //!   every real exchange: decoded request, response or ordered stream
 //!   events, usage, retry, transport error, teardown — credentials on
 //!   the wire only, never in an artifact.
+//! - [`openai_proxy`]: the explicitly routed OpenAI-compatible capture
+//!   proxy (plan Phase 9): a bounded loopback HTTP/1.1 server that
+//!   forwards one declared route to the provider through the same
+//!   transport, drives the same lifecycle around every forwarded
+//!   exchange, drops routed callers' credentials at the boundary,
+//!   refuses transfer-framed and oversized requests uncaptured, and
+//!   never queues — buffering stays bounded end to end, down to the
+//!   relay between the provider read and the caller write.
 //! - [`openai_conformance`]: the exact-capture conformance suite that
 //!   proves those properties at the real loopback boundary; the only
 //!   producer of a compatibility claim.
@@ -113,6 +121,7 @@ pub mod lifecycle;
 pub mod openai_compat;
 pub mod openai_conformance;
 pub mod openai_http1;
+pub mod openai_proxy;
 pub mod parity;
 pub mod session_identity;
 pub mod status;
@@ -172,6 +181,10 @@ pub use lifecycle::{AdapterLifecycle, LifecycleState};
 pub use openai_conformance::{
     CONFORMANCE_CREDENTIAL, CheckId, ConformanceError, ConformanceReport, ConformanceSink,
     OpenAiWireFixture, ReceivedExchange, SceneId, SceneOutcome, TransportConformance, WireScript,
+};
+pub use openai_proxy::{
+    DEFAULT_MAX_IN_FLIGHT, ExchangeOutcome, ProxyCapture, ProxyConfig, ProxyExchangeReport,
+    RELAY_MAX_BUFFERED_BYTES, Refusal,
 };
 pub use parity::{
     DatabaseObservation, Divergence, FieldDigest, FieldObservation, ObservedValue, RowObservation,
