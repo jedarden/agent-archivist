@@ -16,13 +16,13 @@
 //! is a claim the project does not make, and a row that exists carries
 //! the conformance evidence digest that qualified it.
 //!
-//! Version 1 ships exactly one qualified route: the first-party
+//! Version 1 ships exactly two qualified routes, both first-party: the
 //! OpenAI-compatible Rust transport integration
-//! ([`crate::openai_compat`]) around [`crate::openai_http1`]. A proxy
-//! route, or a future third-party hook, enters the same way this one
-//! did: by calling the versioned [`crate::inference_observer`]
-//! lifecycle at its actual transport boundary and passing the same
-//! conformance gate.
+//! ([`crate::openai_compat`]) around [`crate::openai_http1`], and the
+//! explicitly routed capture proxy ([`crate::openai_proxy`]). A future
+//! third-party hook enters the same way these two did: by calling the
+//! versioned [`crate::inference_observer`] lifecycle at its actual
+//! transport boundary and passing the same conformance gate.
 
 use std::fmt;
 
@@ -139,7 +139,9 @@ impl std::error::Error for MatrixError {}
 ///
 /// Freshly constructed it is empty — absence of a row is the normal
 /// state of an unqualified route, and the matrix grows only through
-/// [`CompatibilityMatrix::record`] of a passing conformance report.
+/// [`CompatibilityMatrix::record`] and
+/// [`CompatibilityMatrix::record_proxy`] of passing conformance
+/// reports.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CompatibilityMatrix {
     routes: Vec<QualifiedRoute>,
@@ -166,23 +168,46 @@ impl CompatibilityMatrix {
             .qualification()
             .ok_or(MatrixError::Unqualified)?
             .clone();
+        self.upsert(qualification);
+        Ok(())
+    }
+
+    /// Record the proxy conformance report's qualification.
+    ///
+    /// # Errors
+    /// [`MatrixError::Unqualified`] when the report carries no
+    /// qualification because its conformance run did not pass every
+    /// scene.
+    pub fn record_proxy(
+        &mut self,
+        report: &crate::openai_proxy_conformance::ProxyConformanceReport,
+    ) -> Result<(), MatrixError> {
+        let qualification = report
+            .qualification()
+            .ok_or(MatrixError::Unqualified)?
+            .clone();
+        self.upsert(qualification);
+        Ok(())
+    }
+
+    /// Insert or replace one route's row; re-recording the same
+    /// evidence is idempotent, and different evidence for one route
+    /// replaces the row, because the matrix states the qualification,
+    /// not its history.
+    fn upsert(&mut self, qualification: QualifiedRoute) {
         if let Some(existing) = self
             .routes
             .iter()
             .find(|route| route.route == qualification.route)
         {
-            // Re-recording the same evidence is idempotent; different
-            // evidence for one route replaces the row, because the
-            // matrix states the qualification, not its history.
             if existing == &qualification {
-                return Ok(());
+                return;
             }
             self.routes
                 .retain(|route| route.route != qualification.route);
         }
         self.routes.push(qualification);
         self.routes.sort_by_key(|route| route.route);
-        Ok(())
     }
 
     /// Every qualified route, in registry order.

@@ -153,7 +153,8 @@ pub use archivist_protocol::usage_summary::{MessageUsage, SourceUsageCounts, Usa
 pub use capability::{AdapterCapability, CapabilitySet, MAX_CAPABILITIES};
 pub use capture_alignment::{AlignmentError, CaptureAlignment, InferenceAlignment, align_attempts};
 pub use compatibility::{
-    CompatibilityMatrix, FIRST_PARTY_OPENAI_HTTP1, MatrixError, QualifiedRoute,
+    CompatibilityMatrix, FIRST_PARTY_OPENAI_HTTP1, FIRST_PARTY_OPENAI_PROXY, MatrixError,
+    QualifiedRoute,
 };
 pub use conformance::{
     CORPUS_RELATIVE, ConformanceAdapter, ConformanceSuite, CorpusError, GenerationContinuity,
