@@ -191,6 +191,15 @@ optional = true
 description = "Optional reference to the offline identity backup and restore use; present only when a deployment deliberately grants offline restore."
 example = "file:/etc/archivist/storage/offline-restore-credentials"
 
+[keys."storage.tenant"]
+owner = "archivist-storage-s3"
+type = "string"
+tiers = ["flag", "env", "file"]
+secret = false
+optional = true
+description = "The one tenant whose raw and control prefixes the ingest identities provision; canonical UUID grammar; the tenant the serve composition pins its trust anchor and identities to. Registry-optional because only the replica composition consumes it; the serve composition refuses its absence as a missing decision."
+example = "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b"
+
 # ---------------------------------------------------------------------------
 # Ingestion server (plan Phase 4) — owner archivist-server
 # ---------------------------------------------------------------------------
@@ -293,6 +302,15 @@ secret = false
 default = 30
 description = "Graceful-shutdown drain window before aborting unfinished multipart uploads (plan Phase 4)."
 example = 10
+
+[keys."server.authority_key"]
+owner = "archivist-server"
+type = "string"
+tiers = ["flag", "env", "file"]
+secret = false
+optional = true
+description = "The pinned tenant-authority Ed25519 public half this replica serves under, ed25519-public-key-hex (64 lowercase hex); verification material the administration surface certifies, never a secret. Registry-optional because only the replica composition consumes it; the serve composition refuses its absence as a missing decision."
+example = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 # ---------------------------------------------------------------------------
 # Offline administration surface (plan Section 5, Phase 3) — owners

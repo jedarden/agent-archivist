@@ -159,7 +159,13 @@ and one of the two is wrong and must be fixed in the same commit.
   the offline administration surface, so a plain load demands nothing of
   it, and the section's requiredness is enforced where the surface
   exists — the administrator commands' composition gate refuses any act
-  whose administration settings resolved from no tier. Absent, the
+  whose administration settings resolved from no tier. The same shape
+  covers the two replica-only composition keys, `server.authority_key`
+  and `storage.tenant` (plan Phase 4): only the `serve` command consumes
+  them, so a plain load of every other command must not demand a
+  replica's pinned trust material, and the serve composition refuses
+  their absence itself — as a missing decision, before any socket
+  exists. Absent, the
   capability does not exist and no failure is reported (CFG-020 is a
   required-key rule); present, the key validates by the ordinary rules
   (CFG-013, CFG-029). Defaults live only in the registry; documentation,

@@ -15,7 +15,9 @@
 //! implemented phases' handlers at this composition point. The Phase 5
 //! operator surface is attached: the `daemon`, `run --once`, `inventory`,
 //! `status`, `verify-state`, and `doctor` commands the operator module
-//! composes.
+//! composes. The Phase 4 ingestion server is attached with it: the
+//! `serve` command the serve module composes — the concrete S3 storage
+//! backend is selected here, at the composition root.
 //! A registered command whose phase has not attached a handler is
 //! rejected as not shipped when invoked, rather than being represented
 //! by placeholder behavior.
@@ -37,7 +39,9 @@
 /// one invocation.
 fn main() {
     let mut router = archivist_client_core::cli::router::Router::new();
-    for (path, handler) in archivist_cli::operator::handlers() {
+    let operator = archivist_cli::operator::handlers();
+    let serve = archivist_cli::serve::handlers();
+    for (path, handler) in operator.iter().copied().chain(serve.iter().copied()) {
         // Every entry names a registered path whose phase shipped its
         // output kind; the registry gate checked the pair, and a refusal
         // here is a composition bug, not runtime behavior.

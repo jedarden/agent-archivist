@@ -13,9 +13,10 @@ Validates ``tools/config-keys.toml`` against the conventions in
    non-empty tier list that includes the file tier, and a bounded
    description and example; exactly one of a default, ``required``, or
    ``optional`` is declared — optionality is for a capability a deployment
-   may omit (a secret reference naming a credential role, or the offline
+   may omit (a secret reference naming a credential role, the offline
    ``admin`` section whose requiredness the administrator commands'
-   composition gate enforces);
+   composition gate enforces, or the replica-only composition keys the
+   serve command alone consumes);
 4. integer keys carry a unit suffix (``_bytes``, ``_seconds``,
    ``_percent``, ``_count``, ``_ratio``) and defaults/examples respect the
    suffix bounds — there are no float values anywhere;
@@ -378,15 +379,18 @@ def validate_registry(registry: dict) -> list[str]:
                               "are required, never defaulted")
             admin_surface = isinstance(name, str) and \
                 name.split(".")[0] == "admin"
-            if has_optional and not (secret or admin_surface):
+            replica_only = name in ("server.authority_key", "storage.tenant")
+            if has_optional and not (secret or admin_surface or replica_only):
                 errors.append(f"{what} declares optional but is neither a "
-                              "secret reference nor an offline-administration "
-                              "key; optionality exists for capabilities a "
+                              "secret reference, an offline-administration "
+                              "key, nor a replica-only composition key; "
+                              "optionality exists for capabilities a "
                               "deployment may omit — a credential role an "
-                              "ingest replica does not hold, or the "
+                              "ingest replica does not hold, the "
                               "administration surface it never configures, "
-                              "whose requiredness the administrator "
-                              "commands' composition gate enforces")
+                              "or the pinned trust material only the serve "
+                              "composition consumes, whose requiredness the "
+                              "consuming command's composition gate enforces")
 
         tiers = declared.get("tiers")
         if not isinstance(tiers, list) or not tiers:

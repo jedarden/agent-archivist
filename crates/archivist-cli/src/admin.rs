@@ -151,12 +151,22 @@ fn admin_config(resolved: &ResolvedConfig) -> Result<ControlAdminConfig, S3Confi
 
 /// Build the ingest configuration from the registered `storage.*` keys.
 ///
-/// This configuration is never assembled into a store here; it exists so
-/// [`S3StorageConfig::reject_administration_credential`] can state the
-/// authority split over the pair, and it fails closed on its own grammars
-/// first — a boundary proof over a malformed ingest configuration would
-/// prove nothing.
-fn ingest_config(resolved: &ResolvedConfig) -> Result<S3StorageConfig, S3ConfigError> {
+/// This composition is crate-shared: the administration surface uses it
+/// for the authority-split boundary proof (and discards the result),
+/// while the `serve` composition assembles the replica's raw-writer and
+/// control-reader identities from it. Both surfaces resolve the same
+/// registered keys through the same fail-closed builder gate, so one
+/// composition owns the mapping.
+///
+/// # Errors
+/// [`S3ConfigErrorKind::MissingSetting`] when a composition-required key
+/// did not resolve; [`S3ConfigErrorKind::MalformedSetting`] when a
+/// resolved value is outside its closed grammar;
+/// [`S3ConfigErrorKind::TransportMismatch`] when an endpoint scheme
+/// disagrees with the derived transport security;
+/// [`S3ConfigErrorKind::DuplicateIdentity`] when two roles share one
+/// credential reference. No error echoes a value or a reference target.
+pub(crate) fn ingest_config(resolved: &ResolvedConfig) -> Result<S3StorageConfig, S3ConfigError> {
     let mut builder = S3StorageConfigBuilder::default()
         .endpoint_url(required_ingest_text(resolved, "storage.endpoint_url")?.to_owned())
         .region(required_ingest_text(resolved, "storage.region")?.to_owned())
@@ -206,7 +216,7 @@ fn required_admin_text<'a>(
 
 /// A required ingest storage setting's text, with the same standing guard
 /// as the administration half.
-fn required_ingest_text<'a>(
+pub(crate) fn required_ingest_text<'a>(
     resolved: &'a ResolvedConfig,
     key: &str,
 ) -> Result<&'a str, S3ConfigError> {
@@ -226,7 +236,7 @@ fn required_admin_reference<'a>(
 }
 
 /// A required ingest secret reference, carried unresolved.
-fn required_ingest_reference<'a>(
+pub(crate) fn required_ingest_reference<'a>(
     resolved: &'a ResolvedConfig,
     key: &str,
 ) -> Result<&'a SecretRef, S3ConfigError> {
@@ -239,7 +249,7 @@ fn required_ingest_reference<'a>(
 /// builders re-parse it through their own grammar. The loader validated the
 /// reference into this shape, so the round trip is lossless, and the value
 /// behind the reference never appears — only the pointer's canonical text.
-fn reference_text(reference: &SecretRef) -> String {
+pub(crate) fn reference_text(reference: &SecretRef) -> String {
     match reference {
         SecretRef::File { path } => format!("file:{}", path.display()),
         SecretRef::Env { name } => format!("env:{name}"),
@@ -248,7 +258,7 @@ fn reference_text(reference: &SecretRef) -> String {
 
 /// Parse a registry path-style token, failing closed on any drift between
 /// the registry's closed value set and the model's tokens.
-fn path_style_token(text: &str) -> Result<PathStyle, S3ConfigError> {
+pub(crate) fn path_style_token(text: &str) -> Result<PathStyle, S3ConfigError> {
     PathStyle::parse(text)
         .map_err(|_| S3ConfigError::new(S3ConfigErrorKind::MalformedSetting, MALFORMED_PATH_STYLE))
 }

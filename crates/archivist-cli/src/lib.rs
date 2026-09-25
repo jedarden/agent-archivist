@@ -30,7 +30,11 @@
 //! the spool, evaluate pressure, and plan the round — every document
 //! pinned to its registry entry's `result_schema`, every refusal a
 //! registered code, and the binary attaches the five handlers at its
-//! own composition point.
+//! own composition point. The fifth is the Phase 4 ingestion replica
+//! ([`serve`]): the composition that selects the concrete S3 storage
+//! backend, pins the trust anchor set, and hands the validated parts to
+//! the server crate's bind/serve lifecycle — the composition root's
+//! whole reason for the storage-s3 dependency edge.
 //!
 //! # Dependency boundary
 //!
@@ -44,3 +48,4 @@ pub mod approve;
 pub mod catalog;
 pub mod operator;
 pub mod revoke;
+pub mod serve;

@@ -230,11 +230,12 @@ impl KeyDefinition {
 
     /// Whether the key is an optional key a deployment may omit: neither
     /// required nor defaulted (CFG-019). Optionality is the secret
-    /// references naming credential roles a deployment does not hold, and
-    /// the offline-administration section an ingest replica never
-    /// configures — that surface's requiredness is enforced by the
-    /// administrator commands' composition gate. Absent from every tier
-    /// the key resolves to nothing; supplied, it validates like any other.
+    /// references naming credential roles a deployment does not hold, the
+    /// offline-administration section an ingest replica never configures,
+    /// and the replica-only composition keys the serve command alone
+    /// consumes — requiredness the consuming command's composition gate
+    /// enforces. Absent from every tier the key resolves to nothing;
+    /// supplied, it validates like any other.
     #[must_use]
     pub const fn optional(&self) -> bool {
         self.optional
@@ -526,13 +527,20 @@ fn parse_key_entry(name: &str, table: &TomlTable) -> Result<KeyDefinition, &'sta
         return Err("a secret key never exposes a flag tier");
     }
     // Optionality marks a capability a deployment may omit: a secret
-    // reference naming a credential role it does not hold, or the offline
-    // administration surface an ingest replica never configures — that
-    // surface's requiredness is enforced by the administrator commands'
-    // composition gate, not by a plain load (CFG-019, plan Section 5).
+    // reference naming a credential role it does not hold, the offline
+    // administration surface an ingest replica never configures, or the
+    // two replica-only composition keys — the pinned trust material the
+    // serve command alone consumes, whose requiredness that composition
+    // refuses as a missing decision before any socket exists, because a
+    // plain load of every other command must not demand it (CFG-019,
+    // plan Section 5).
     let administration_surface = name.starts_with("admin.");
-    if optional && !(secret || administration_surface) {
-        return Err("only a secret reference or an offline-administration key may be optional");
+    let replica_only = matches!(name, "server.authority_key" | "storage.tenant");
+    if optional && !(secret || administration_surface || replica_only) {
+        return Err(
+            "only a secret reference, an offline-administration key, or a \
+             replica-only composition key may be optional",
+        );
     }
     let key_type = match type_token {
         "boolean" => KeyType::Boolean,
@@ -765,6 +773,25 @@ mod tests {
                 .unwrap_or_else(|| panic!("{name} must be registered"));
             assert!(key.secret() && key.optional() && !key.required());
             assert!(!key.flag_tier());
+        }
+    }
+
+    /// The replica-only composition keys (plan Phase 4): registered,
+    /// non-secret, and optional, because every other command's plain load
+    /// must not demand a replica's pinned trust material — the serve
+    /// composition refuses their absence itself, before any socket
+    /// exists.
+    #[test]
+    fn the_replica_composition_keys_are_never_demanded_of_a_plain_load() {
+        let registry = config_registry();
+        for name in ["server.authority_key", "storage.tenant"] {
+            let key = registry
+                .key(name)
+                .unwrap_or_else(|| panic!("{name} must be registered"));
+            assert!(
+                key.optional() && !key.secret() && !key.required(),
+                "{name}: a replica-only key is optional and non-secret"
+            );
         }
     }
 
