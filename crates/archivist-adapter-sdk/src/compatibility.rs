@@ -5,11 +5,12 @@
 //! actually claims.
 //!
 //! A route earns a row only by evidence: [`QualifiedRoute`] values are
-//! minted exclusively by a passing
-//! [`crate::openai_conformance::TransportConformance`] run — the
-//! constructor is crate-private, so no caller outside this crate can
-//! manufacture a compatibility claim, and no caller inside it mints one
-//! except at the end of the conformance suite. The matrix therefore
+//! minted exclusively by a passing conformance run — the first-party
+//! client's [`crate::openai_conformance::TransportConformance`] or the
+//! proxy route's [`crate::openai_proxy_conformance::ProxyConformance`]
+//! — the constructor is crate-private, so no caller outside this crate
+//! can manufacture a compatibility claim, and no caller inside it mints
+//! one except at the end of the conformance suite. The matrix therefore
 //! cannot name an ambient-tracing integration, a package-detection
 //! heuristic, or a third-party SDK version: a row that does not exist
 //! is a claim the project does not make, and a row that exists carries
@@ -30,6 +31,11 @@ use crate::expected_inference::RoutePolicy;
 /// The integration token of the one first-party qualified route: the
 /// OpenAI-compatible client over the first-party HTTP/1.1 transport.
 pub const FIRST_PARTY_OPENAI_HTTP1: &str = "archivist-openai-http1";
+
+/// The integration token of the first-party proxy route: the explicitly
+/// routed OpenAI-compatible capture proxy ([`crate::openai_proxy`])
+/// over the same first-party transport.
+pub const FIRST_PARTY_OPENAI_PROXY: &str = "archivist-openai-proxy";
 
 /// One route's conformance-backed compatibility claim.
 ///
@@ -53,6 +59,22 @@ impl QualifiedRoute {
     ) -> Self {
         Self {
             route: RoutePolicy::SdkHook,
+            integration,
+            lifecycle_version,
+            evidence_digest,
+        }
+    }
+
+    /// Mint the proxy route's qualification from a passing proxy
+    /// conformance run. Crate-private, like the SDK-hook mint: only a
+    /// conformance suite mints evidence.
+    pub(crate) fn new_proxy(
+        integration: &'static str,
+        lifecycle_version: i64,
+        evidence_digest: String,
+    ) -> Self {
+        Self {
+            route: RoutePolicy::Proxy,
             integration,
             lifecycle_version,
             evidence_digest,
@@ -230,6 +252,19 @@ mod tests {
         );
         assert_eq!(route.route(), RoutePolicy::SdkHook);
         assert_eq!(route.integration(), FIRST_PARTY_OPENAI_HTTP1);
+        assert_eq!(route.lifecycle_version(), INFERENCE_OBSERVER_VERSION);
+        assert_eq!(route.evidence_digest().len(), 64);
+    }
+
+    #[test]
+    fn the_proxy_mint_pins_the_proxy_route() {
+        let route = QualifiedRoute::new_proxy(
+            FIRST_PARTY_OPENAI_PROXY,
+            INFERENCE_OBSERVER_VERSION,
+            "ab".repeat(32),
+        );
+        assert_eq!(route.route(), RoutePolicy::Proxy);
+        assert_eq!(route.integration(), FIRST_PARTY_OPENAI_PROXY);
         assert_eq!(route.lifecycle_version(), INFERENCE_OBSERVER_VERSION);
         assert_eq!(route.evidence_digest().len(), 64);
     }

@@ -55,6 +55,15 @@
 //!   refuses transfer-framed and oversized requests uncaptured, and
 //!   never queues — buffering stays bounded end to end, down to the
 //!   relay between the provider read and the caller write.
+//! - [`openai_proxy_conformance`]: the proxy route's exact-capture
+//!   conformance suite (plan Phase 9): a passing
+//!   [`openai_proxy_conformance::ProxyConformance::run`] drives the
+//!   proxy at its real loopback boundary through every
+//!   provider-attempt boundary — single exchange, ordered stream,
+//!   ordered retry, transport error, faithful forwarding — with the
+//!   conformance credential excluded from every captured artifact and
+//!   buffering bounded under a slow-drain caller. A fully-passing run
+//!   is the only producer of the proxy route's qualification evidence.
 //! - [`openai_conformance`]: the exact-capture conformance suite that
 //!   proves those properties at the real loopback boundary; the only
 //!   producer of a compatibility claim.
@@ -122,6 +131,7 @@ pub mod openai_compat;
 pub mod openai_conformance;
 pub mod openai_http1;
 pub mod openai_proxy;
+pub mod openai_proxy_conformance;
 pub mod parity;
 pub mod session_identity;
 pub mod status;
@@ -185,6 +195,10 @@ pub use openai_conformance::{
 pub use openai_proxy::{
     DEFAULT_MAX_IN_FLIGHT, ExchangeOutcome, ProxyCapture, ProxyConfig, ProxyExchangeReport,
     RELAY_MAX_BUFFERED_BYTES, Refusal,
+};
+pub use openai_proxy_conformance::{
+    ProxyCheckId, ProxyConformance, ProxyConformanceReport, ProxySceneId, ProxySceneOutcome,
+    ProxyWireFixture, ProxyWireScript,
 };
 pub use parity::{
     DatabaseObservation, Divergence, FieldDigest, FieldObservation, ObservedValue, RowObservation,

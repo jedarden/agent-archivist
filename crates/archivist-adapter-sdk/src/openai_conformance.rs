@@ -469,11 +469,11 @@ fn step<T, E>(attempted: Result<T, E>, checks: &mut Checks, check: CheckId) -> S
     })
 }
 
-fn tenant() -> Result<TenantId, ConformanceError> {
+pub(crate) fn tenant() -> Result<TenantId, ConformanceError> {
     TenantId::parse(TENANT).map_err(|_| ConformanceError::EndpointInvalid)
 }
 
-fn origin() -> Result<ClientId, ConformanceError> {
+pub(crate) fn origin() -> Result<ClientId, ConformanceError> {
     ClientId::parse(ORIGIN).map_err(|_| ConformanceError::EndpointInvalid)
 }
 
@@ -501,7 +501,7 @@ fn chat_request(streamed: bool) -> ChatRequest {
 }
 
 /// The request body every scene's client serializes.
-fn chat_body(streamed: bool) -> Vec<u8> {
+pub(crate) fn chat_body(streamed: bool) -> Vec<u8> {
     chat_request(streamed).body_bytes()
 }
 
@@ -533,7 +533,7 @@ fn last_received_body(fixture: &dyn OpenAiWireFixture) -> Option<Vec<u8>> {
 }
 
 /// Split a raw request into head and body at the blank line.
-fn split_request(raw: &[u8]) -> (&[u8], &[u8]) {
+pub(crate) fn split_request(raw: &[u8]) -> (&[u8], &[u8]) {
     match raw.windows(4).position(|window| window == b"\r\n\r\n") {
         Some(position) => (&raw[..position], &raw[position + 4..]),
         None => (raw, &[]),
@@ -541,7 +541,12 @@ fn split_request(raw: &[u8]) -> (&[u8], &[u8]) {
 }
 
 /// One full HTTP/1.1 response with `content-length` framing.
-fn raw_response(status: u16, reason: &str, headers: &[(&str, &str)], body: &[u8]) -> Vec<u8> {
+pub(crate) fn raw_response(
+    status: u16,
+    reason: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+) -> Vec<u8> {
     let mut head = String::new();
     let _ = write!(head, "HTTP/1.1 {status} {reason}\r\n");
     for (name, value) in headers {
@@ -554,7 +559,7 @@ fn raw_response(status: u16, reason: &str, headers: &[(&str, &str)], body: &[u8]
 }
 
 /// One SSE frame: the `data:` line and the blank-line dispatch.
-fn sse_frame(payload: &[u8]) -> Vec<u8> {
+pub(crate) fn sse_frame(payload: &[u8]) -> Vec<u8> {
     let mut frame = b"data: ".to_vec();
     frame.extend_from_slice(payload);
     frame.extend_from_slice(b"\n\n");
@@ -563,7 +568,7 @@ fn sse_frame(payload: &[u8]) -> Vec<u8> {
 
 /// A complete chunked `text/event-stream` response: one chunk per
 /// frame, terminal chunk included.
-fn chunked_stream(headers: &[(&str, &str)], frames: &[Vec<u8>]) -> Vec<u8> {
+pub(crate) fn chunked_stream(headers: &[(&str, &str)], frames: &[Vec<u8>]) -> Vec<u8> {
     let mut head = String::from("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n");
     for (name, value) in headers {
         let _ = write!(head, "{name}: {value}\r\n");
@@ -592,7 +597,7 @@ fn truncated_stream(first_frame: &[u8]) -> Vec<u8> {
 }
 
 /// The successful non-streamed completion body with usage.
-const COMPLETION_BODY: &str = r#"{"id":"c-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"done"}}],"usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}"#;
+pub(crate) const COMPLETION_BODY: &str = r#"{"id":"c-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"done"}}],"usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}"#;
 
 fn success_headers() -> Vec<(&'static str, &'static str)> {
     vec![
@@ -606,7 +611,7 @@ fn success_headers() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
-fn success_response() -> Vec<u8> {
+pub(crate) fn success_response() -> Vec<u8> {
     raw_response(200, "OK", &success_headers(), COMPLETION_BODY.as_bytes())
 }
 
