@@ -6,8 +6,8 @@
 //! shipped adapter projection and the operational shells around it. The
 //! recurring cluster shape is a long-running Deployment calling
 //! [`rebuild_loop`], which sleeps between internal passes. An operator's
-//! one-shot shape is an Argo WorkflowTemplate calling [`rebuild_over`].
-//! Neither shape is a Kubernetes Job or CronJob.
+//! one-shot shape is an Argo `WorkflowTemplate` calling [`rebuild_over`].
+//! Neither shape is a Kubernetes `Job` or `CronJob`.
 
 use archivist_client_core::cli::{CliError, Invocation};
 use archivist_client_core::daemon::{self, Cancel, LoopReport, LoopStop, ScheduleConfig, Sleeper};
@@ -47,6 +47,11 @@ fn projection() -> UsageProjection<ProjectionReader> {
 ///
 /// This generic composition point is what a production S3 transport binds;
 /// the CLI module does not own credentials or an alternate storage client.
+///
+/// # Errors
+/// Returns a usage error when the source flag is absent, a registered client
+/// error when the runtime cannot start, or the mapped storage refusal from
+/// the freeze, checkpoint, read, or derived-write path.
 pub fn rebuild_over<R, C, D>(
     invocation: &Invocation,
     tenant: &TenantId,
@@ -81,6 +86,12 @@ where
 /// Deployment. Each cycle is sequential and each pass resumes through the
 /// verified checkpoint seam, so a cancelled or restarted process cannot
 /// reorder occurrences or create a second logical row.
+///
+/// # Errors
+/// Returns a usage error when the source flag is absent, a registered client
+/// error when the runtime or loop entropy fails, or the mapped storage refusal
+/// from the cycle that stopped the loop.
+#[allow(clippy::too_many_arguments)]
 pub fn rebuild_loop<R, C, D, J, S>(
     invocation: &Invocation,
     tenant: &TenantId,
