@@ -19,7 +19,8 @@
 //! ```
 //!
 //! - **One row per raw occurrence**, derived through the same
-//!   [`UsageSummary::derive`] the catalog rebuild uses — the inventory is
+//!   [`UsageSummary::derive`](archivist_protocol::usage_summary::UsageSummary::derive)
+//!   the catalog rebuild uses — the inventory is
 //!   a projection of the derived rows' own values, never an independent
 //!   reading of the raw bytes, so the two pipelines cannot disagree. The
 //!   row carries the usage-summary identity members (occurrence digest,
