@@ -1382,7 +1382,7 @@ mod tests {
     /// Drive the real observer lifecycle to capture `bytes` as a
     /// provider request — the same emission path a capture bug would
     /// route credential material through.
-    fn capture_as_request(bytes: Vec<u8>) -> Vec<CanonicalArtifact> {
+    fn capture_as_request(bytes: &[u8]) -> Vec<CanonicalArtifact> {
         capture_as_request_with(bytes, None)
     }
 
@@ -1390,10 +1390,7 @@ mod tests {
     /// parameter a capture mapping fills with header-derived values,
     /// and so the channel a capture bug leaks credential material
     /// through.
-    fn capture_as_request_with(
-        bytes: Vec<u8>,
-        metadata: Option<Metadata>,
-    ) -> Vec<CanonicalArtifact> {
+    fn capture_as_request_with(bytes: &[u8], metadata: Option<Metadata>) -> Vec<CanonicalArtifact> {
         let mut observer = InferenceObserverV1::new(
             tenant().expect("a valid tenant"),
             origin().expect("a valid origin"),
@@ -1402,7 +1399,7 @@ mod tests {
         observer.start_logical_inference(None).expect("starts");
         observer.start_provider_attempt().expect("an attempt");
         observer
-            .decoded_request_bytes(&bytes, metadata, None)
+            .decoded_request_bytes(bytes, metadata, None)
             .expect("records");
         observer.close_logical_inference().expect("closes");
         observer.into_sink().artifacts().to_vec()
@@ -1427,7 +1424,7 @@ mod tests {
             usage_output_tokens: None,
             usage_total_tokens: None,
         };
-        let poisoned = capture_as_request_with(chat_body(false), Some(leak));
+        let poisoned = capture_as_request_with(&chat_body(false), Some(leak));
         assert!(!poisoned.is_empty());
         assert!(
             artifacts_leak_any(&poisoned, &[CONFORMANCE_CREDENTIAL.as_bytes()]),
@@ -1436,7 +1433,7 @@ mod tests {
 
         // The scene's own records carry no credential: the clean
         // capture passes the same check the poisoned record fails.
-        let clean = capture_as_request(chat_body(false));
+        let clean = capture_as_request(&chat_body(false));
         assert!(!clean.is_empty());
         assert!(!artifacts_leak_any(
             &clean,
@@ -1451,9 +1448,12 @@ mod tests {
         // A relay that buffered the stream would keep the provider
         // writing: strictly increasing progress has no quiet suffix, so
         // the classifier refuses the stall and the scene's check fails.
-        let streaming: Vec<(Duration, usize)> = (0..60)
-            .map(|index| (period * (index as u32), (index + 1) * 4096))
-            .collect();
+        let mut streaming: Vec<(Duration, usize)> = Vec::new();
+        let mut progress = 0_usize;
+        for step in 0_u32..60 {
+            progress += 4096;
+            streaming.push((period * step, progress));
+        }
         assert!(!stall_observed(&streaming, quiet));
         assert!(!stall_observed(&[], quiet));
 
@@ -1470,8 +1470,8 @@ mod tests {
         // bound promises: backpressure reached the provider.
         let mut stalled = streaming.clone();
         let frozen_at = stalled.last().expect("samples").1;
-        for index in 60..110 {
-            stalled.push((period * (index as u32), frozen_at));
+        for step in 60_u32..110 {
+            stalled.push((period * step, frozen_at));
         }
         assert!(stall_observed(&stalled, quiet));
     }
