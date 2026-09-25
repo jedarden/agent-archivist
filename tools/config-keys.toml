@@ -197,7 +197,7 @@ type = "string"
 tiers = ["flag", "env", "file"]
 secret = false
 optional = true
-description = "The one tenant whose raw and control prefixes the ingest identities provision; canonical UUID grammar; the tenant the serve composition pins its trust anchor and identities to. Registry-optional because only the replica composition consumes it; the serve composition refuses its absence as a missing decision."
+description = "The one tenant whose raw and control prefixes the ingest identities provision (UUID grammar). Registry-optional: only the replica composition consumes it; serve refuses absence as a missing decision."
 example = "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b"
 
 # ---------------------------------------------------------------------------
@@ -309,7 +309,7 @@ type = "string"
 tiers = ["flag", "env", "file"]
 secret = false
 optional = true
-description = "The pinned tenant-authority Ed25519 public half this replica serves under, ed25519-public-key-hex (64 lowercase hex); verification material the administration surface certifies, never a secret. Registry-optional because only the replica composition consumes it; the serve composition refuses its absence as a missing decision."
+description = "The tenant-authority Ed25519 public half this replica serves under (64 lowercase hex); verification material, never a secret. Only the replica composition consumes it; serve refuses its absence."
 example = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 # ---------------------------------------------------------------------------
