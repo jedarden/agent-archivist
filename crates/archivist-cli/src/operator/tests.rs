@@ -67,12 +67,19 @@ impl Drop for TempDir {
 /// references. The secret keys carry references, never values, exactly
 /// as the command surface accepts them (CLI-024).
 fn resolved_for(dir: &TempDir) -> ResolvedConfig {
+    resolved_with_floor(dir, "1")
+}
+
+/// The same synthetic host with an explicit spool free-space floor, so a
+/// test can raise the floor above the filesystem's actual free space.
+fn resolved_with_floor(dir: &TempDir, floor: &str) -> ResolvedConfig {
     ConfigSources::non_interactive()
         .env("HOME", dir.path().to_string_lossy().to_string())
         .env(
             "ARCHIVIST_CLIENT_STATE_DIR",
             dir.path().to_string_lossy().to_string(),
         )
+        .env("ARCHIVIST_SPOOL_FREE_FLOOR_BYTES", floor)
         .env(
             "ARCHIVIST_INGEST_ENDPOINT_URL",
             "https://ingest.example.invalid",
@@ -165,6 +172,50 @@ fn seeded_store(dir: &TempDir) -> StateStore {
     store
 }
 
+/// One verified receipt with its frozen request, so the doctor's linkage
+/// check passes and an induced condition is the only finding left. The
+/// schema's open does not pin the database mode, so the fixture restores it.
+fn linked_receipt(store: &StateStore, commit_time: &str) {
+    let request_id = uid("req");
+    store
+        .connection()
+        .execute(
+            "INSERT INTO frozen_requests (
+                 request_id, spool_entry_id, tenant_id, origin_client_id,
+                 uploader_client_id, occurrence_id, envelope_version,
+                 storage_profile, transport_encoding, canonical_digest,
+                 incoming_checksum, canonical_size, transport_size, source_at,
+                 captured_at, envelope_created_at, frozen_at)
+             VALUES (?1, NULL, ?2, ?3, ?4, ?5, 'envelope-v1', 'zstd-v1',
+                 'identity', ?6, 'sha256-raw', 1000, 800, NULL, ?7, ?7, ?7)",
+            params![
+                request_id,
+                uid("tenant"),
+                uid("origin"),
+                uid("uploader"),
+                digest(91),
+                digest(93),
+                commit_time,
+            ],
+        )
+        .expect("insert frozen request");
+    store
+        .connection()
+        .execute(
+            "INSERT INTO receipts (
+                 request_id, receipt_key_id, signature, receipt_digest,
+                 commit_ordinal, commit_time, signature_verified, received_at)
+             VALUES (?1, 'rk-2026-36', ?2, ?3, 1, ?4, 1, ?4)",
+            params![request_id, "ab".repeat(64), digest(92), commit_time],
+        )
+        .expect("insert receipt");
+    std::fs::set_permissions(
+        store.connection().path().expect("file-backed store"),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .expect("restore the pinned database mode");
+}
+
 #[test]
 fn handlers_attach_to_the_pinned_registry_and_attach_once() {
     let mut router = Router::new();
@@ -215,6 +266,128 @@ fn doctor_returns_the_most_severe_registered_finding_without_sensitive_text() {
     let body = String::from_utf8(error.body_bytes()).expect("diagnostic utf-8");
     assert!(!body.contains(dir.path().to_string_lossy().as_ref()));
     assert!(!body.contains("upstream-session"));
+}
+
+#[test]
+fn doctor_over_maps_each_finding_to_its_registered_code() {
+    struct Case {
+        name: &'static str,
+        code: &'static str,
+        ready: bool,
+        commit_time: &'static str,
+        floor: &'static str,
+        tamper: fn(&StateStore, &TempDir),
+    }
+    fn loosen_directory(_: &StateStore, dir: &TempDir) {
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755))
+            .expect("loosen the directory mode");
+    }
+    fn drop_expected_index(store: &StateStore, _: &TempDir) {
+        store
+            .connection()
+            .execute("DROP INDEX idx_generations_source", [])
+            .expect("drop expected index");
+    }
+    fn degrade_adapter(store: &StateStore, _: &TempDir) {
+        store
+            .connection()
+            .execute(
+                "INSERT INTO adapter_health (adapter_id, health_state)
+                 VALUES ('probe', 'degraded')",
+                [],
+            )
+            .expect("degrade the adapter");
+    }
+    fn leave_healthy(_: &StateStore, _: &TempDir) {}
+    let past = "2026-09-13T12:00:00Z";
+    // One tebibyte: above the free space of any fixture filesystem.
+    let tebibyte = "1099511627776";
+    // The clock case must be future against the handler's real current
+    // instant, not against a synthetic one.
+    let future = "2030-01-01T00:00:00Z";
+    let cases = [
+        Case {
+            name: "permissions",
+            code: "client.permissions",
+            ready: true,
+            commit_time: past,
+            floor: "1",
+            tamper: loosen_directory,
+        },
+        Case {
+            name: "state_corrupt",
+            code: "client.state_corrupt",
+            ready: true,
+            commit_time: past,
+            floor: "1",
+            tamper: drop_expected_index,
+        },
+        Case {
+            name: "source_unreadable",
+            code: "client.source_unreadable",
+            ready: true,
+            commit_time: past,
+            floor: "1",
+            tamper: degrade_adapter,
+        },
+        Case {
+            name: "disk_floor",
+            code: "client.disk_floor",
+            ready: true,
+            commit_time: past,
+            floor: tebibyte,
+            tamper: leave_healthy,
+        },
+        Case {
+            name: "clock_skew",
+            code: "client.clock_skew",
+            ready: true,
+            commit_time: future,
+            floor: "1",
+            tamper: leave_healthy,
+        },
+        Case {
+            name: "server_unavailable",
+            code: "server.unavailable",
+            ready: false,
+            commit_time: past,
+            floor: "1",
+            tamper: leave_healthy,
+        },
+    ];
+    for case in cases {
+        let dir = TempDir::new("doctor-map");
+        let store = seeded_store(&dir);
+        linked_receipt(&store, case.commit_time);
+        (case.tamper)(&store, &dir);
+        let resolved = resolved_with_floor(&dir, case.floor);
+        let error = doctor_over(&resolved, &[], case.ready)
+            .expect_err("every case fixture carries an action-required finding");
+        assert_eq!(error.code(), case.code, "case {}", case.name);
+    }
+}
+
+#[test]
+fn doctor_over_reports_a_missing_state_as_state_io() {
+    let dir = TempDir::new("doctor-absent");
+    let error = doctor_over(&resolved_for(&dir), &[], true).expect_err("no state to examine");
+    assert_eq!(error.code(), "client.state_io");
+    let body = String::from_utf8(error.body_bytes()).expect("diagnostic utf-8");
+    assert!(!body.contains(dir.path().to_string_lossy().as_ref()));
+}
+
+#[test]
+fn doctor_over_emits_the_document_only_when_every_check_passes() {
+    let dir = TempDir::new("doctor-healthy");
+    let store = seeded_store(&dir);
+    linked_receipt(&store, "2026-09-13T12:00:00Z");
+    let document = doctor_over(&resolved_for(&dir), &[], true).expect("healthy doctor");
+    let text = rendered(&document);
+    assert!(text.contains("\"schema\":\"archivist.cli-result/v1\""));
+    assert!(text.contains("\"verdict\":\"ok\""));
+    assert!(text.contains("\"lock\":\"free\""));
+    assert!(text.contains("\"receipt_count\":1"));
+    assert!(!text.contains("degraded"));
 }
 
 #[test]

@@ -660,10 +660,13 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use super::{CLOCK_SKEW_ALLOWANCE_SECONDS, Finding, days_from_civil, inspect, unix_seconds};
+    use super::{
+        CLOCK_SKEW_ALLOWANCE_SECONDS, DoctorError, Finding, days_from_civil, inspect, unix_seconds,
+    };
     use crate::config::{ConfigSources, ResolvedConfig};
-    use crate::state::lock::StateDirLock;
-    use crate::state::{STATE_DB_NAME, StateStore};
+    use crate::spool::SPOOL_DIR_NAME;
+    use crate::state::lock::{LOCK_FILE_NAME, StateDirLock};
+    use crate::state::{LATEST_SCHEMA_VERSION, STATE_DB_NAME, StateStore};
     use archivist_protocol::vocabulary::Timestamp;
 
     static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -695,13 +698,19 @@ mod tests {
     }
 
     fn resolved_for(dir: &TempDir) -> ResolvedConfig {
+        resolved_with_floor(dir, "1")
+    }
+
+    /// The same synthetic host with an explicit spool free-space floor, so
+    /// a test can raise the floor above the filesystem's actual free space.
+    fn resolved_with_floor(dir: &TempDir, floor: &str) -> ResolvedConfig {
         ConfigSources::non_interactive()
             .env("HOME", dir.path().to_string_lossy().to_string())
             .env(
                 "ARCHIVIST_CLIENT_STATE_DIR",
                 dir.path().to_string_lossy().to_string(),
             )
-            .env("ARCHIVIST_SPOOL_FREE_FLOOR_BYTES", "1")
+            .env("ARCHIVIST_SPOOL_FREE_FLOOR_BYTES", floor)
             .env("ARCHIVIST_INGEST_ENDPOINT_URL", "http://127.0.0.1:1")
             .env("ARCHIVIST_STORAGE_ENDPOINT_URL", "https://storage.invalid")
             .env("ARCHIVIST_STORAGE_REGION", "us-east-1")
@@ -785,5 +794,221 @@ mod tests {
         let result = inspect(&resolved_for(&dir), &[], true, &now()).expect("doctor result");
         assert_eq!(result.evidence().lock(), "held");
         assert!(!result.findings().contains(&Finding::Permissions));
+    }
+
+    /// A 36-character identifier-shaped filler for fixture rows.
+    fn fixture_id(seed: u8) -> String {
+        format!("01900000-0000-7000-8000-{seed:012x}")
+    }
+
+    /// A 64-character digest-shaped filler for fixture rows.
+    fn fixture_digest(seed: u8) -> String {
+        format!("{seed:064x}")
+    }
+
+    /// One verified receipt with its frozen request, so the examination's
+    /// linkage evidence is satisfied: an induced condition is then the only
+    /// finding a test asserts on. Restores the pinned database mode the
+    /// schema's open does not pin itself.
+    fn linked_receipt(dir: &TempDir, commit_time: &str) {
+        let database = dir.path().join(STATE_DB_NAME);
+        let store = StateStore::open(&database).expect("reopen state");
+        let connection = store.connection();
+        connection
+            .execute(
+                "INSERT INTO frozen_requests (
+                     request_id, spool_entry_id, tenant_id, origin_client_id,
+                     uploader_client_id, occurrence_id, envelope_version,
+                     storage_profile, transport_encoding, canonical_digest,
+                     incoming_checksum, canonical_size, transport_size,
+                     source_at, captured_at, envelope_created_at, frozen_at)
+                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, 'envelope-v1', 'zstd-v1',
+                     'identity', ?6, 'sha256-raw', 1000, 800, NULL, ?7, ?7, ?7)",
+                rusqlite::params![
+                    fixture_id(1),
+                    fixture_id(2),
+                    fixture_id(3),
+                    fixture_id(4),
+                    fixture_digest(5),
+                    fixture_digest(7),
+                    commit_time,
+                ],
+            )
+            .expect("insert frozen request");
+        connection
+            .execute(
+                "INSERT INTO receipts (
+                     request_id, receipt_key_id, signature, receipt_digest,
+                     commit_ordinal, commit_time, signature_verified, received_at)
+                 VALUES (?1, 'rk-2026-36', ?2, ?3, 1, ?4, 1, ?4)",
+                rusqlite::params![
+                    fixture_id(1),
+                    "ab".repeat(64),
+                    fixture_digest(6),
+                    commit_time,
+                ],
+            )
+            .expect("insert receipt");
+        drop(store);
+        std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o600))
+            .expect("restore the pinned database mode");
+    }
+
+    #[test]
+    fn a_loose_state_database_mode_is_the_permissions_finding() {
+        let dir = TempDir::new("db-mode");
+        migrated(&dir);
+        linked_receipt(&dir, "2026-09-13T12:00:00Z");
+        let database = dir.path().join(STATE_DB_NAME);
+        std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o644))
+            .expect("loosen the database mode");
+        let result = inspect(&resolved_for(&dir), &[], true, &now()).expect("doctor result");
+        assert_eq!(result.findings(), &[Finding::Permissions]);
+        assert_eq!(result.evidence().state_db_mode(), "0644");
+    }
+
+    #[test]
+    fn a_loose_lock_file_mode_is_the_permissions_finding() {
+        let dir = TempDir::new("lock-mode");
+        migrated(&dir);
+        linked_receipt(&dir, "2026-09-13T12:00:00Z");
+        let lock = dir.path().join(LOCK_FILE_NAME);
+        std::fs::write(&lock, b"").expect("create the lock file");
+        std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0o644))
+            .expect("loosen the lock mode");
+        let result = inspect(&resolved_for(&dir), &[], true, &now()).expect("doctor result");
+        assert_eq!(result.findings(), &[Finding::Permissions]);
+        assert_eq!(result.evidence().lock_file_mode(), Some("0644"));
+    }
+
+    #[test]
+    fn loose_spool_modes_are_the_permissions_finding() {
+        let dir = TempDir::new("spool-mode");
+        migrated(&dir);
+        linked_receipt(&dir, "2026-09-13T12:00:00Z");
+        let spool = dir.path().join(SPOOL_DIR_NAME);
+        std::fs::create_dir(&spool).expect("create the spool directory");
+        std::fs::set_permissions(&spool, std::fs::Permissions::from_mode(0o755))
+            .expect("loosen the spool mode");
+        let entry = spool.join("bundle.bundle");
+        std::fs::write(&entry, b"payload").expect("create a spool file");
+        std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o644))
+            .expect("loosen the spool file mode");
+        let result = inspect(&resolved_for(&dir), &[], true, &now()).expect("doctor result");
+        assert_eq!(result.findings(), &[Finding::Permissions]);
+        assert_eq!(result.evidence().spool_dir_mode(), Some("0755"));
+    }
+
+    #[test]
+    fn a_stale_migration_version_is_the_integrity_finding() {
+        let dir = TempDir::new("version");
+        migrated(&dir);
+        linked_receipt(&dir, "2026-09-13T12:00:00Z");
+        let database = dir.path().join(STATE_DB_NAME);
+        let store = StateStore::open(&database).expect("reopen state");
+        store
+            .connection()
+            .execute(
+                "DELETE FROM schema_migrations
+                 WHERE version = (SELECT MAX(version) FROM schema_migrations)",
+                [],
+            )
+            .expect("drop the newest migration history row");
+        drop(store);
+        std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o600))
+            .expect("restore the pinned database mode");
+        let result = inspect(&resolved_for(&dir), &[], true, &now()).expect("doctor result");
+        assert_eq!(result.findings(), &[Finding::SqliteIntegrity]);
+        assert_eq!(
+            result.evidence().schema_version(),
+            u64::try_from(LATEST_SCHEMA_VERSION).expect("schema versions are positive") - 1
+        );
+    }
+
+    #[test]
+    fn a_foreign_key_orphan_is_the_integrity_finding() {
+        let dir = TempDir::new("fk-orphan");
+        migrated(&dir);
+        linked_receipt(&dir, "2026-09-13T12:00:00Z");
+        let database = dir.path().join(STATE_DB_NAME);
+        let store = StateStore::open(&database).expect("reopen state");
+        // External damage does not honor the schema's own enforcement: the
+        // fixture drops the referenced request the way an out-of-band
+        // writer would, leaving the receipt orphaned.
+        store
+            .connection()
+            .execute_batch("PRAGMA foreign_keys = OFF;")
+            .expect("relax enforcement for the fixture damage");
+        store
+            .connection()
+            .execute(
+                "DELETE FROM frozen_requests WHERE request_id = ?1",
+                [fixture_id(1)],
+            )
+            .expect("orphan the receipt");
+        drop(store);
+        std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o600))
+            .expect("restore the pinned database mode");
+        let result = inspect(&resolved_for(&dir), &[], true, &now()).expect("doctor result");
+        assert_eq!(result.findings(), &[Finding::SqliteIntegrity]);
+    }
+
+    #[test]
+    fn a_floor_above_the_free_space_is_the_spool_space_finding() {
+        let dir = TempDir::new("floor");
+        migrated(&dir);
+        linked_receipt(&dir, "2026-09-13T12:00:00Z");
+        // One tebibyte: above the free space of any fixture filesystem.
+        let result = inspect(
+            &resolved_with_floor(&dir, "1099511627776"),
+            &[],
+            true,
+            &now(),
+        )
+        .expect("doctor result");
+        assert_eq!(result.findings(), &[Finding::SpoolSpace]);
+        assert!(result.evidence().free_bytes() < result.evidence().free_floor_bytes());
+    }
+
+    #[test]
+    fn a_future_durable_event_is_the_clock_sanity_finding() {
+        let dir = TempDir::new("clock");
+        migrated(&dir);
+        // Five minutes past the reference instant plus its allowance.
+        linked_receipt(&dir, "2026-09-23T12:06:00Z");
+        let result = inspect(&resolved_for(&dir), &[], true, &now()).expect("doctor result");
+        assert_eq!(result.findings(), &[Finding::ClockSanity]);
+    }
+
+    #[test]
+    fn degraded_adapter_health_is_the_source_readability_finding() {
+        let dir = TempDir::new("adapter-health");
+        migrated(&dir);
+        linked_receipt(&dir, "2026-09-13T12:00:00Z");
+        let database = dir.path().join(STATE_DB_NAME);
+        let store = StateStore::open(&database).expect("reopen state");
+        store
+            .connection()
+            .execute(
+                "INSERT INTO adapter_health (adapter_id, health_state)
+                 VALUES ('probe', 'degraded')",
+                [],
+            )
+            .expect("degrade the adapter");
+        drop(store);
+        std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o600))
+            .expect("restore the pinned database mode");
+        let result = inspect(&resolved_for(&dir), &[], true, &now()).expect("doctor result");
+        assert_eq!(result.findings(), &[Finding::SourceReadability]);
+        assert_eq!(result.evidence().unreadable_sources(), 1);
+    }
+
+    #[test]
+    fn a_state_directory_without_a_database_is_state_unavailable() {
+        let dir = TempDir::new("absent");
+        assert!(matches!(
+            inspect(&resolved_for(&dir), &[], true, &now()),
+            Err(DoctorError::StateUnavailable)
+        ));
     }
 }

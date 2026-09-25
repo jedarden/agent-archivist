@@ -69,7 +69,7 @@ const LOCK_HELD: &str = "client.lock_held";
 const STATE_IO: &str = "client.state_io";
 
 /// The registered code for a state database outside its recorded schema
-/// (`tools/error-codes.toml`, class `integrity_conflict`).
+/// (`tools/error-codes.toml`, class `local_state`).
 const STATE_CORRUPT: &str = "client.state_corrupt";
 
 /// The registered code for a spool-pressure pause
