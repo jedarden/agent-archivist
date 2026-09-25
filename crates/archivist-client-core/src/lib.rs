@@ -53,7 +53,12 @@
 //! handlers emit. The registry-driven
 //! command parser, output envelope, error diagnostics, and handler router
 //! live in [`cli`]; command behavior remains in the implementing library
-//! crates and is attached by the composition root. The remaining surfaces
+//! crates and is attached by the composition root. The archive inventory
+//! comparator ([`pilot`]) is the Phase 8 migration's read-only evidence
+//! engine: it joins a content-free legacy collector inventory against
+//! everything the local state has acknowledged, classifies every coverage
+//! difference into the closed gap vocabulary, and digests the whole
+//! comparison for a signed cutover checklist. The remaining surfaces
 //! are still the Phase 0 skeleton and deliberately contain no placeholder
 //! production code.
 //!
@@ -69,6 +74,7 @@ pub mod config;
 pub mod daemon;
 pub mod doctor;
 pub mod inventory;
+pub mod pilot;
 pub mod report;
 pub mod scheduler;
 pub mod spool;
