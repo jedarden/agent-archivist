@@ -85,6 +85,17 @@
 //!   identically for one raw prefix and pipeline version, with validated
 //!   skip-based resume; composes the audit/restore reader and the two
 //!   scoped writers ([`catalog_source`], [`scoped_write`]).
+//! - [`catalog_inventory`] — the versioned Parquet inventory (plan Phase
+//!   10): one deterministic pass over the frozen raw prefix that
+//!   materializes content-free, tenant-scoped, source-versioned Parquet
+//!   partitions and their self-verifying manifest through the derived
+//!   writer, carrying the usage-summary-v1 columns with the harness and
+//!   provider denominators separately stated — the query surface token
+//!   questions are answered by.
+//! - [`parquet`] — the deterministic minimal Parquet writer the derived
+//!   catalog's columnar projections encode through: a bounded, verified
+//!   subset of the format whose bytes are a pure function of the table's
+//!   schema and rows.
 //! - [`export`] — the authorized archive exporter: the offline act that
 //!   binds one verified `export-approval-v1`'s frozen inventory, exact
 //!   occurrence selection, and window before reading the selection's
@@ -137,6 +148,7 @@
 pub mod audit_restore;
 pub mod blob;
 pub mod capability;
+pub mod catalog_inventory;
 pub mod catalog_rebuild;
 pub mod catalog_source;
 pub mod collection;
@@ -148,6 +160,7 @@ pub mod ingest;
 pub mod manifests;
 pub mod metadata;
 pub mod multipart;
+pub mod parquet;
 pub mod probe;
 pub mod raw_write;
 pub mod scoped_write;

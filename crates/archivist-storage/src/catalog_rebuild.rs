@@ -272,7 +272,7 @@ pub struct RowTally {
 
 impl RowTally {
     /// Advance the tally by one row of this state.
-    fn advance(&mut self, state: HarnessUsageState) {
+    pub(crate) fn advance(&mut self, state: HarnessUsageState) {
         match state {
             HarnessUsageState::Measured => self.measured += 1,
             HarnessUsageState::Unknown(reason) => match reason {
@@ -311,7 +311,7 @@ impl RowTally {
     /// The tally as the checkpoint's `row_states` member: all four
     /// counts, always present — a zero is an observation here, not an
     /// absence.
-    fn record(&self) -> Object {
+    pub(crate) fn record(&self) -> Object {
         let mut states = Object::new();
         states.set("measured", Value::Int(wire_count(self.measured)));
         states.set("absent", Value::Int(wire_count(self.absent)));
@@ -923,8 +923,10 @@ fn wire_count(value: u64) -> i64 {
     i64::try_from(value).expect("protocol count exceeds the signed integer domain")
 }
 
-/// The chain's genesis fold: labels the chain to this exact prefix.
-fn chain_genesis(inventory_digest: &str) -> String {
+/// The chain's genesis fold: labels the chain to this exact prefix. The
+/// inventory build shares the construction, so its chain digest and the
+/// rebuild's stay comparable for one prefix and projection.
+pub(crate) fn chain_genesis(inventory_digest: &str) -> String {
     let mut frame = FrameBuilder::new(CHAIN_LABEL);
     frame.push_text("genesis");
     frame.push_text(inventory_digest);
@@ -933,7 +935,7 @@ fn chain_genesis(inventory_digest: &str) -> String {
 
 /// Advance the chain over one processed occurrence: previous chain,
 /// canonical occurrence key, emitted row digest.
-fn chain_advance(previous: &str, occurrence_key: &str, row_digest: &str) -> String {
+pub(crate) fn chain_advance(previous: &str, occurrence_key: &str, row_digest: &str) -> String {
     let mut frame = FrameBuilder::new(CHAIN_LABEL);
     frame.push_text(previous);
     frame.push_text(occurrence_key);
@@ -943,7 +945,7 @@ fn chain_advance(previous: &str, occurrence_key: &str, row_digest: &str) -> Stri
 
 /// Decode one stored blob whole: the `zstd-v1` decoder's checksum-
 /// verified read-back over the bytes the source already header-validated.
-fn decode_blob(stored: &[u8]) -> Result<Vec<u8>, StorageError> {
+pub(crate) fn decode_blob(stored: &[u8]) -> Result<Vec<u8>, StorageError> {
     let mut decoder = ZstdV1Decoder::new()?;
     let mut plaintext = Vec::new();
     decoder.update(stored, &mut plaintext)?;
