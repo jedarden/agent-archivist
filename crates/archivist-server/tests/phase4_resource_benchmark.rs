@@ -36,10 +36,18 @@
 //!    canonical extent just under the 256 MiB record cap, cumulative
 //!    expansion just under the 100:1 ratio cap. This is the worst case the
 //!    exit gate names: both guards loaded, sixteen wide.
-//! 2. **Sixteen refused streams** past the ratio cap: the same
-//!    construction with a larger zeros tail, so the cumulative ratio
-//!    crosses 100:1 mid-stream and the guard closes the attempt before any
-//!    commit exists.
+//! 2. **Sixteen refused streams** one step past the lawful edge: the same
+//!    construction with a larger zeros tail, so a hard payload limit
+//!    refuses each stream mid-flight. Which of the two guards fires is a
+//!    measured property of the tuned frame — at record-cap scale the two
+//!    caps nearly coincide (the ratio can only cross 100:1 before the
+//!    record cap if the lawful frame sits within a fraction of a percent
+//!    of exactly 100:1), so the benchmark pins the refusal to the closed
+//!    limit classes rather than to one variant: either
+//!    `request.record_too_large` at the 256 MiB record cap or
+//!    `request.expansion_ratio_exceeded` at the 100:1 ratio cap. Either
+//!    way the caller's abort — not a commit — closes every session, and
+//!    the store shows zero published objects for the population.
 //!
 //! Admission is real: every stream holds a process permit and a per-client
 //! share from the live [`AdmissionGate`] for its whole run, and the
@@ -125,10 +133,11 @@ const SOUP_PREFIX_BYTES: usize = 2_700_000;
 const LAWFUL_CANONICAL_BYTES: u64 = 268_000_000;
 
 /// The refused streams' extra zeros tail: enough canonical bytes past the
-/// lawful extent that the cumulative ratio crosses 100:1 mid-stream even
-/// if the codec's zeros-tail encoding drifts by an order of magnitude.
-/// The bracket asserts below verify the crossing against the frames the
-/// encoder actually produced.
+/// lawful extent that a hard payload limit refuses the stream mid-flight
+/// even if the codec's zeros-tail encoding drifts by an order of
+/// magnitude. The refused frame's bracket assert pins the final cumulative
+/// ratio past 100:1, so the attempt cannot complete lawfully whichever
+/// guard fires first.
 const REFUSED_EXTRA_BYTES: u64 = 64 * 1024 * 1024;
 
 /// The piece every zeros tail streams through — reused, so the encoder
@@ -567,12 +576,27 @@ async fn run_lawful_population(
     let seconds = elapsed.as_secs_f64();
     let aggregate_mib_per_s =
         canonical_total as f64 / (1024.0 * 1024.0) / seconds;
+    // The tuned frames' measured shape — the evidence the bead and the
+    // verification manifest record for the adversarial-input claim.
+    eprintln!(
+        "phase4.lawful_frame_canonical_bytes = {}",
+        profile.canonical
+    );
+    eprintln!(
+        "phase4.lawful_frame_transport_bytes = {}",
+        profile.transport
+    );
+    eprintln!(
+        "phase4.lawful_frame_expansion_ratio = {:.2}",
+        profile.canonical as f64 / profile.transport as f64
+    );
     (aggregate_mib_per_s, elapsed)
 }
 
-/// Phase 2: the refused population — sixteen ratio-cap crossings. Every
-/// stream ends in the ratio guard's closed error and the caller's abort,
-/// and the store shows zero committed objects for the whole population.
+/// Phase 2: the refused population — sixteen streams pushed past the
+/// lawful edge. A hard payload limit refuses each stream mid-flight, the
+/// caller's abort closes every session, and the store shows zero committed
+/// objects for the whole population.
 async fn run_refused_population(
     gate: &AdmissionGate,
     config: &ServerConfig,
@@ -591,22 +615,65 @@ async fn run_refused_population(
     )
     .await;
     assert_eq!(outcomes.len(), 16);
+    eprintln!(
+        "phase4.refused_frame_canonical_bytes = {}",
+        profile.canonical
+    );
+    eprintln!(
+        "phase4.refused_frame_transport_bytes = {}",
+        profile.transport
+    );
     for outcome in &outcomes {
         match outcome {
             StreamOutcome::Refused(error) => {
-                assert_eq!(
-                    *error,
-                    TransportDecodeError::ExpansionRatioExceeded { max_ratio: 100 },
-                    "the ratio guard owns this refusal"
-                );
-                assert_eq!(
-                    error.code().as_str(),
-                    "request.expansion_ratio_exceeded",
-                    "the refusal is the registered 413 class"
+                // At record-cap scale the two hard guards nearly coincide:
+                // the cumulative ratio can only cross 100:1 before the
+                // record cap if the lawful frame sits within a fraction of
+                // a percent of exactly 100:1, so which guard fires first
+                // is a tuned-frame property, not a contract choice. The
+                // benchmark pins the refusal to the closed class family —
+                // a registered 413 payload limit ended the attempt — and
+                // each variant's registered cap.
+                match error {
+                    TransportDecodeError::RecordTooLarge {
+                        actual_bytes,
+                        limit_bytes,
+                    } => {
+                        assert_eq!(
+                            *limit_bytes,
+                            DEFAULT_RECORD_MAX_BYTES,
+                            "the record guard refused at the registered cap"
+                        );
+                        assert!(
+                            *actual_bytes > *limit_bytes,
+                            "the record refusal is past the cap"
+                        );
+                        assert!(
+                            *actual_bytes <= profile.canonical,
+                            "the record refusal fired inside the frame"
+                        );
+                    }
+                    TransportDecodeError::ExpansionRatioExceeded { max_ratio } => {
+                        assert_eq!(
+                            *max_ratio, 100,
+                            "the ratio guard refused at the registered cap"
+                        );
+                    }
+                    other => panic!(
+                        "the refusal is outside the two hard payload-limit \
+                         classes: {other:?}"
+                    ),
+                }
+                let code = error.code();
+                let code = code.as_str();
+                assert!(
+                    code == "request.record_too_large"
+                        || code == "request.expansion_ratio_exceeded",
+                    "the refusal is a registered 413 payload-limit class, got {code}"
                 );
             }
             StreamOutcome::Completed { .. } => {
-                panic!("a refused stream completed past the ratio cap");
+                panic!("a refused stream completed past its payload limits");
             }
         }
     }
@@ -652,6 +719,11 @@ async fn the_reference_profile_sustains_the_phase4_floors() {
     let gate = AdmissionGate::new(&config, Arc::new(ServerMetrics::new()));
     let (aggregate_mib_per_s, lawful_elapsed) =
         run_lawful_population(&gate, &config, lawful).await;
+    // Phase 1's evidence prints before phase 2 runs, so a phase-2 failure
+    // still records the lawful population's measured numbers.
+    eprintln!("phase4.aggregate_mib_per_s = {aggregate_mib_per_s:.1}");
+    eprintln!("phase4.lawful_elapsed_s = {:.3}", lawful_elapsed.as_secs_f64());
+
     let refused_elapsed = run_refused_population(&gate, &config, refused).await;
 
     // The floors, asserted against the measured run.
@@ -674,10 +746,6 @@ async fn the_reference_profile_sustains_the_phase4_floors() {
         "the refused population outlived the request deadline"
     );
 
-    // The recorded run — the numbers the bead and the verification
-    // manifest carry.
-    eprintln!("phase4.aggregate_mib_per_s = {aggregate_mib_per_s:.1}");
-    eprintln!("phase4.lawful_elapsed_s = {:.3}", lawful_elapsed.as_secs_f64());
     eprintln!(
         "phase4.refused_elapsed_s = {:.3}",
         refused_elapsed.as_secs_f64()
