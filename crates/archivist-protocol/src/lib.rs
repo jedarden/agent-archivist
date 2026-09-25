@@ -53,6 +53,11 @@
 //!   allowlist, the ordered detector registry, the typed irreversible
 //!   marker and pseudonym vocabularies, and the corpus digest the derived
 //!   episode carries as `detector_corpus_digest`.
+//! - [`occurrence_redaction`] — the per-occurrence `redaction-v1`
+//!   transformation of plan Phase 10: one validated, supported raw
+//!   occurrence through the pinned allowlist and ordered detector
+//!   registry into redacted occurrence data and typed irreversible
+//!   markers, with bounded resources and fail-closed gap results.
 //! - [`envelope`] — the version 1 ingest envelope: field-level bounded
 //!   validation, unknown-field retention, reserved-name rejection, and
 //!   identity re-derivation.
@@ -76,8 +81,9 @@
 //! exact-inference capture artifact ([`schemas/v1/examples/inference`]),
 //! its correlation identities, the capture-side sequencing state machine,
 //! and the read-side reconstruction fold; the Phase 10 usage-summary
-//! derivation; and the Phase 10 `redaction-v1` policy and detector-corpus
-//! seam. Signing and signature verification live in `archivist-auth`;
+//! derivation; the Phase 10 `redaction-v1` policy and detector-corpus
+//! seam and the per-occurrence redaction transformation it feeds. Signing
+//! and signature verification live in `archivist-auth`;
 //! the ingest-attempt signing preimage they sign over is fixed in
 //! [`derivation`]. Not implemented in this crate: multipart framing beyond
 //! the bounded envelope metadata part, any compression codec (the wire
@@ -98,6 +104,7 @@ pub mod envelope;
 pub mod inference_artifact;
 pub mod json;
 pub mod object_key;
+pub mod occurrence_redaction;
 pub mod orchestrator_correlation;
 pub mod redaction_policy;
 pub mod sha256;
