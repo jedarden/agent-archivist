@@ -135,6 +135,22 @@ fn type_inventory() -> Vec<(&'static str, &'static str)> {
             type_name::<archivist_protocol::inference_artifact::Payload>(),
         ),
         (
+            "episode_derivation::DerivedEpisode",
+            type_name::<archivist_protocol::episode_derivation::DerivedEpisode>(),
+        ),
+        (
+            "episode_derivation::EpisodeGap",
+            type_name::<archivist_protocol::episode_derivation::EpisodeGap>(),
+        ),
+        (
+            "episode_derivation::OccurrenceInput",
+            type_name::<archivist_protocol::episode_derivation::OccurrenceInput<'_>>(),
+        ),
+        (
+            "episode_derivation::PseudonymKey",
+            type_name::<archivist_protocol::episode_derivation::PseudonymKey<'_>>(),
+        ),
+        (
             "envelope::Envelope",
             type_name::<archivist_protocol::envelope::Envelope>(),
         ),
@@ -437,7 +453,7 @@ fn type_inventory() -> Vec<(&'static str, &'static str)> {
 
 /// Number of documented public types in [`type_inventory`]; the boundary gate
 /// cross-checks the literal against the source.
-const PUBLIC_TYPES: usize = 98;
+const PUBLIC_TYPES: usize = 102;
 
 /// Number of pinned signatures in [`function_inventory`]; the boundary gate
 /// cross-checks the literal against the source.
@@ -565,6 +581,9 @@ fn pinned_signatures() {
 /// The documented public constants: the wire values the protocol freezes.
 fn constant_inventory() -> Vec<&'static str> {
     vec![
+        "episode_derivation::EPISODE_VERSION",
+        "episode_derivation::MAX_EPISODE_OCCURRENCES",
+        "episode_derivation::MAX_EPISODE_RECORDS",
         "envelope::CANONICAL_MAX_BYTES",
         "envelope::ENVELOPE_VERSION",
         "envelope::PROTOCOL_VERSION",
@@ -634,9 +653,15 @@ fn public_constants_pin_wire_values() {
     let inventory = constant_inventory();
     assert_eq!(
         inventory.len(),
-        27,
+        30,
         "the constant inventory drifted from its count"
     );
+    assert_eq!(protocol::episode_derivation::EPISODE_VERSION, 1);
+    assert_eq!(
+        protocol::episode_derivation::MAX_EPISODE_OCCURRENCES,
+        65_536
+    );
+    assert_eq!(protocol::episode_derivation::MAX_EPISODE_RECORDS, 65_536);
     assert_eq!(protocol::envelope::PROTOCOL_VERSION, 1);
     assert_eq!(protocol::envelope::ENVELOPE_VERSION, 1);
     assert_eq!(protocol::envelope::CANONICAL_MAX_BYTES, 65_536);

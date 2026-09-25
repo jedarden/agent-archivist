@@ -58,6 +58,11 @@
 //!   occurrence through the pinned allowlist and ordered detector
 //!   registry into redacted occurrence data and typed irreversible
 //!   markers, with bounded resources and fail-closed gap results.
+//! - [`episode_derivation`] — the episode-composition stage of plan Phase 10
+//!   ([`schemas/v1/derived-episode.json`]): the deterministic fold from
+//!   successful redacted occurrences to the canonical derived episode, with
+//!   tenant-scoped HMAC pseudonyms, bounded composition rules, and the
+//!   self-verifying episode digest.
 //! - [`envelope`] — the version 1 ingest envelope: field-level bounded
 //!   validation, unknown-field retention, reserved-name rejection, and
 //!   identity re-derivation.
@@ -94,6 +99,7 @@
 //! [`schemas/v1/ingest-identifiers.json`]: ../../../schemas/v1/ingest-identifiers.json
 //! [`schemas/v1/examples/conformance`]: ../../../schemas/v1/examples/conformance
 //! [`schemas/v1/examples/inference`]: ../../../schemas/v1/examples/inference
+//! [`schemas/v1/derived-episode.json`]: ../../../schemas/v1/derived-episode.json
 //! [`schemas/v1/inference-artifact.json`]: ../../../schemas/v1/inference-artifact.json
 
 pub mod attempt_reconstruction;
@@ -101,6 +107,7 @@ pub mod attempt_sequence;
 pub mod correlation;
 pub mod derivation;
 pub mod envelope;
+pub mod episode_derivation;
 pub mod inference_artifact;
 pub mod json;
 pub mod object_key;
