@@ -275,6 +275,10 @@ fn doctor_over_maps_each_finding_to_its_registered_code() {
     struct Case {
         name: &'static str,
         code: &'static str,
+        // The exit class the registered code allocates: the local-state
+        // rows exit 74, the resource and server rows 75, so an operator
+        // script can branch on the process status alone.
+        exit: i32,
         ready: bool,
         commit_time: &'static str,
         floor: &'static str,
@@ -311,6 +315,7 @@ fn doctor_over_maps_each_finding_to_its_registered_code() {
         Case {
             name: "permissions",
             code: "client.permissions",
+            exit: 74,
             ready: true,
             commit_time: past,
             floor: "1",
@@ -319,6 +324,7 @@ fn doctor_over_maps_each_finding_to_its_registered_code() {
         Case {
             name: "state_corrupt",
             code: "client.state_corrupt",
+            exit: 74,
             ready: true,
             commit_time: past,
             floor: "1",
@@ -327,6 +333,7 @@ fn doctor_over_maps_each_finding_to_its_registered_code() {
         Case {
             name: "source_unreadable",
             code: "client.source_unreadable",
+            exit: 74,
             ready: true,
             commit_time: past,
             floor: "1",
@@ -335,6 +342,7 @@ fn doctor_over_maps_each_finding_to_its_registered_code() {
         Case {
             name: "disk_floor",
             code: "client.disk_floor",
+            exit: 75,
             ready: true,
             commit_time: past,
             floor: tebibyte,
@@ -343,6 +351,7 @@ fn doctor_over_maps_each_finding_to_its_registered_code() {
         Case {
             name: "clock_skew",
             code: "client.clock_skew",
+            exit: 74,
             ready: true,
             commit_time: future,
             floor: "1",
@@ -351,6 +360,7 @@ fn doctor_over_maps_each_finding_to_its_registered_code() {
         Case {
             name: "server_unavailable",
             code: "server.unavailable",
+            exit: 75,
             ready: false,
             commit_time: past,
             floor: "1",
@@ -366,6 +376,7 @@ fn doctor_over_maps_each_finding_to_its_registered_code() {
         let error = doctor_over(&resolved, &[], case.ready)
             .expect_err("every case fixture carries an action-required finding");
         assert_eq!(error.code(), case.code, "case {}", case.name);
+        assert_eq!(error.exit_code(), case.exit, "case {}", case.name);
     }
 }
 
@@ -374,6 +385,7 @@ fn doctor_over_reports_a_missing_state_as_state_io() {
     let dir = TempDir::new("doctor-absent");
     let error = doctor_over(&resolved_for(&dir), &[], true).expect_err("no state to examine");
     assert_eq!(error.code(), "client.state_io");
+    assert_eq!(error.exit_code(), 74);
     let body = String::from_utf8(error.body_bytes()).expect("diagnostic utf-8");
     assert!(!body.contains(dir.path().to_string_lossy().as_ref()));
 }
