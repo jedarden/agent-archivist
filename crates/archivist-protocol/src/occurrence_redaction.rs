@@ -167,7 +167,12 @@ pub enum EpisodeRole {
 
 impl EpisodeRole {
     /// Every role, in schema enum order.
-    pub const ALL: [Self; 4] = [Self::Assistant, Self::System, Self::Tool, Self::User];
+    pub const ALL: [Self; 4] = [
+        crate::occurrence_redaction::EpisodeRole::Assistant,
+        crate::occurrence_redaction::EpisodeRole::System,
+        crate::occurrence_redaction::EpisodeRole::Tool,
+        crate::occurrence_redaction::EpisodeRole::User,
+    ];
 
     /// The wire token the episode record carries.
     #[must_use]

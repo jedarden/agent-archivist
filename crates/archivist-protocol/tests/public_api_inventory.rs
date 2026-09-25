@@ -167,6 +167,22 @@ fn type_inventory() -> Vec<(&'static str, &'static str)> {
             type_name::<archivist_protocol::object_key::OccurrenceObjectKey>(),
         ),
         (
+            "occurrence_redaction::EpisodeRole",
+            type_name::<archivist_protocol::occurrence_redaction::EpisodeRole>(),
+        ),
+        (
+            "occurrence_redaction::RedactedOccurrence",
+            type_name::<archivist_protocol::occurrence_redaction::RedactedOccurrence>(),
+        ),
+        (
+            "occurrence_redaction::RedactionGap",
+            type_name::<archivist_protocol::occurrence_redaction::RedactionGap>(),
+        ),
+        (
+            "occurrence_redaction::SourceRecord",
+            type_name::<archivist_protocol::occurrence_redaction::SourceRecord<'_>>(),
+        ),
+        (
             "orchestrator_correlation::AttemptProvenance",
             type_name::<archivist_protocol::orchestrator_correlation::AttemptProvenance>(),
         ),
@@ -421,11 +437,11 @@ fn type_inventory() -> Vec<(&'static str, &'static str)> {
 
 /// Number of documented public types in [`type_inventory`]; the boundary gate
 /// cross-checks the literal against the source.
-const PUBLIC_TYPES: usize = 94;
+const PUBLIC_TYPES: usize = 98;
 
 /// Number of pinned signatures in [`function_inventory`]; the boundary gate
 /// cross-checks the literal against the source.
-const FREE_FUNCTIONS: usize = 19;
+const FREE_FUNCTIONS: usize = 20;
 
 /// The documented public free functions, each with its exact signature pinned
 /// by a function-pointer binding in [`pinned_signatures`].
@@ -447,6 +463,7 @@ fn function_inventory() -> Vec<&'static str> {
         "derivation::session_hash",
         "json::parse",
         "json::parse_with_limits",
+        "occurrence_redaction::redact_occurrence",
         "sha256::decode_hex",
         "sha256::digest",
         "sha256::encode_hex",
@@ -523,6 +540,26 @@ fn pinned_signatures() {
     let _digest: fn(&[u8]) -> [u8; 32] = protocol::sha256::digest;
     let _encode_hex: fn(&[u8]) -> String = protocol::sha256::encode_hex;
     let _decode_hex: fn(&str) -> Option<Vec<u8>> = protocol::sha256::decode_hex;
+    // `redact_occurrence` is generic over its renderer (`impl FnMut`), a type
+    // that cannot be named, so no function-pointer binding exists for it. The
+    // binding below is call-shaped instead: it type-checks every parameter and
+    // pins the result type, which is the same reviewed-inventory contract.
+    let renderer = |_class: protocol::redaction_policy::PseudonymClass, _matched: &str| -> String {
+        String::new()
+    };
+    let _redact_occurrence: Result<
+        protocol::occurrence_redaction::RedactedOccurrence,
+        protocol::occurrence_redaction::RedactionGap,
+    > = protocol::occurrence_redaction::redact_occurrence(
+        &protocol::occurrence_redaction::SourceRecord {
+            role: "user",
+            ordinal: 0,
+            source_time: None,
+            parent_ordinals: &[],
+            content: "",
+        },
+        renderer,
+    );
 }
 
 /// The documented public constants: the wire values the protocol freezes.
@@ -537,6 +574,12 @@ fn constant_inventory() -> Vec<&'static str> {
         "inference_artifact::RESERVED_FIELDS",
         "json::DEFAULT_MAX_BYTES",
         "json::DEFAULT_MAX_DEPTH",
+        "occurrence_redaction::ENTROPY_MIN_TOKEN_CHARS",
+        "occurrence_redaction::ENTROPY_PROBE_WINDOW",
+        "occurrence_redaction::MAX_CONTENT_BYTES",
+        "occurrence_redaction::MAX_ENTROPY_PROBES",
+        "occurrence_redaction::MAX_PARENT_ORDINALS",
+        "occurrence_redaction::MAX_REPLACEMENTS",
         "orchestrator_correlation::ORCHESTRATOR_CORRELATION_VERSION",
         "redaction_policy::CORPUS_VERSION",
         "redaction_policy::MARKER_FORMAT",
@@ -561,6 +604,12 @@ fn public_types_are_project_owned() {
         "the type inventory drifted from its count literal"
     );
     for (path, resolved) in inventory {
+        // `type_name` renders lifetime parameters (`SourceRecord<'_>`), and
+        // the boundary gate scans the source by bare name, so the comparison
+        // strips a lifetime suffix: a lifetime cannot carry an SDK shape, and
+        // the path root — the part the boundary rule constrains — is still
+        // checked in full.
+        let resolved = resolved.strip_suffix("<'_>").unwrap_or(resolved);
         let expected = format!("archivist_protocol::{path}");
         assert_eq!(resolved, expected.as_str(), "public type moved: {path}");
     }
@@ -585,7 +634,7 @@ fn public_constants_pin_wire_values() {
     let inventory = constant_inventory();
     assert_eq!(
         inventory.len(),
-        13,
+        27,
         "the constant inventory drifted from its count"
     );
     assert_eq!(protocol::envelope::PROTOCOL_VERSION, 1);
@@ -667,6 +716,12 @@ fn public_constants_pin_wire_values() {
     );
     assert_eq!(protocol::json::DEFAULT_MAX_BYTES, 8 * 1024 * 1024);
     assert_eq!(protocol::json::DEFAULT_MAX_DEPTH, 64);
+    assert_eq!(protocol::occurrence_redaction::MAX_CONTENT_BYTES, 1_048_576);
+    assert_eq!(protocol::occurrence_redaction::MAX_PARENT_ORDINALS, 64);
+    assert_eq!(protocol::occurrence_redaction::MAX_REPLACEMENTS, 4_096);
+    assert_eq!(protocol::occurrence_redaction::MAX_ENTROPY_PROBES, 8_192);
+    assert_eq!(protocol::occurrence_redaction::ENTROPY_MIN_TOKEN_CHARS, 20);
+    assert_eq!(protocol::occurrence_redaction::ENTROPY_PROBE_WINDOW, 256);
     assert_eq!(protocol::usage_summary::USAGE_SUMMARY_VERSION, 1);
     assert_eq!(
         protocol::orchestrator_correlation::ORCHESTRATOR_CORRELATION_VERSION,
