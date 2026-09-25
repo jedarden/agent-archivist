@@ -1010,10 +1010,7 @@ fn load_new_inventory(conn: &Connection) -> Result<NewInventory, StateError> {
 
 /// The `(session_hash, artifact_hash)` join key parsed from one row's
 /// stored spellings, or the read-side corruption refusal.
-fn join_key_of(
-    session: &str,
-    artifact: &str,
-) -> Result<(SessionHash, ArtifactHash), StateError> {
+fn join_key_of(session: &str, artifact: &str) -> Result<(SessionHash, ArtifactHash), StateError> {
     let session = SessionHash::parse(session).map_err(|_| corrupted("sources.session_hash"))?;
     let artifact = ArtifactHash::parse(artifact).map_err(|_| corrupted("sources.artifact_hash"))?;
     Ok((session, artifact))
