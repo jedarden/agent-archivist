@@ -398,7 +398,10 @@ impl FailureCode {
     /// else is `None` — a miss under-counts one series in a test, it
     /// never invents a label value.
     fn of_code(code: &str) -> Option<Self> {
-        Self::all().iter().copied().find(|known| known.token() == code)
+        Self::all()
+            .iter()
+            .copied()
+            .find(|known| known.token() == code)
     }
 }
 
@@ -443,7 +446,8 @@ fn kind_index(kind: ObjectKind) -> usize {
 
 /// The registered ingest-duration histogram boundaries, in seconds
 /// (MET-027); the last boundary brackets the 15-minute deadline.
-pub const INGEST_DURATION_BOUNDARIES_SECONDS: [f64; 8] = [0.05, 0.25, 1.0, 5.0, 25.0, 60.0, 300.0, 900.0];
+pub const INGEST_DURATION_BOUNDARIES_SECONDS: [f64; 8] =
+    [0.05, 0.25, 1.0, 5.0, 25.0, 60.0, 300.0, 900.0];
 
 /// Eight registered boundaries plus the implicit infinite one.
 const INGEST_DURATION_BUCKETS: usize = INGEST_DURATION_BOUNDARIES_SECONDS.len() + 1;
@@ -597,6 +601,7 @@ impl ServerMetrics {
     /// succeeded — in which case the `archivist.server.trust.age` family
     /// is omitted entirely.
     #[must_use]
+    #[allow(clippy::too_many_lines)] // one exposition, every family, read top to bottom
     pub fn exposition(&self, newest_trust_age_seconds: Option<u64>) -> String {
         let mut out = String::new();
 

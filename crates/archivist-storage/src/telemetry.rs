@@ -25,7 +25,7 @@
 //! backend's error text, a key, or a tenant identifier cannot reach the
 //! exposition (SEC-004; MET-016, MET-022).
 //!
-//! [`MeasuredRawStore`] wraps any [`crate::RawWriteStore`] and is where the
+//! [`MeasuredRawStore`] wraps any [`crate::raw_write::RawWriteStore`] and is where the
 //! replica's raw-write identity is measured: the wrapper composes once at
 //! startup around the concrete backend, and every operation the ingest path
 //! drives — including the shutdown drain's abandoned-session aborts, which
@@ -44,9 +44,7 @@ use archivist_protocol::vocabulary::StorageOutcome;
 
 use crate::commit::{ConditionalCreateStore, CreateIfAbsent};
 use crate::error::{StorageError, StorageErrorKind};
-use crate::raw_write::{
-    ManifestKey, MultipartUploadId, PartCommitment, PartNumber, RawWriteStore,
-};
+use crate::raw_write::{ManifestKey, MultipartUploadId, PartCommitment, PartNumber, RawWriteStore};
 
 /// Capacity of the bounded span ring: the newest 128 operation spans are
 /// retained for inspection, and older ones fall off. A sink that grew with
@@ -382,10 +380,7 @@ impl StorageTelemetry {
             }
             None => SpanRecord::unset(OPERATION_SPAN_NAME, &attributes),
         };
-        self.spans.record(SpanRecord {
-            duration,
-            ..span
-        });
+        self.spans.record(SpanRecord { duration, ..span });
     }
 
     /// Render the Prometheus text exposition (format 0.0.4) for this
@@ -401,10 +396,11 @@ impl StorageTelemetry {
             let op = operation.index();
             let label = format!("archivist_storage_operation=\"{}\"", operation.token());
             let mut cumulative = 0u64;
-            for (bound, bucket) in OPERATION_BOUNDARIES_SECONDS
-                .iter()
-                .zip(self.buckets[op].iter().take(OPERATION_BOUNDARIES_SECONDS.len()))
-            {
+            for (bound, bucket) in OPERATION_BOUNDARIES_SECONDS.iter().zip(
+                self.buckets[op]
+                    .iter()
+                    .take(OPERATION_BOUNDARIES_SECONDS.len()),
+            ) {
                 cumulative += bucket.load(Ordering::Relaxed);
                 let _ = writeln!(
                     out,
@@ -531,11 +527,7 @@ impl<S> MeasuredRawStore<S> {
         &self.inner
     }
 
-    async fn measure<F, T>(
-        &self,
-        operation: StorageOperation,
-        call: F,
-    ) -> Result<T, StorageError>
+    async fn measure<F, T>(&self, operation: StorageOperation, call: F) -> Result<T, StorageError>
     where
         F: std::future::Future<Output = Result<T, StorageError>> + Send,
         T: Send,
@@ -568,8 +560,11 @@ impl<S: RawWriteStore + Sync> RawWriteStore for MeasuredRawStore<S> {
         key: &ManifestKey,
         bytes: &[u8],
     ) -> Result<StorageOutcome, StorageError> {
-        self.measure(StorageOperation::PutObject, self.inner.write_manifest(key, bytes))
-            .await
+        self.measure(
+            StorageOperation::PutObject,
+            self.inner.write_manifest(key, bytes),
+        )
+        .await
     }
 
     async fn begin_multipart(
@@ -638,8 +633,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        bucket_for, bucket_le_text, SpanRecord, SpanSink, SpanStatus, StorageErrorClass,
-        StorageOperation, StorageTelemetry, OPERATION_BOUNDARIES_SECONDS, OPERATION_SPAN_NAME,
+        OPERATION_BOUNDARIES_SECONDS, OPERATION_SPAN_NAME, SpanRecord, SpanSink, SpanStatus,
+        StorageErrorClass, StorageOperation, StorageTelemetry, bucket_for, bucket_le_text,
     };
     use crate::error::{StorageError, StorageErrorKind};
 
@@ -680,7 +675,14 @@ mod tests {
                 .iter()
                 .copied()
                 .map(StorageErrorClass::token)
-                .eq(["auth", "throttling", "unavailable", "timeout", "corruption", "unknown"])
+                .eq([
+                    "auth",
+                    "throttling",
+                    "unavailable",
+                    "timeout",
+                    "corruption",
+                    "unknown"
+                ])
         );
     }
 
@@ -719,10 +721,16 @@ mod tests {
     #[test]
     fn durations_land_in_the_registered_buckets() {
         // Strictly below the first boundary is bucket zero.
-        assert_eq!(bucket_for(BOUNDARY_NANOS[0] - 1, &OPERATION_BOUNDARIES_SECONDS), 0);
+        assert_eq!(
+            bucket_for(BOUNDARY_NANOS[0] - 1, &OPERATION_BOUNDARIES_SECONDS),
+            0
+        );
         // Each boundary's own value lands in the bucket it opens.
         for (index, bound_nanos) in BOUNDARY_NANOS.iter().enumerate() {
-            assert_eq!(bucket_for(*bound_nanos, &OPERATION_BOUNDARIES_SECONDS), index + 1);
+            assert_eq!(
+                bucket_for(*bound_nanos, &OPERATION_BOUNDARIES_SECONDS),
+                index + 1
+            );
         }
         // Past the last boundary is the overflow bucket.
         assert_eq!(
@@ -738,7 +746,11 @@ mod tests {
     #[test]
     fn a_success_records_latency_and_one_unset_span() {
         let telemetry = StorageTelemetry::new();
-        telemetry.record(StorageOperation::PutObject, Duration::from_millis(3), Ok(()));
+        telemetry.record(
+            StorageOperation::PutObject,
+            Duration::from_millis(3),
+            Ok(()),
+        );
         let text = telemetry.exposition();
         assert!(
             text.contains(
@@ -747,19 +759,17 @@ mod tests {
             ),
             "{text}"
         );
-        assert!(
-            text.contains(
-                "archivist_storage_operation_duration_seconds_count{\
+        assert!(text.contains(
+            "archivist_storage_operation_duration_seconds_count{\
                  archivist_storage_operation=\"put_object\"} 1\n"
-            )
-        );
+        ));
         assert!(text.contains("_sum{archivist_storage_operation=\"put_object\"} 0.003"));
         // No failure series moved anywhere.
-        assert!(
-            !text.contains("archivist_storage_operation_failures_errors_total{\
+        assert!(!text.contains(
+            "archivist_storage_operation_failures_errors_total{\
                              archivist_storage_operation=\"put_object\",\
-                             archivist_error_class=\"unavailable\"} 1")
-        );
+                             archivist_error_class=\"unavailable\"} 1"
+        ));
         // One span, unset status, the operation attribute only.
         let spans = telemetry.spans().snapshot();
         assert_eq!(spans.len(), 1);
@@ -814,7 +824,11 @@ mod tests {
             "{text}"
         );
         // A successful abort never moves the page signal.
-        telemetry.record(StorageOperation::AbortMultipart, Duration::from_millis(1), Ok(()));
+        telemetry.record(
+            StorageOperation::AbortMultipart,
+            Duration::from_millis(1),
+            Ok(()),
+        );
         assert!(
             telemetry
                 .exposition()
@@ -833,7 +847,8 @@ mod tests {
         assert_eq!(text.matches("_seconds_count{").count(), 5);
         // Five operations times six classes of failures.
         assert_eq!(
-            text.matches("archivist_storage_operation_failures_errors_total{").count(),
+            text.matches("archivist_storage_operation_failures_errors_total{")
+                .count(),
             30
         );
         // And the abort family, pre-emitted at zero.

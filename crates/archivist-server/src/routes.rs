@@ -615,6 +615,7 @@ fn receipt_outcome(receipt: &Receipt) -> (IngestOutcome, Response) {
     )
 }
 
+#[allow(clippy::too_many_lines)] // one commit attempt, every phase, read top to bottom
 async fn attempt_commit<W, C>(
     state: Arc<ServerState<W, C>>,
     envelope: Envelope,
@@ -775,11 +776,7 @@ where
     match attempt {
         // A panicked commit task is a defect, not a wire condition; the
         // aborting writer's Drop already abandoned the session.
-        Err(_join) => refused(
-            server.metrics(),
-            ServerFailure::Internal,
-            Some(request_id),
-        ),
+        Err(_join) => refused(server.metrics(), ServerFailure::Internal, Some(request_id)),
         Ok(Err(failure)) => refused(server.metrics(), failure, Some(request_id)),
         Ok(Ok(receipt)) => {
             // The attempt accepted exactly the bytes it validated: the

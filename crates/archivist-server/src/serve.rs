@@ -436,10 +436,10 @@ mod tests {
     use archivist_storage::ingest::IngestStorage;
     use archivist_storage::metadata::ObjectTag;
     use archivist_storage::multipart::{MultipartWriter, PART_BYTES};
-    use archivist_storage::telemetry::MeasuredRawStore;
     use archivist_storage::raw_write::{
         ManifestKey, MultipartUploadId, PartCommitment, PartNumber, RawWriteStore,
     };
+    use archivist_storage::telemetry::MeasuredRawStore;
     use std::io;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
