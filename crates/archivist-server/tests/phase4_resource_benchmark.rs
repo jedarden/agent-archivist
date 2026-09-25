@@ -257,7 +257,11 @@ impl RawWriteStore for RecordingStore {
         StoreCapabilities::unprobed()
     }
 
-    async fn write_manifest(&self, _key: &ManifestKey, _bytes: &[u8]) -> Result<StorageOutcome, StorageError> {
+    async fn write_manifest(
+        &self,
+        _key: &ManifestKey,
+        _bytes: &[u8],
+    ) -> Result<StorageOutcome, StorageError> {
         panic!("the benchmark's decode path reached a manifest write");
     }
 
@@ -491,11 +495,7 @@ fn build_profile_frames() -> (ProfileFrame, ProfileFrame) {
             transport: lawful_transport,
             canonical: LAWFUL_CANONICAL_BYTES,
             bytes: Arc::new(lawful_frame),
-            blob: BlobObjectKey::new(
-                &tenant,
-                StorageProfile::ZstdV1,
-                &hashed_digest(lawful_hash),
-            ),
+            blob: BlobObjectKey::new(&tenant, StorageProfile::ZstdV1, &hashed_digest(lawful_hash)),
         },
         ProfileFrame {
             transport: refused_transport,
@@ -542,8 +542,7 @@ async fn run_lawful_population(
                 transport,
             } => {
                 assert_eq!(
-                    *canonical,
-                    profile.canonical,
+                    *canonical, profile.canonical,
                     "a lawful stream produces exactly its canonical extent"
                 );
                 assert_eq!(*transport, profile.transport, "the whole frame decodes");
@@ -574,8 +573,7 @@ async fn run_lawful_population(
         "the lawful population crossed part boundaries"
     );
     let seconds = elapsed.as_secs_f64();
-    let aggregate_mib_per_s =
-        canonical_total as f64 / (1024.0 * 1024.0) / seconds;
+    let aggregate_mib_per_s = canonical_total as f64 / (1024.0 * 1024.0) / seconds;
     // The tuned frames' measured shape — the evidence the bead and the
     // verification manifest record for the adversarial-input claim.
     eprintln!(
@@ -640,8 +638,7 @@ async fn run_refused_population(
                         limit_bytes,
                     } => {
                         assert_eq!(
-                            *limit_bytes,
-                            DEFAULT_RECORD_MAX_BYTES,
+                            *limit_bytes, DEFAULT_RECORD_MAX_BYTES,
                             "the record guard refused at the registered cap"
                         );
                         assert!(
@@ -677,11 +674,7 @@ async fn run_refused_population(
             }
         }
     }
-    assert_eq!(
-        store.commits(),
-        0,
-        "a refused stream publishes no object"
-    );
+    assert_eq!(store.commits(), 0, "a refused stream publishes no object");
     assert_eq!(
         store.aborts(),
         16,
@@ -717,12 +710,14 @@ async fn the_reference_profile_sustains_the_phase4_floors() {
     let (lawful, refused) = build_profile_frames();
 
     let gate = AdmissionGate::new(&config, Arc::new(ServerMetrics::new()));
-    let (aggregate_mib_per_s, lawful_elapsed) =
-        run_lawful_population(&gate, &config, lawful).await;
+    let (aggregate_mib_per_s, lawful_elapsed) = run_lawful_population(&gate, &config, lawful).await;
     // Phase 1's evidence prints before phase 2 runs, so a phase-2 failure
     // still records the lawful population's measured numbers.
     eprintln!("phase4.aggregate_mib_per_s = {aggregate_mib_per_s:.1}");
-    eprintln!("phase4.lawful_elapsed_s = {:.3}", lawful_elapsed.as_secs_f64());
+    eprintln!(
+        "phase4.lawful_elapsed_s = {:.3}",
+        lawful_elapsed.as_secs_f64()
+    );
 
     let refused_elapsed = run_refused_population(&gate, &config, refused).await;
 
