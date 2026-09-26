@@ -1931,7 +1931,7 @@ mod tests {
         ControlAdminConfig, ControlAdminConfigBuilder, ControlReadConfig, ControlReadConfigBuilder,
         CredentialKind, CredentialReference, EncryptionPolicy, EndpointUrl, PathStyle,
         S3ConfigError, S3ConfigErrorKind, S3StorageConfig, S3StorageConfigBuilder, STRING_MAX,
-        StorageRole, Tls,
+        ScopedWritersConfig, ScopedWritersConfigBuilder, StorageRole, Tls,
     };
 
     const ENDPOINT: &str = "https://s3.example.invalid";
@@ -2858,5 +2858,161 @@ mod tests {
         config
             .reject_administration_credential(&distinct)
             .expect("distinct identities are accepted");
+    }
+
+    // ----- scoped-writer pair surface (aa-c0fe28d3) -----
+    //
+    // The golden identifiers are the scoped-writer boundary suite's own
+    // (scoped_write.rs tests), so the pair surface and the standalone
+    // halves it hands back tell one story.
+    const TENANT: &str = "1a2b3c4d-5e6f-4a1b-9c2d-3e4f5a6b7c8d";
+    const TENANT_BUCKET: &str = "archivist-tenant-example";
+    const CATALOG_REF: &str = "file:/etc/archivist/storage/catalog-writer-credentials";
+    const DERIVED_REF: &str = "file:/etc/archivist/storage/derived-writer-credentials";
+
+    fn scoped_writers_builder() -> ScopedWritersConfigBuilder {
+        ScopedWritersConfig::builder()
+            .endpoint_url(ENDPOINT)
+            .region(REGION)
+            .tenant_bucket(TENANT_BUCKET)
+            .tenant(TENANT)
+            .catalog_write_credentials(CATALOG_REF)
+            .derived_write_credentials(DERIVED_REF)
+    }
+
+    #[test]
+    fn scoped_writers_configuration_builds_the_two_halves() {
+        let config = scoped_writers_builder().build().expect("valid");
+        let (catalog, derived) = (config.catalog(), config.derived());
+
+        // The catalog half is the validated CatalogWriterConfig of
+        // scoped_write.rs: the pair surface's shared settings plus its
+        // own dedicated credential reference.
+        assert_eq!(catalog.endpoint().as_str(), ENDPOINT);
+        assert_eq!(catalog.tls(), Tls::Enabled, "tls defaults to enabled");
+        assert_eq!(catalog.path_style(), PathStyle::Path, "registry default");
+        assert_eq!(catalog.region(), REGION);
+        assert_eq!(catalog.tenant_bucket(), TENANT_BUCKET);
+        assert_eq!(catalog.tenant().as_str(), TENANT);
+        assert_eq!(
+            *catalog.catalog_write_credentials(),
+            CredentialReference::parse(CATALOG_REF).expect("the golden reference parses")
+        );
+        assert_eq!(
+            catalog.catalog_write_credentials().kind(),
+            CredentialKind::File
+        );
+
+        // The derived half is its mirror one namespace over.
+        assert_eq!(derived.endpoint().as_str(), ENDPOINT);
+        assert_eq!(derived.tls(), Tls::Enabled);
+        assert_eq!(derived.path_style(), PathStyle::Path);
+        assert_eq!(derived.region(), REGION);
+        assert_eq!(derived.tenant_bucket(), TENANT_BUCKET);
+        assert_eq!(derived.tenant().as_str(), TENANT);
+        assert_eq!(
+            *derived.derived_write_credentials(),
+            CredentialReference::parse(DERIVED_REF).expect("the golden reference parses")
+        );
+        assert_eq!(
+            derived.derived_write_credentials().kind(),
+            CredentialKind::File
+        );
+
+        // The valid pair is the disjoint one: two namespaces, two
+        // credential references.
+        assert_ne!(
+            catalog.catalog_write_credentials(),
+            derived.derived_write_credentials()
+        );
+    }
+
+    #[test]
+    fn scoped_writers_refuse_a_literal_credential_value() {
+        // A pasted value where a writer credential reference belongs is a
+        // construction failure of the pair surface — never a store
+        // (CFG-032). The delegated gate is the writer surface's own, so
+        // the detail names the scoped-writer credential, and neither
+        // rendering echoes the pasted value.
+        let catalog_paste = "pasted-catalog-writer-credential-value";
+        let error = scoped_writers_builder()
+            .catalog_write_credentials(catalog_paste)
+            .build()
+            .expect_err("a literal value is not a reference");
+        assert_eq!(error.kind(), S3ConfigErrorKind::MalformedSetting);
+        assert_eq!(
+            error.detail(),
+            "scoped-writer credential is outside the closed grammar"
+        );
+        assert!(
+            !error.to_string().contains(catalog_paste),
+            "the display rendering echoed the pasted value"
+        );
+        assert!(
+            !format!("{error:?}").contains(catalog_paste),
+            "the debug rendering echoed the pasted value"
+        );
+
+        // The same refusal for the derived-writer setting.
+        let derived_paste = "pasted-derived-writer-credential-value";
+        let error = scoped_writers_builder()
+            .derived_write_credentials(derived_paste)
+            .build()
+            .expect_err("a literal value is not a reference");
+        assert_eq!(error.kind(), S3ConfigErrorKind::MalformedSetting);
+        assert_eq!(
+            error.detail(),
+            "scoped-writer credential is outside the closed grammar"
+        );
+        assert!(
+            !error.to_string().contains(derived_paste),
+            "the display rendering echoed the pasted value"
+        );
+        assert!(
+            !format!("{error:?}").contains(derived_paste),
+            "the debug rendering echoed the pasted value"
+        );
+    }
+
+    #[test]
+    fn scoped_writers_refuse_one_credential_for_both_namespaces() {
+        // The one refusal the two halves cannot see on their own: both
+        // namespaces mapped onto one credential collapses the authority
+        // split the pair exists to keep (plan Section 7.5).
+        let shared = "file:/etc/archivist/storage/shared-writer-credentials";
+        let error = scoped_writers_builder()
+            .catalog_write_credentials(shared)
+            .derived_write_credentials(shared)
+            .build()
+            .expect_err("one credential cannot provision both namespaces");
+        assert_eq!(error.kind(), S3ConfigErrorKind::DuplicateIdentity);
+        assert_eq!(
+            error.detail(),
+            "the two scoped writers share one credential"
+        );
+        assert!(
+            !error.to_string().contains(shared),
+            "the display rendering echoed the shared reference"
+        );
+        assert!(
+            !format!("{error:?}").contains(shared),
+            "the debug rendering echoed the shared reference"
+        );
+
+        // The same violation stated from the catalog half's side: the
+        // rule is over the pair, not over one setting.
+        let error = scoped_writers_builder()
+            .catalog_write_credentials(DERIVED_REF)
+            .build()
+            .expect_err("one credential cannot provision both namespaces");
+        assert_eq!(error.kind(), S3ConfigErrorKind::DuplicateIdentity);
+        assert_eq!(
+            error.detail(),
+            "the two scoped writers share one credential"
+        );
+        assert!(
+            !format!("{error:?}").contains(DERIVED_REF),
+            "the debug rendering echoed the shared reference"
+        );
     }
 }
