@@ -50,6 +50,24 @@
 //!   concurrent checkpoint behind the read — so its presence is pinned
 //!   and its bytes are left to `SQLite`.
 //!
+//! The same surface completes the induced local-state failure matrix:
+//! every row a non-mutating examination reports as a registered refusal,
+//! induced hermetically over an otherwise-healthy fixture — one verified
+//! receipt, an answered readiness probe — so the induced condition is
+//! the only finding and the row's refusal is the whole observable
+//! outcome. The rows: a configuration that cannot resolve (the usage
+//! class, retired before the examination creates or opens any state),
+//! loose state-database, lock-file, and spool modes (the permissions
+//! class), a stale migration version, a foreign-key orphan, and a
+//! dropped expected index (the corruption class), and a free-space
+//! floor above the filesystem's free space (the resource class, with
+//! its distinct exit 75). Each pinned observation is the compiled
+//! process's own: the exit status the registered class allocates, no
+//! result document on stdout (CLI-019), and one content-free
+//! `archivist.error/v1` refusal on stderr whose code is the registered
+//! finding — never a path, a row, or an object name the examination
+//! read.
+//!
 //! The readiness responder is the smallest stand-in for the ingestion
 //! endpoint the doctor may probe once: a loopback listener that answers
 //! `GET /health/ready` with HTTP 200 and no body. It exists so neither
@@ -286,7 +304,10 @@ fn serve_readiness(listener: &TcpListener) {
 /// no real host configuration can leak into the child, the credentials as
 /// never-resolved references (CLI-024 — the doctor resolves no secret),
 /// and the responder as the ingest endpoint the doctor may probe once.
-fn child_environment(dir: &TempDir, endpoint: &str) -> Vec<(&'static str, String)> {
+/// The spool free-space floor is the row's own dial: a healthy fixture
+/// names `1`, and the spool-space row names a floor above any fixture
+/// filesystem's free space.
+fn child_environment(dir: &TempDir, endpoint: &str, floor: &str) -> Vec<(&'static str, String)> {
     let home = dir.path().to_string_lossy().into_owned();
     vec![
         ("HOME", home.clone()),
@@ -295,7 +316,7 @@ fn child_environment(dir: &TempDir, endpoint: &str) -> Vec<(&'static str, String
             dir.path().join("xdg").to_string_lossy().into_owned(),
         ),
         ("ARCHIVIST_CLIENT_STATE_DIR", home),
-        ("ARCHIVIST_SPOOL_FREE_FLOOR_BYTES", "1".to_owned()),
+        ("ARCHIVIST_SPOOL_FREE_FLOOR_BYTES", floor.to_owned()),
         ("ARCHIVIST_INGEST_ENDPOINT_URL", endpoint.to_owned()),
         (
             "ARCHIVIST_STORAGE_ENDPOINT_URL",
@@ -323,14 +344,39 @@ fn child_environment(dir: &TempDir, endpoint: &str) -> Vec<(&'static str, String
     ]
 }
 
-/// Run the compiled binary's `doctor` command in JSON non-interactive
-/// mode over the fixture and capture its real streams.
-fn run_doctor(dir: &TempDir, endpoint: &str) -> Output {
+/// Assemble the compiled binary's `doctor` invocation over the fixture
+/// host — the binary and the synthetic environment — without running
+/// it, so a row may add its own global flags before the command word.
+fn doctor_command(dir: &TempDir, endpoint: &str, floor: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_archivist"));
-    command.args(["doctor", "--json", "--non-interactive"]);
-    for (name, value) in child_environment(dir, endpoint) {
+    for (name, value) in child_environment(dir, endpoint, floor) {
         command.env(name, value);
     }
+    command
+}
+
+/// Run the compiled binary's `doctor` command in JSON non-interactive
+/// mode over the fixture and capture its real streams, with the spool
+/// free-space floor a healthy fixture passes.
+fn run_doctor(dir: &TempDir, endpoint: &str) -> Output {
+    run_doctor_with_floor(dir, endpoint, "1")
+}
+
+/// The spool-space row's invocation: the same examination over the same
+/// fixture, with the free-space floor the row itself names.
+fn run_doctor_with_floor(dir: &TempDir, endpoint: &str, floor: &str) -> Output {
+    let mut command = doctor_command(dir, endpoint, floor);
+    command.args(["doctor", "--json", "--non-interactive"]);
+    command.output().expect("the archivist binary runs")
+}
+
+/// The configuration-resolution row's invocation: an explicit `--config`
+/// naming a path the loader must but cannot read, so the refusal retires
+/// the examination before it runs.
+fn run_doctor_with_config(dir: &TempDir, endpoint: &str, config: &Path) -> Output {
+    let mut command = doctor_command(dir, endpoint, "1");
+    command.arg("--config").arg(config);
+    command.args(["doctor", "--json", "--non-interactive"]);
     command.output().expect("the archivist binary runs")
 }
 
@@ -359,6 +405,33 @@ fn stream_document(bytes: &[u8]) -> Value {
     let text = std::str::from_utf8(bytes).expect("the stream is utf-8");
     json::parse(text.trim_end_matches('\n').as_bytes())
         .expect("the stream carries one JSON document")
+}
+
+/// A refused examination's complete observable contract: the exit status
+/// the registered class allocates, no result document on stdout
+/// (CLI-019), and exactly one `archivist.error/v1` refusal on stderr
+/// whose code is the registered finding — content-free, so nothing the
+/// examination read (the fixture's own paths included) appears anywhere
+/// in the emitted bytes.
+fn assert_registered_refusal(output: &Output, code: &str, exit: i32, dir: &TempDir) {
+    assert_eq!(
+        output.status.code(),
+        Some(exit),
+        "the registered {code} class allocates exit {exit}"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "a failed doctor emits no result document (CLI-019), found {:?}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8(output.stderr.clone()).expect("the refusal is utf-8");
+    assert!(
+        !stderr.contains(dir.path().to_string_lossy().as_ref()),
+        "the refusal is content-free: no fixture path appears"
+    );
+    let document = stream_document(&output.stderr);
+    assert_eq!(text_member(&document, "schema"), "archivist.error/v1");
+    assert_eq!(text_member(&document, "code"), code);
 }
 
 /// The state directory's complete recursive shape — every path, every
@@ -621,4 +694,188 @@ fn the_examination_leaves_the_state_database_byte_identical() {
         before_tree,
         "the examination left the state exactly as the writer had it"
     );
+}
+
+// The induced local-state failure matrix. Every fixture below is
+// otherwise healthy — one verified receipt so linkage passes, a
+// readiness answer so the probe passes, a floor of one byte so the
+// spool-space check passes — so the induced condition is the only
+// finding, and the row's registered refusal with its exit class is the
+// whole observable outcome. The inductions are the library-level
+// matrix's own (ade2e43): the same hermetic damage, observed here
+// through the compiled process.
+
+#[test]
+fn an_unresolvable_configuration_refuses_with_the_usage_class_before_any_state() {
+    // The configuration-resolution row: an explicit `--config` the
+    // loader must but cannot read is a registered usage refusal taken
+    // before the examination runs. The endpoint names a port nothing
+    // answers, so a probe that ran would surface its own registered
+    // refusal (server.unavailable, exit 75) instead — the usage class is
+    // itself the evidence the examination never started.
+    let dir = TempDir::new("config-refusal");
+    let absent = dir.path().join("absent.toml");
+    let output = run_doctor_with_config(&dir, "http://127.0.0.1:9", &absent);
+    assert_registered_refusal(&output, "cli.usage_error", 64, &dir);
+    // The refusal retired before the examination: the doctor created and
+    // opened no state path at all — the fixture directory holds nothing
+    // but the configuration file that cannot be read.
+    let entries: Vec<_> = std::fs::read_dir(dir.path())
+        .expect("the fixture directory is readable")
+        .collect();
+    assert_eq!(
+        entries.len(),
+        1,
+        "only the named configuration file exists, no state path is opened"
+    );
+}
+
+#[test]
+fn a_loose_state_database_mode_refuses_with_the_permissions_class() {
+    // The permissions row for the state database itself: the fixture
+    // loosens the database mode the pinned policy requires (0600,
+    // CFG-023) the way an out-of-band writer would, over the
+    // daemon-live shape — the write connection stays open across the
+    // child's run, its WAL and wal-index present.
+    let dir = TempDir::new("db-mode");
+    let store = seeded_store(&dir);
+    linked_receipt(&store, "2026-09-13T12:00:00Z");
+    std::fs::set_permissions(
+        dir.path().join(STATE_DB_NAME),
+        Permissions::from_mode(0o644),
+    )
+    .expect("loosen the database mode");
+    let server = ReadinessEndpoint::start();
+    let output = run_doctor(&dir, server.endpoint());
+    server.finish();
+    assert_registered_refusal(&output, "client.permissions", 74, &dir);
+}
+
+#[test]
+fn a_loose_lock_file_mode_refuses_with_the_permissions_class() {
+    // The permissions row for the advisory lock file: a lock file whose
+    // mode is outside the pinned 0600 is reported whether or not any
+    // mutator holds it — the probe answers `free` (a report, never an
+    // acquisition) and the mode check carries the refusal.
+    let dir = TempDir::new("lock-mode");
+    let store = seeded_store(&dir);
+    linked_receipt(&store, "2026-09-13T12:00:00Z");
+    let lock = dir.path().join(LOCK_FILE_NAME);
+    std::fs::write(&lock, b"").expect("create the lock file");
+    std::fs::set_permissions(&lock, Permissions::from_mode(0o644))
+        .expect("loosen the lock file mode");
+    let server = ReadinessEndpoint::start();
+    let output = run_doctor(&dir, server.endpoint());
+    server.finish();
+    assert_registered_refusal(&output, "client.permissions", 74, &dir);
+}
+
+#[test]
+fn loose_spool_modes_refuse_with_the_permissions_class() {
+    // The permissions row for the spool: a spool directory looser than
+    // the pinned 0700 carrying an entry looser than the pinned 0600 —
+    // the shape a foreign umask leaves behind. The examination inspects
+    // the modes only; it opens no spool of its own.
+    let dir = TempDir::new("spool-mode");
+    let store = seeded_store(&dir);
+    linked_receipt(&store, "2026-09-13T12:00:00Z");
+    let spool = dir.path().join(SPOOL_DIR_NAME);
+    std::fs::create_dir(&spool).expect("create the spool directory");
+    std::fs::set_permissions(&spool, Permissions::from_mode(0o755))
+        .expect("loosen the spool directory mode");
+    let entry = spool.join("bundle.bundle");
+    std::fs::write(&entry, b"payload").expect("create a spool entry");
+    std::fs::set_permissions(&entry, Permissions::from_mode(0o644))
+        .expect("loosen the spool entry mode");
+    let server = ReadinessEndpoint::start();
+    let output = run_doctor(&dir, server.endpoint());
+    server.finish();
+    assert_registered_refusal(&output, "client.permissions", 74, &dir);
+}
+
+#[test]
+fn a_stale_migration_version_refuses_with_the_state_corrupt_class() {
+    // The integrity row for a stale migration: external damage removed
+    // the newest migration history row, so the recorded version is below
+    // the schema the binary itself carries — the registered corruption
+    // refusal, never a silent upgrade (the examination mutates nothing).
+    let dir = TempDir::new("stale-version");
+    let store = seeded_store(&dir);
+    linked_receipt(&store, "2026-09-13T12:00:00Z");
+    store
+        .connection()
+        .execute(
+            "DELETE FROM schema_migrations
+             WHERE version = (SELECT MAX(version) FROM schema_migrations)",
+            [],
+        )
+        .expect("drop the newest migration history row");
+    let server = ReadinessEndpoint::start();
+    let output = run_doctor(&dir, server.endpoint());
+    server.finish();
+    assert_registered_refusal(&output, "client.state_corrupt", 74, &dir);
+}
+
+#[test]
+fn a_foreign_key_orphan_refuses_with_the_state_corrupt_class() {
+    // The integrity row for referential damage: the fixture drops the
+    // frozen request the way an out-of-band writer would (enforcement
+    // relaxed on the fixture's own connection only), leaving the
+    // verified receipt orphaned — the foreign-key scan reports the
+    // registered refusal without naming the orphaned row.
+    let dir = TempDir::new("fk-orphan");
+    let store = seeded_store(&dir);
+    linked_receipt(&store, "2026-09-13T12:00:00Z");
+    store
+        .connection()
+        .execute_batch("PRAGMA foreign_keys = OFF;")
+        .expect("relax enforcement for the fixture damage");
+    store
+        .connection()
+        .execute(
+            "DELETE FROM frozen_requests
+             WHERE request_id = (SELECT request_id FROM frozen_requests LIMIT 1)",
+            [],
+        )
+        .expect("orphan the receipt");
+    let server = ReadinessEndpoint::start();
+    let output = run_doctor(&dir, server.endpoint());
+    server.finish();
+    assert_registered_refusal(&output, "client.state_corrupt", 74, &dir);
+}
+
+#[test]
+fn a_dropped_schema_index_refuses_with_the_state_corrupt_class() {
+    // The integrity row for a missing expected object: external damage
+    // dropped an index the schema expects, so the expected-object scan
+    // reports the registered refusal — content-free, naming neither the
+    // missing object nor anything the scan read.
+    let dir = TempDir::new("dropped-index");
+    let store = seeded_store(&dir);
+    linked_receipt(&store, "2026-09-13T12:00:00Z");
+    store
+        .connection()
+        .execute("DROP INDEX idx_generations_source", [])
+        .expect("drop an expected index");
+    let server = ReadinessEndpoint::start();
+    let output = run_doctor(&dir, server.endpoint());
+    server.finish();
+    assert_registered_refusal(&output, "client.state_corrupt", 74, &dir);
+}
+
+#[test]
+fn a_floor_above_the_free_space_refuses_with_the_disk_floor_class() {
+    // The spool-space row: the configured free-space floor — one
+    // tebibyte, above the free space of any host the suite runs on —
+    // sits above the fixture filesystem's free space, so the
+    // examination reports the registered resource refusal and its
+    // distinct exit class: 75, the restore-disk-floor action, not the
+    // local-state 74 the rows above allocate.
+    let dir = TempDir::new("floor");
+    let store = seeded_store(&dir);
+    linked_receipt(&store, "2026-09-13T12:00:00Z");
+    let server = ReadinessEndpoint::start();
+    let output = run_doctor_with_floor(&dir, server.endpoint(), "1099511627776");
+    server.finish();
+    assert_registered_refusal(&output, "client.disk_floor", 75, &dir);
 }
