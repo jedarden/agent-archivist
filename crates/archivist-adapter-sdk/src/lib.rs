@@ -76,6 +76,13 @@
 //! - [`compatibility`]: the compatibility matrix — the registry of
 //!   routes whose exact-capture claim conformance evidence backs. A
 //!   route earns a row or the project does not claim it.
+//! - [`coverage_manifest`]: the published inference-coverage manifest
+//!   (plan Phase 9 exit gate): one bounded, content-free document naming,
+//!   per instrumented client, the content-free observed, partial, failed,
+//!   and unobserved exact counts — beside, never merged with, the semantic
+//!   session states — together with the claimed routes, the known
+//!   bypasses, the schema version, the flush outcome, and the coverage
+//!   evidence digest a verification run records.
 //! - [`file_capture`]: the file-source capture core's complete-JSONL
 //!   boundary selection (CAP-003, plan `EC-01`): the torn tail is
 //!   measured, never captured, and re-measured on the next pass (AC-02).
@@ -124,6 +131,7 @@ pub mod capability;
 pub mod capture_alignment;
 pub mod compatibility;
 pub mod conformance;
+pub mod coverage_manifest;
 pub mod descriptor;
 pub mod discovery;
 pub mod ephemeral_flush;
@@ -167,6 +175,10 @@ pub use conformance::{
     CORPUS_RELATIVE, ConformanceAdapter, ConformanceSuite, CorpusError, GenerationContinuity,
     MountError, PassError, PassReport, SOURCE_FILE_NAME, Scenario, ScenarioOutcome, SuiteReport,
     Violation,
+};
+pub use coverage_manifest::{
+    ClientCoverage, FlushOutcome, INFERENCE_COVERAGE_SCHEMA, INFERENCE_COVERAGE_SCHEMA_VERSION,
+    InferenceCoverageManifest,
 };
 pub use descriptor::{AdapterDescriptor, DescriptorError};
 pub use discovery::{
