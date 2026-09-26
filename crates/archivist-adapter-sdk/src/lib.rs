@@ -35,6 +35,12 @@
 //! - [`inference_observer`]: the versioned exact-inference lifecycle around
 //!   a supported Rust transport boundary; it emits canonical protocol
 //!   artifacts without exposing provider SDK types.
+//! - [`ephemeral_flush`]: the flush-before-teardown integration for
+//!   ephemeral jobs (CAP-007, threat `EC-10`): completion is gated on the
+//!   sink's durable acknowledgement when complete exact capture is
+//!   policy-mandated, and timeout, cancellation, auth pause, and storage
+//!   outage are recorded as explicit incomplete flushes that never
+//!   fabricate completion.
 //! - [`capture_alignment`]: the join that aligns reconstructed provider
 //!   attempts with the ledger's coverage outcomes, so a bypassed exchange
 //!   can only ever resolve unobserved.
@@ -120,6 +126,7 @@ pub mod compatibility;
 pub mod conformance;
 pub mod descriptor;
 pub mod discovery;
+pub mod ephemeral_flush;
 pub mod expected_inference;
 pub mod file_capture;
 pub mod file_generation;
@@ -164,6 +171,10 @@ pub use conformance::{
 pub use descriptor::{AdapterDescriptor, DescriptorError};
 pub use discovery::{
     DiscoveredSource, DiscoveredSources, DiscoveryError, DiscoveryReport, SourceDiscovery,
+};
+pub use ephemeral_flush::{
+    EphemeralCapturePolicy, EphemeralCompletion, EphemeralFlushGate, EphemeralFlushReport,
+    FlushAbandonment,
 };
 pub use expected_inference::{
     CaptureRoute, CloseReason, EXPECTATION_VERSION, ExactOutcome, ExpectedEvent, ExpectedEvents,
