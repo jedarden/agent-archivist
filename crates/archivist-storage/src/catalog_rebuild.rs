@@ -88,6 +88,30 @@
 //! One occurrence's blob is decoded at a time, whole, through the
 //! `zstd-v1` decoder's checksum-verified read-back; a deployment's own
 //! size bounds apply, exactly as for any other offline restore read.
+//!
+//! # Sweeping the projection with its occurrence
+//!
+//! The projection inherits raw retention (plan Phase 10): when the
+//! Section 7.10 two-pass mark-and-sweep releases an occurrence, its
+//! usage row leaves in the same pass — a row that can no longer be
+//! rebuilt from the raw prefix is a divergence, not a residual.
+//! [`plan_usage_sweep`] is that companion's mark phase: list the pinned
+//! pipeline's usage-summary namespace, read each row's own record
+//! (content-free) for the occurrence it names, and mark every row whose
+//! occurrence is absent from the surviving set the caller froze from the
+//! raw prefix. The resulting [`UsageSweepPlan`] is deterministic and
+//! content-free: [`UsageSweepPlan::simulate`] renders the would-swept
+//! keys without a destructive call, and [`UsageSweepPlan::execute`]
+//! deletes through the separately provisioned
+//! [`UsageRowSweepStore`] identity — a delete authority none of this
+//! module's readers or writers carries (the collection module's
+//! discipline: enumerating and reading never implies deleting). A listed
+//! row that does not parse as a usage-summary record of this tenant
+//! fails the mark closed, exactly like [`latest_checkpoint`]'s stricter
+//! surface: stored-state divergence is a fault to surface, not a state
+//! to route around.
+
+use std::collections::BTreeSet;
 
 use archivist_protocol::derivation::{FrameBuilder, blob_digest};
 use archivist_protocol::json::{self, Object, Value};
@@ -96,13 +120,14 @@ use archivist_protocol::usage_summary::{
     HarnessUsageState, MessageUsage, OccurrenceProvenance, PIPELINE_ID, PIPELINE_VERSION,
     USAGE_SUMMARY_VERSION, UnknownReason, UsageSummary,
 };
-use archivist_protocol::vocabulary::{AdapterId, TenantId, VersionToken};
+use archivist_protocol::vocabulary::{AdapterId, OccurrenceId, TenantId, VersionToken};
 
 use crate::audit_restore::{AuditRestoreStore, InventoryKey, InventoryScope};
 use crate::catalog_source::{RawCatalogIndex, RawCatalogSource};
 use crate::error::{StorageError, StorageErrorKind};
 use crate::scoped_write::{
-    CatalogCheckpointKey, CatalogListPrefix, CatalogWriteStore, DerivedObjectKey, DerivedWriteStore,
+    CatalogCheckpointKey, CatalogListPrefix, CatalogWriteStore, DerivedListPrefix,
+    DerivedObjectKey, DerivedWriteStore,
 };
 use crate::zstd_v1::ZstdV1Decoder;
 
@@ -130,6 +155,9 @@ const TORN_CHECKPOINT: &str = "a listed checkpoint object's bytes do not hash to
 const UNPARSEABLE_CHECKPOINT: &str =
     "a listed checkpoint object does not parse as a checkpoint document";
 const ROW_KEY_GRAMMAR: &str = "the derived usage-row key left the scoped writer grammar";
+const USAGE_ROW_PREFIX_GRAMMAR: &str = "the usage-row namespace left the scoped list grammar";
+const USAGE_ROW_RECORD: &str = "a listed usage-row object does not parse as a usage-summary record";
+const USAGE_ROW_TENANT: &str = "a usage-row record names another tenant";
 
 /// Why a listed object refused the rebuild, as
 /// [`StorageErrorKind::IntegrityConflict`](crate::error::StorageErrorKind)
@@ -953,11 +981,283 @@ pub(crate) fn decode_blob(stored: &[u8]) -> Result<Vec<u8>, StorageError> {
     Ok(plaintext)
 }
 
+// ---- The sweep companion (plan Phase 10: the projection leaves with its occurrence) ----
+
+/// The usage-row sweep's own seam, provisioned separately from every
+/// reader and writer in this module (the collection module's discipline):
+/// enumerate and read the tenant's derived usage namespace and delete
+/// from it, and nothing else. Holding an
+/// [`AuditRestoreStore`](crate::audit_restore::AuditRestoreStore), a
+/// [`DerivedWriteStore`](crate::scoped_write::DerivedWriteStore), or a
+/// [`CatalogWriteStore`](crate::scoped_write::CatalogWriteStore) never
+/// implies this trait — composing one is supplying the destructive
+/// authority itself.
+pub trait UsageRowSweepStore {
+    /// Enumerate the keys below `prefix`, which the sweep only ever asks
+    /// for at the pinned pipeline's own usage-summary namespace.
+    ///
+    /// # Errors
+    /// [`StorageErrorKind::ScopeViolation`](crate::error::StorageErrorKind::ScopeViolation)
+    /// when the prefix is outside this identity's provisioned namespace;
+    /// [`StorageErrorKind::Unavailable`](crate::error::StorageErrorKind::Unavailable)
+    /// when the backend or network is down.
+    fn list_usage_rows(
+        &self,
+        prefix: &DerivedListPrefix,
+    ) -> impl Future<Output = Result<Vec<String>, StorageError>> + Send;
+
+    /// Read one usage row's stored bytes (canonical JSON plus one LF).
+    ///
+    /// # Errors
+    /// The backend's own read failures.
+    fn read_usage_row(
+        &self,
+        key: &DerivedObjectKey,
+    ) -> impl Future<Output = Result<Vec<u8>, StorageError>> + Send;
+
+    /// Delete one usage row. The rows are immutable and content-addressed,
+    /// so there is nothing to revalidate conditionally; the caller's
+    /// surviving set must come from a frozen raw scan, and the sweep is
+    /// only as fresh as that scan.
+    ///
+    /// # Errors
+    /// [`StorageErrorKind::ScopeViolation`](crate::error::StorageErrorKind::ScopeViolation)
+    /// when the key is outside this identity's provisioned namespace;
+    /// [`StorageErrorKind::Unavailable`](crate::error::StorageErrorKind::Unavailable)
+    /// when the backend or network is down.
+    fn delete_usage_row(
+        &self,
+        key: &DerivedObjectKey,
+    ) -> impl Future<Output = Result<(), StorageError>> + Send;
+}
+
+/// The pinned usage-summary namespace below the tenant's derived root:
+/// the only prefix the sweep enumerates, and exactly the layout
+/// [`UsageSummary::object_key`](archivist_protocol::usage_summary::UsageSummary::object_key)
+/// writes.
+fn usage_row_prefix(tenant: &TenantId) -> String {
+    format!("tenants/{tenant}/v1/derived/{PIPELINE_ID}/{PIPELINE_VERSION}/usage-summaries/")
+}
+
+/// The deterministic mark phase of the usage-row sweep: list the pinned
+/// pipeline's usage-summary namespace, read each listed row's own record
+/// for the occurrence it names, and mark every row whose occurrence is
+/// absent from `surviving` — the occurrence set the caller froze from the
+/// raw prefix, the same discipline as the blob sweep's reference scans.
+///
+/// The decision is content-free (row records carry no transcript text)
+/// and deterministic: listed keys are walked in key order, so one derived
+/// prefix and one surviving set always mark the same rows in the same
+/// order.
+///
+/// # Errors
+/// The store's own failures, and
+/// [`StorageErrorKind::IntegrityConflict`](crate::error::StorageErrorKind)
+/// for a listed key outside the scoped writer grammar, a row record that
+/// does not parse as a usage-summary record, or a record naming another
+/// tenant — stored-state divergence is a fault to surface, never swept
+/// away silently.
+pub async fn plan_usage_sweep<W>(
+    derived: &W,
+    tenant: &TenantId,
+    surviving: &BTreeSet<OccurrenceId>,
+) -> Result<UsageSweepPlan, StorageError>
+where
+    W: UsageRowSweepStore + ?Sized,
+{
+    let prefix = DerivedListPrefix::parse(tenant, &usage_row_prefix(tenant))
+        .map_err(|_| fault(USAGE_ROW_PREFIX_GRAMMAR))?;
+    let mut listed = derived.list_usage_rows(&prefix).await?;
+    listed.sort();
+    let evaluated = listed.len();
+    let mut marked = Vec::new();
+    for key in listed {
+        let parsed = DerivedObjectKey::parse(&key).map_err(|_| fault(ROW_KEY_GRAMMAR))?;
+        let occurrence = row_occurrence(tenant, &derived.read_usage_row(&parsed).await?)?;
+        if !surviving.contains(&occurrence) {
+            marked.push(parsed);
+        }
+    }
+    Ok(UsageSweepPlan {
+        tenant: tenant.clone(),
+        evaluated,
+        keys: marked,
+    })
+}
+
+/// Read the occurrence one stored usage row names, out of the row's own
+/// canonical record — the membership fact the sweep decides on. A record
+/// that does not parse, that lacks a grammar-valid `occurrence_id`, or
+/// that names another tenant is stored-state divergence and fails closed.
+fn row_occurrence(tenant: &TenantId, bytes: &[u8]) -> Result<OccurrenceId, StorageError> {
+    let Ok(Value::Object(record)) = json::parse(bytes) else {
+        return Err(fault(USAGE_ROW_RECORD));
+    };
+    match record.get("tenant_id") {
+        Some(Value::Text(name)) => {
+            let named = TenantId::parse(name).map_err(|_| fault(USAGE_ROW_TENANT))?;
+            if named != *tenant {
+                return Err(fault(USAGE_ROW_TENANT));
+            }
+        }
+        _ => return Err(fault(USAGE_ROW_RECORD)),
+    }
+    match record.get("occurrence_id") {
+        Some(Value::Text(hex)) => OccurrenceId::parse(hex).map_err(|_| fault(USAGE_ROW_RECORD)),
+        _ => Err(fault(USAGE_ROW_RECORD)),
+    }
+}
+
+/// The marked rows one [`plan_usage_sweep`] pass would remove, and the
+/// two ways to act on them: [`UsageSweepPlan::simulate`] names them
+/// without a destructive call; [`UsageSweepPlan::execute`] removes them
+/// through the sweep identity.
+#[derive(Clone, Debug)]
+pub struct UsageSweepPlan {
+    tenant: TenantId,
+    evaluated: usize,
+    keys: Vec<DerivedObjectKey>,
+}
+
+impl UsageSweepPlan {
+    /// The tenant the plan sweeps.
+    #[must_use]
+    pub const fn tenant(&self) -> &TenantId {
+        &self.tenant
+    }
+
+    /// How many stored usage rows the mark examined.
+    #[must_use]
+    pub const fn evaluated_rows(&self) -> usize {
+        self.evaluated
+    }
+
+    /// The marked rows in key order.
+    #[must_use]
+    pub fn keys(&self) -> &[DerivedObjectKey] {
+        &self.keys
+    }
+
+    /// The outcome a sweep of this plan would produce, without calling
+    /// the destructive identity: the deletion simulation's report.
+    #[must_use]
+    pub fn simulate(&self) -> UsageSweepOutcome {
+        UsageSweepOutcome {
+            mode: "simulation",
+            evaluated: self.evaluated,
+            swept: self
+                .keys
+                .iter()
+                .map(|key| key.as_str().to_owned())
+                .collect(),
+            failed: Vec::new(),
+        }
+    }
+
+    /// Remove the marked rows through the sweep identity, in key order.
+    /// One refusing delete is recorded as a failure and the walk
+    /// continues — one transient object must not erase the audit trail
+    /// for the rest of the run (the collection executor's rule).
+    pub async fn execute<W>(&self, derived: &W) -> UsageSweepOutcome
+    where
+        W: UsageRowSweepStore + ?Sized,
+    {
+        let mut swept = Vec::new();
+        let mut failed = Vec::new();
+        for key in &self.keys {
+            match derived.delete_usage_row(key).await {
+                Ok(()) => swept.push(key.as_str().to_owned()),
+                Err(_) => failed.push(key.as_str().to_owned()),
+            }
+        }
+        UsageSweepOutcome {
+            mode: "execution",
+            evaluated: self.evaluated,
+            swept,
+            failed,
+        }
+    }
+}
+
+/// The content-free result of one usage-row sweep simulation or
+/// execution: what the mark examined, which rows it removed (or would
+/// remove), and which deletes were refused.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UsageSweepOutcome {
+    mode: &'static str,
+    evaluated: usize,
+    swept: Vec<String>,
+    failed: Vec<String>,
+}
+
+impl UsageSweepOutcome {
+    /// `simulation` or `execution`.
+    #[must_use]
+    pub const fn mode(&self) -> &str {
+        self.mode
+    }
+
+    /// How many stored usage rows the mark examined.
+    #[must_use]
+    pub const fn evaluated_rows(&self) -> usize {
+        self.evaluated
+    }
+
+    /// The rows removed (or, in simulation, would be removed), in key
+    /// order.
+    #[must_use]
+    pub fn swept(&self) -> &[String] {
+        &self.swept
+    }
+
+    /// The rows whose delete the identity refused, in key order.
+    #[must_use]
+    pub fn failed(&self) -> &[String] {
+        &self.failed
+    }
+
+    /// The canonical result document: the same members the outcome
+    /// carries, ready for the caller's report.
+    #[must_use]
+    pub fn result_document(&self) -> Object {
+        let mut document = Object::new();
+        document.set("pipeline_id", Value::Text(PIPELINE_ID.to_owned()));
+        document.set("pipeline_version", Value::Text(PIPELINE_VERSION.to_owned()));
+        document.set("usage_summary_version", Value::Int(USAGE_SUMMARY_VERSION));
+        document.set("mode", Value::Text(self.mode.to_owned()));
+        document.set(
+            "evaluated_rows",
+            Value::Int(wire_count(
+                u64::try_from(self.evaluated).unwrap_or(u64::MAX),
+            )),
+        );
+        document.set(
+            "swept",
+            Value::Array(
+                self.swept
+                    .iter()
+                    .map(|key| Value::Text(key.clone()))
+                    .collect(),
+            ),
+        );
+        document.set(
+            "failed",
+            Value::Array(
+                self.failed
+                    .iter()
+                    .map(|key| Value::Text(key.clone()))
+                    .collect(),
+            ),
+        );
+        document
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::manual_async_fn, clippy::type_complexity)]
 
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
     use std::fmt::Write as _;
     use std::sync::Mutex;
 
@@ -971,8 +1271,8 @@ mod tests {
     use archivist_protocol::sha256;
     use archivist_protocol::usage_summary::{MessageUsage, SourceUsageCounts, UsageRegion};
     use archivist_protocol::vocabulary::{
-        AdapterId, ArtifactHash, ClientId, GenerationId, HarnessId, RangeKind, RequestId,
-        SessionHash, StorageProfile, TenantId, Timestamp, VersionToken,
+        AdapterId, ArtifactHash, ClientId, GenerationId, HarnessId, OccurrenceId, RangeKind,
+        RequestId, SessionHash, StorageProfile, TenantId, Timestamp, VersionToken,
     };
 
     use super::super::audit_restore::{
@@ -988,8 +1288,8 @@ mod tests {
     };
     use super::super::zstd_v1::ZstdV1Encoder;
     use super::{
-        RebuildOutcome, RebuildPolicy, RestartReason, UsageProjection,
-        blob_digest as document_digest, latest_checkpoint, rebuild_pass,
+        RebuildOutcome, RebuildPolicy, RestartReason, UsageProjection, UsageRowSweepStore,
+        blob_digest as document_digest, latest_checkpoint, plan_usage_sweep, rebuild_pass,
     };
 
     /// The conformance corpus's tenant (the provenance bundle's own).
@@ -1412,6 +1712,81 @@ mod tests {
             keys.extend(self.foreign.lock().expect("mock lock").iter().cloned());
             keys.sort();
             async move { Ok(keys) }
+        }
+    }
+
+    /// The sweep identity's mock: an in-memory usage-row namespace that
+    /// records every delete in order — the audit trail the sweep proofs
+    /// compare.
+    struct MockSweep {
+        rows: Mutex<HashMap<String, Vec<u8>>>,
+        deletes: Mutex<Vec<String>>,
+    }
+
+    impl MockSweep {
+        /// Seed the namespace from a derived writer's row log, the way a
+        /// backend would have the pass's rows readable afterwards.
+        fn from_log(log: &[(String, Vec<u8>)]) -> Self {
+            Self {
+                rows: Mutex::new(
+                    log.iter()
+                        .map(|(key, bytes)| (key.clone(), bytes.clone()))
+                        .collect(),
+                ),
+                deletes: Mutex::new(Vec::new()),
+            }
+        }
+
+        /// Land one row directly, the way a divergence would have.
+        fn insert(&self, key: &str, bytes: &[u8]) {
+            self.rows
+                .lock()
+                .expect("mock lock")
+                .insert(key.to_owned(), bytes.to_vec());
+        }
+
+        /// The surviving row keys, in key order.
+        fn keys(&self) -> Vec<String> {
+            let mut keys: Vec<String> = self
+                .rows
+                .lock()
+                .expect("mock lock")
+                .keys()
+                .cloned()
+                .collect();
+            keys.sort();
+            keys
+        }
+
+        /// The deletes the identity performed, in order.
+        fn delete_log(&self) -> Vec<String> {
+            self.deletes.lock().expect("mock lock").clone()
+        }
+    }
+
+    impl UsageRowSweepStore for MockSweep {
+        async fn list_usage_rows(
+            &self,
+            _prefix: &DerivedListPrefix,
+        ) -> Result<Vec<String>, StorageError> {
+            Ok(self.keys())
+        }
+
+        async fn read_usage_row(&self, key: &DerivedObjectKey) -> Result<Vec<u8>, StorageError> {
+            let rows = self.rows.lock().expect("mock lock");
+            match rows.get(key.as_str()) {
+                Some(bytes) => Ok(bytes.clone()),
+                None => Err(StorageError::of_kind(StorageErrorKind::Unavailable)),
+            }
+        }
+
+        async fn delete_usage_row(&self, key: &DerivedObjectKey) -> Result<(), StorageError> {
+            self.deletes
+                .lock()
+                .expect("mock lock")
+                .push(key.as_str().to_owned());
+            self.rows.lock().expect("mock lock").remove(key.as_str());
+            Ok(())
         }
     }
 
@@ -1923,12 +2298,19 @@ mod tests {
 
     // ---- The content-freeness boundary at the engine seam ----
 
-    /// The projection is the engine's only channel to content: a marker
-    /// planted in the payload never reaches a derived byte, and a source
-    /// with no usage region reads `unknown`/`absent` — never zeros.
+    /// The projection is the engine's only channel to content: markers
+    /// planted as transcript text, prompt, and tool argument never reach
+    /// a derived byte, and a source with no usage region reads
+    /// `unknown`/`absent` in the emitted row itself — never zeros.
     #[test]
     fn content_never_reaches_the_derived_bytes() {
-        let marker = fixture("TOPMARKER-never-derived", None, None);
+        let plaintext = concat!(
+            "{\"note\":\"TOPMARKER-never-derived\",",
+            "\"prompt\":\"PROMPTMARKER-never-derived\",",
+            "\"tool_args\":{\"command\":\"TOOLMARKER-never-derived\"},",
+            "\"role\":\"assistant\"}\n"
+        );
+        let marker = fixture_from("marker", plaintext.as_bytes());
         let store = MockStore::with(std::slice::from_ref(&marker));
 
         let writer = MockDerived::default();
@@ -1936,13 +2318,32 @@ mod tests {
         let outcome = pass(&store, &writer, &checkpoints, policy(4), None);
         assert_eq!(outcome.row_states().absent(), 1);
 
-        for (_, bytes) in writer.log().into_iter().chain(checkpoints.log()) {
-            let text = String::from_utf8_lossy(&bytes);
-            assert!(!text.contains("TOPMARKER"), "content leaked into {text}");
-            assert!(
-                !text.contains("note"),
-                "transcript shape leaked into {text}"
-            );
+        let rows = writer.log();
+        assert_eq!(rows.len(), 1, "one occurrence, one usage row");
+        for (_, bytes) in rows.iter().chain(checkpoints.log().iter()) {
+            let text = String::from_utf8_lossy(bytes);
+            for marker in ["TOPMARKER", "PROMPTMARKER", "TOOLMARKER"] {
+                assert!(!text.contains(marker), "content leaked into {text}");
+            }
+            for shape in ["note", "prompt", "tool_args"] {
+                assert!(!text.contains(shape), "transcript shape leaked into {text}");
+            }
+        }
+
+        // The absent source's own row: the bounded unknown, and not one
+        // invented zero anywhere beside it.
+        let row = String::from_utf8_lossy(&rows[0].1);
+        assert!(row.contains("\"state\":\"unknown\""), "{row}");
+        assert!(row.contains("\"reason\":\"absent\""), "{row}");
+        for invented_zero in [
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "cache_creation",
+            "reasoning_tokens",
+            "assistant_message_count",
+        ] {
+            assert!(!row.contains(invented_zero), "invented zero in {row}");
         }
     }
 
@@ -2006,5 +2407,181 @@ mod tests {
         .validate()
         .expect_err("zero window is refused");
         assert_eq!(error.kind(), StorageErrorKind::MalformedInput);
+    }
+
+    // ---- The sweep companion ----
+
+    /// The occurrence, key, and denominator state of every row the
+    /// rebuild emitted, read out of each row's own record — the same
+    /// reading the sweep's mark performs.
+    fn rows_by_occurrence(log: &[(String, Vec<u8>)]) -> Vec<(OccurrenceId, String, String)> {
+        log.iter()
+            .map(|(key, bytes)| {
+                let Ok(Value::Object(record)) = json::parse(bytes) else {
+                    panic!("every emitted row parses as a record");
+                };
+                let Some(Value::Text(hex)) = record.get("occurrence_id") else {
+                    panic!("every emitted row names its occurrence");
+                };
+                let occurrence = OccurrenceId::parse(hex).expect("grammar occurrence id");
+                let Some(Value::Object(usage)) = record.get("harness_usage") else {
+                    panic!("every emitted row carries its denominator");
+                };
+                let Some(Value::Text(state)) = usage.get("state") else {
+                    panic!("every denominator carries its state");
+                };
+                (occurrence, key.clone(), state.clone())
+            })
+            .collect()
+    }
+
+    /// Rebuild the fixture prefix once and return the emitted rows as
+    /// (occurrence, key, state) plus the sweep identity seeded with them.
+    fn rebuilt_rows_and_sweep() -> (Vec<(OccurrenceId, String, String)>, MockSweep) {
+        let fixtures = fixtures();
+        let store = MockStore::with(&fixtures);
+        let (writer, checkpoints) = (MockDerived::default(), MockCatalog::default());
+        let outcome = pass(&store, &writer, &checkpoints, policy(4), None);
+        assert_eq!(outcome.occurrences_this_pass(), 3);
+        let rows = rows_by_occurrence(&writer.log());
+        assert_eq!(rows.len(), 3, "one row per occurrence");
+        (rows, MockSweep::from_log(&writer.log()))
+    }
+
+    /// The deletion simulation (plan Phase 10: the projection leaves with
+    /// its occurrence): an occurrence swept from the raw prefix loses its
+    /// usage row in the same pass — the simulation names the row without
+    /// a destructive call, the execution removes it, every surviving
+    /// occurrence's row stays, and re-marking the swept prefix finds
+    /// nothing left to converge on.
+    #[test]
+    fn sweep_removes_the_row_with_its_occurrence() {
+        let (rows, sweep) = rebuilt_rows_and_sweep();
+        // Occurrence "one" is the corpus's measured row; it leaves the
+        // archive, the other two survive.
+        let (swept_occurrence, swept_key, _) = rows
+            .iter()
+            .find(|(_, _, state)| state == "measured")
+            .expect("the corpus carries one measured row")
+            .clone();
+        let surviving: BTreeSet<OccurrenceId> = rows
+            .iter()
+            .map(|(occurrence, _, _)| *occurrence)
+            .filter(|occurrence| *occurrence != swept_occurrence)
+            .collect();
+
+        let plan = block_on(plan_usage_sweep(&sweep, &tenant(), &surviving))
+            .expect("every stored row reads back as a record");
+        assert_eq!(plan.evaluated_rows(), 3);
+        assert_eq!(plan.keys().len(), 1, "exactly the swept occurrence's row");
+        assert_eq!(plan.keys()[0].as_str(), swept_key);
+
+        let simulated = plan.simulate();
+        assert_eq!(simulated.mode(), "simulation");
+        assert_eq!(simulated.swept(), [swept_key.as_str()]);
+        assert!(simulated.failed().is_empty());
+        assert_eq!(sweep.keys().len(), 3, "the simulation destroys nothing");
+        assert!(sweep.delete_log().is_empty());
+
+        let executed = block_on(plan.execute(&sweep));
+        assert_eq!(executed.mode(), "execution");
+        assert_eq!(executed.swept(), [swept_key.as_str()]);
+        assert!(executed.failed().is_empty());
+        assert_eq!(
+            sweep.delete_log(),
+            vec![swept_key.clone()],
+            "exactly the swept occurrence's row was deleted"
+        );
+        assert_eq!(sweep.keys().len(), 2);
+        assert!(
+            !sweep.keys().contains(&swept_key),
+            "the usage row left together with its occurrence"
+        );
+
+        let replan = block_on(plan_usage_sweep(&sweep, &tenant(), &surviving))
+            .expect("the swept prefix still reads");
+        assert!(
+            replan.keys().is_empty(),
+            "the swept prefix holds no residual row"
+        );
+    }
+
+    /// Every row stays while every occurrence survives: the sweep never
+    /// touches a prefix that still rebuilds.
+    #[test]
+    fn sweep_keeps_every_row_while_its_occurrence_survives() {
+        let (rows, sweep) = rebuilt_rows_and_sweep();
+        let surviving: BTreeSet<OccurrenceId> =
+            rows.iter().map(|(occurrence, _, _)| *occurrence).collect();
+
+        let plan = block_on(plan_usage_sweep(&sweep, &tenant(), &surviving))
+            .expect("every stored row reads back as a record");
+        assert_eq!(plan.evaluated_rows(), 3);
+        assert!(plan.keys().is_empty());
+
+        let simulated = plan.simulate();
+        assert!(simulated.swept().is_empty());
+        let executed = block_on(plan.execute(&sweep));
+        assert!(executed.swept().is_empty());
+        assert_eq!(sweep.keys().len(), 3, "every row survived");
+        assert!(sweep.delete_log().is_empty());
+    }
+
+    /// A listed row whose bytes are not a usage-summary record fails the
+    /// mark closed: stored-state divergence is surfaced, never swept away.
+    #[test]
+    fn sweep_fails_closed_on_an_unreadable_row() {
+        let (rows, sweep) = rebuilt_rows_and_sweep();
+        let surviving: BTreeSet<OccurrenceId> =
+            rows.iter().map(|(occurrence, _, _)| *occurrence).collect();
+
+        let poison_key = DerivedObjectKey::new(
+            &tenant(),
+            "usage",
+            "1",
+            &format!("usage-summaries/ff/{}.json", "f".repeat(64)),
+        )
+        .expect("grammar poison key");
+        sweep.insert(poison_key.as_str(), b"not a record\n");
+
+        let error = block_on(plan_usage_sweep(&sweep, &tenant(), &surviving))
+            .expect_err("the poisoned row fails the mark");
+        assert_eq!(error.kind(), StorageErrorKind::IntegrityConflict);
+        assert!(
+            sweep.delete_log().is_empty(),
+            "nothing is deleted on a failed mark"
+        );
+    }
+
+    /// A record naming another tenant fails the mark closed — the sweep
+    /// never deletes on a foreign scope's word.
+    #[test]
+    fn sweep_fails_closed_on_a_foreign_tenant_record() {
+        let (rows, sweep) = rebuilt_rows_and_sweep();
+        let surviving: BTreeSet<OccurrenceId> =
+            rows.iter().map(|(occurrence, _, _)| *occurrence).collect();
+
+        let foreign_key = DerivedObjectKey::new(
+            &tenant(),
+            "usage",
+            "1",
+            &format!("usage-summaries/ab/{}.json", "a".repeat(64)),
+        )
+        .expect("grammar foreign key");
+        let mut foreign = Object::new();
+        foreign.set(
+            "tenant_id",
+            Value::Text("0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5c".to_owned()),
+        );
+        foreign.set("occurrence_id", Value::Text("a".repeat(64)));
+        sweep.insert(foreign_key.as_str(), &render(&foreign));
+
+        let error = block_on(plan_usage_sweep(&sweep, &tenant(), &surviving))
+            .expect_err("the foreign record fails the mark");
+        assert_eq!(error.kind(), StorageErrorKind::IntegrityConflict);
+        assert!(
+            sweep.delete_log().is_empty(),
+            "nothing is deleted on a failed mark"
+        );
     }
 }
