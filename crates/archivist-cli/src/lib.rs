@@ -34,7 +34,10 @@
 //! ([`serve`]): the composition that selects the concrete S3 storage
 //! backend, pins the trust anchor set, and hands the validated parts to
 //! the server crate's bind/serve lifecycle — the composition root's
-//! whole reason for the storage-s3 dependency edge.
+//! whole reason for the storage-s3 dependency edge. The sixth is the
+//! liveness probe ([`probe`]): one bounded GET on a served replica's
+//! process-only liveness route, the image's own HEALTHCHECK mechanism
+//! (release-container note RC-020) on the one binary the image carries.
 //!
 //! # Dependency boundary
 //!
@@ -47,5 +50,6 @@ pub mod admin;
 pub mod approve;
 pub mod catalog;
 pub mod operator;
+pub mod probe;
 pub mod revoke;
 pub mod serve;

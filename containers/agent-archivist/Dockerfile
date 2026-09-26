@@ -74,4 +74,12 @@ RUN --mount=type=bind,from=builder,source=/build/target/release/archivist,ro,tar
  && touch --date="@${SOURCE_DATE_EPOCH:?SOURCE_DATE_EPOCH must be set}" \
       /usr/local/bin/archivist /usr/local/bin /etc /tmp
 USER 65532:65532
+# The image's liveness signal is the binary probing itself (RC-020): the
+# runtime base ships neither curl nor wget and RC-017 installs no packages,
+# so the HEALTHCHECK invokes the one binary the image carries in its
+# built-in probe mode — one bounded GET on the served process-only
+# liveness route. It is image-config metadata: it adds no layer and takes
+# no part in the RC-018 mtime discipline.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD ["/usr/local/bin/archivist", "probe"]
 ENTRYPOINT ["/usr/local/bin/archivist"]

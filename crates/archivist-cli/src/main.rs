@@ -17,7 +17,9 @@
 //! `status`, `verify-state`, and `doctor` commands the operator module
 //! composes. The Phase 4 ingestion server is attached with it: the
 //! `serve` command the serve module composes — the concrete S3 storage
-//! backend is selected here, at the composition root.
+//! backend is selected here, at the composition root — and the `probe`
+//! command the probe module composes, the release image's HEALTHCHECK
+//! mechanism (release-container RC-020).
 //! A registered command whose phase has not attached a handler is
 //! rejected as not shipped when invoked, rather than being represented
 //! by placeholder behavior.
@@ -41,7 +43,13 @@ fn main() {
     let mut router = archivist_client_core::cli::router::Router::new();
     let operator = archivist_cli::operator::handlers();
     let serve = archivist_cli::serve::handlers();
-    for (path, handler) in operator.iter().copied().chain(serve.iter().copied()) {
+    let probe = archivist_cli::probe::handlers();
+    for (path, handler) in operator
+        .iter()
+        .copied()
+        .chain(serve.iter().copied())
+        .chain(probe.iter().copied())
+    {
         // Every entry names a registered path whose phase shipped its
         // output kind; the registry gate checked the pair, and a refusal
         // here is a composition bug, not runtime behavior.

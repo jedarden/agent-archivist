@@ -55,6 +55,13 @@
 //! out one trigger and one signal, and [`serve::shutdown_on_signal`] is
 //! the SIGTERM/SIGINT future a service deployment wires in.
 //!
+//! The **liveness probe** is implemented: [`probe`] is the one bounded GET
+//! on the process-only liveness route that the release image's
+//! `HEALTHCHECK` invokes through the binary's registered `probe` command
+//! (release-container RC-020) — the image's own binary is the probe
+//! mechanism, the runtime base shipping no probe tooling to fetch one
+//! with and the runtime stage installing no packages.
+//!
 //! The **request resource guards** are implemented: [`guard`] holds the
 //! admission gate — the process-wide 16-slot in-flight cap, the
 //! four-per-client in-flight share, the 60/minute burst-8 per-client
@@ -136,6 +143,7 @@ pub mod error;
 pub mod guard;
 pub mod metrics;
 pub mod parse;
+pub mod probe;
 pub mod receipts;
 pub mod routes;
 pub mod serve;

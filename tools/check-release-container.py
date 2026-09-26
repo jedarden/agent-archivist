@@ -10,7 +10,7 @@ Validates ``containers/agent-archivist/VERSION`` and
 2. version equality: the ``VERSION`` file, the workspace
    ``[workspace.package] version``, and every member crate's inherited
    version are one fact (RC-005);
-3. Dockerfile structure (RC-011 through RC-018): exactly two stages
+3. Dockerfile structure (RC-011 through RC-018, RC-020): exactly two stages
    (``builder``, ``runtime``), every base digest-pinned with a
    version-exact tag, the builder tag matching the pinned
    ``rust-toolchain.toml`` channel, the runtime tag a pinned
@@ -26,8 +26,10 @@ Validates ``containers/agent-archivist/VERSION`` and
    package installs cleaned in the same ``RUN``, every ``RUN`` pinning
    its output mtimes to ``SOURCE_DATE_EPOCH`` (declared as a build
    argument in every stage that runs one), the
-   ``AGENT_ARCHIVIST_VERSION`` label wiring, and a fixed numeric
-   non-root final ``USER``;
+   ``AGENT_ARCHIVIST_VERSION`` label wiring, a fixed numeric
+   non-root final ``USER``, and exactly one exec-form ``HEALTHCHECK`` in
+   the runtime stage invoking the installed binary's built-in probe mode
+   with its scheduling options pinned explicitly;
 4. the same-commit rule (RC-008 through RC-010): walking the commit
    history of both version records from the commit that introduced the
    ``VERSION`` file, no commit diverges and the file never disappears;
@@ -89,6 +91,18 @@ RUNTIME_TAG_RE = re.compile(r"^[0-9]+\.[0-9]+-slim$")
 # name is pinned by archivist-cli's [[bin]] table.
 BIN_NAME = "archivist"
 BUILD_FLAGS = ("--release", "--frozen", "--offline")
+
+# RC-020: the runtime stage's HEALTHCHECK invokes the installed binary in
+# its built-in probe mode — the registered `probe` command, whose one
+# bounded GET pins the served process-only liveness route. The runtime
+# base ships no probe tooling and RC-017 installs no packages, so the
+# binary naming itself is the only conforming shape; the scheduling
+# options are pinned explicitly because the probe schedule is part of the
+# contract, not a default to drift on.
+PROBE_COMMAND = "probe"
+HEALTHCHECK_OPTIONS = ("interval", "timeout", "start-period", "retries")
+DURATION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)?(?:ms|s|m|h)$")
+RETRIES_RE = re.compile(r"^[0-9]+$")
 
 IMAGE_REF_RE = re.compile(
     r"^(?P<name>[a-z0-9][a-z0-9./_-]*)"
@@ -197,6 +211,82 @@ def directives(lines: list[str]) -> list[tuple[str, str]]:
         parts = line.split(None, 1)
         out.append((parts[0].upper(), parts[1] if len(parts) > 1 else ""))
     return out
+
+
+def validate_healthcheck(value: str, entry_path: str | None) -> list[str]:
+    """RC-020: one exec-form HEALTHCHECK over the binary's built-in probe
+    mode, its scheduling options pinned explicitly."""
+    violations: list[str] = []
+    text = value.strip()
+    if text.upper() == "NONE":
+        violations.append(
+            "RC-020: HEALTHCHECK NONE disables the image's liveness "
+            "signal; the probe over the served route is part of the "
+            "baseline")
+        return violations
+    split = re.match(r"^(.*?)\s+CMD\s+(\[.*\])\s*$", text, re.DOTALL)
+    if split is None:
+        violations.append(
+            f"RC-020: HEALTHCHECK must be <options> CMD with an exec-form "
+            f"argv, found {text!r}")
+        return violations
+    options_text, argv_text = split.groups()
+    seen: dict[str, str] = {}
+    for token in options_text.split():
+        name, eq, bound = token[2:].partition("=") \
+            if token.startswith("--") else ("", "", "")
+        if not name or not eq:
+            violations.append(
+                f"RC-020: unknown HEALTHCHECK token {token!r}; every "
+                "option must bind its value with '=' "
+                "(--interval=30s --timeout=5s --start-period=15s "
+                "--retries=3)")
+            continue
+        if name not in HEALTHCHECK_OPTIONS:
+            violations.append(
+                f"RC-020: unknown HEALTHCHECK option --{name}")
+            continue
+        seen[name] = bound
+    for name in HEALTHCHECK_OPTIONS:
+        if name not in seen:
+            violations.append(
+                f"RC-020: HEALTHCHECK must pin --{name} explicitly — the "
+                "probe schedule is part of the contract, not a default "
+                "to drift on")
+    for name in ("interval", "timeout", "start-period"):
+        bound = seen.get(name)
+        if bound is not None and DURATION_RE.match(bound) is None:
+            violations.append(
+                f"RC-020: --{name} value {bound!r} is not a Docker "
+                f"duration (a number with an ms/s/m/h unit)")
+    retries = seen.get("retries")
+    if retries is not None and RETRIES_RE.match(retries) is None:
+        violations.append(
+            f"RC-020: --retries value {retries!r} is not a plain count")
+    try:
+        argv = json.loads(argv_text)
+    except ValueError:
+        violations.append(
+            f"RC-020: the HEALTHCHECK CMD is not valid exec-form JSON: "
+            f"{argv_text!r}")
+        return violations
+    if not isinstance(argv, list) or not argv \
+            or not all(isinstance(item, str) for item in argv):
+        violations.append(
+            "RC-020: the HEALTHCHECK CMD must be a JSON array of strings "
+            "naming the probe invocation")
+        return violations
+    if entry_path is not None and argv[0] != entry_path:
+        violations.append(
+            f"RC-020: the HEALTHCHECK must invoke the installed binary "
+            f"{entry_path!r}, found {argv[0]!r} — the image ships no "
+            "probe tooling to name instead")
+    if len(argv) < 2 or argv[1] != PROBE_COMMAND:
+        violations.append(
+            f"RC-020: the HEALTHCHECK argv must select the binary's "
+            f"built-in {PROBE_COMMAND!r} mode — the one bounded GET on "
+            "the served process-only liveness route")
+    return violations
 
 
 def validate_dockerfile(state: dict) -> list[str]:
@@ -318,6 +408,7 @@ def validate_dockerfile(state: dict) -> list[str]:
                               "SOURCE_DATE_EPOCH")
     stage_args: dict[str, set[str]] = {}
     stage_runs: dict[str, int] = {}
+    stage_healthchecks: dict[str, list[str]] = {}
     current: str | None = None
     for kw, value in dirs:
         if kw == "FROM":
@@ -329,6 +420,8 @@ def validate_dockerfile(state: dict) -> list[str]:
                     value.split()[0] if value.split() else "")
             elif kw == "RUN":
                 stage_runs[current] = stage_runs.get(current, 0) + 1
+            elif kw == "HEALTHCHECK":
+                stage_healthchecks.setdefault(current, []).append(value)
     for stage, count in sorted(stage_runs.items()):
         if "SOURCE_DATE_EPOCH" not in stage_args.get(stage, set()):
             violations.append(f"RC-018: stage {stage} runs {count} RUN "
@@ -375,6 +468,21 @@ def validate_dockerfile(state: dict) -> list[str]:
                                   "executable path")
         except ValueError:
             violations.append(f"RC-017: ENTRYPOINT is not valid JSON: {entry!r}")
+
+    # RC-020: exactly one HEALTHCHECK, in the runtime stage — the only
+    # stage that serves anything to probe — exec-form over the installed
+    # binary's built-in probe mode with its scheduling pinned.
+    for stage in sorted(set(stage_healthchecks) - {"runtime"}):
+        violations.append(
+            f"RC-020: the {stage} stage declares a HEALTHCHECK; only the "
+            "runtime stage serves the route the probe reads")
+    healthchecks = stage_healthchecks.get("runtime", [])
+    if len(healthchecks) != 1:
+        violations.append(
+            f"RC-020: the runtime stage must declare exactly one "
+            f"HEALTHCHECK, found {len(healthchecks)}")
+    else:
+        violations.extend(validate_healthcheck(healthchecks[0], entry_path))
 
     # RC-015: the binary must not cross stages by COPY — a COPY layer
     # records the destination directory's wall-clock mtime, so two builds
@@ -618,6 +726,10 @@ def build_cases(state: dict) -> None:
         " && touch --date=\"@${SOURCE_DATE_EPOCH:?SOURCE_DATE_EPOCH must "
         "be set}\" \\\n"
         "      /usr/local/bin/archivist /usr/local/bin /etc /tmp")
+    healthcheck = (
+        "HEALTHCHECK --interval=30s --timeout=5s --start-period=15s "
+        "--retries=3 \\\n"
+        "  CMD [\"/usr/local/bin/archivist\", \"probe\"]")
     cases = [
         ("the committed tree (unmutated)", False, dict(state)),
         ("VERSION file removed",
@@ -719,6 +831,36 @@ def build_cases(state: dict) -> None:
          True, with_dockerfile(state,
                                'ENTRYPOINT ["/usr/local/bin/archivist"]',
                                'ENTRYPOINT ["/usr/bin/archivist"]')),
+        ("the HEALTHCHECK was dropped",
+         True, with_dockerfile(state, healthcheck, "")),
+        ("HEALTHCHECK NONE disabled the probe",
+         True, with_dockerfile(state, healthcheck, "HEALTHCHECK NONE")),
+        ("the HEALTHCHECK went shell-form",
+         True, with_dockerfile(state,
+                               'CMD ["/usr/local/bin/archivist", "probe"]',
+                               "CMD curl -f "
+                               "http://127.0.0.1:8080/health/live")),
+        ("the HEALTHCHECK named a fetched probe tool",
+         True, with_dockerfile(state,
+                               'CMD ["/usr/local/bin/archivist", "probe"]',
+                               'CMD ["/usr/local/bin/curl", "-f", '
+                               '"http://127.0.0.1:8080/health/live"]')),
+        ("the HEALTHCHECK skipped the probe mode",
+         True, with_dockerfile(state,
+                               'CMD ["/usr/local/bin/archivist", "probe"]',
+                               'CMD ["/usr/local/bin/archivist"]')),
+        ("the HEALTHCHECK lost its timeout bound",
+         True, with_dockerfile(state, "--timeout=5s ", "")),
+        ("the HEALTHCHECK's interval is not a duration",
+         True, with_dockerfile(state, "--interval=30s", "--interval=soon")),
+        ("the builder stage also declared a HEALTHCHECK",
+         True, with_dockerfile(state, "WORKDIR /build",
+                               "WORKDIR /build\n" + healthcheck)),
+        ("a second HEALTHCHECK appeared in the runtime stage",
+         True, with_dockerfile(state,
+                               'ENTRYPOINT ["/usr/local/bin/archivist"]',
+                               healthcheck + "\n"
+                               'ENTRYPOINT ["/usr/local/bin/archivist"]')),
         ("the binary was COPYied from the builder stage",
          True, with_dockerfile(state, install_run,
                                "COPY --from=builder /build/target/release/"

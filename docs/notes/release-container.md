@@ -1,6 +1,6 @@
 # Agent Archivist release container conventions
 
-Status: accepted baseline · Last updated: 2026-09-13
+Status: accepted baseline · Last updated: 2026-09-26
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are
 to be interpreted as described in RFC 2119 and RFC 8174 when they appear in bold.
@@ -191,22 +191,45 @@ digest comparison in Section 6 is its demonstration, pinned as RC-019.
   uncached — **MUST** produce one digest, and a divergence is a failed
   baseline change no matter which rule loosened.
 
+The rules above are build contract. One further rule is runtime contract —
+the image's liveness signal — but rides the same static gate, and so
+carries the next rule number:
+
+- **RC-020** — The runtime stage **MUST** declare exactly one
+  `HEALTHCHECK`, and no other stage **MUST** declare one: the probe is the
+  image's liveness signal for the replica the runtime stage serves. It
+  **MUST** be exec-form `CMD` whose argv invokes exactly the installed
+  binary the `ENTRYPOINT` names, in that binary's built-in probe mode (the
+  registered `probe` command, whose one bounded GET reads the served
+  process-only liveness route `/health/live`). The runtime base ships
+  neither `curl` nor `wget`, RC-017 installs no packages, and a second
+  compiled probe target would be an RC-014 contract change, so the image
+  probing itself is the only conforming mechanism. Its scheduling options
+  — `--interval`, `--timeout`, `--start-period`, and `--retries` —
+  **MUST** be pinned explicitly, because the probe schedule is part of the
+  contract rather than a default to drift on, and `HEALTHCHECK NONE`
+  **MUST NOT** appear. The directive is image-config metadata: it adds no
+  layer and takes no part in the RC-018 mtime discipline.
+
 ## 5. What is deliberately not yet true
 
-The project is design-stage (plan Section 17): the binary the image
-carries is the scaffold entry point and exits immediately. Accordingly:
+The project is design-stage (plan Section 17). Accordingly:
 
 - the image is not published anywhere yet; publication starts with the
   packaging releases of plan Section 13 (`0.4`/`0.5`), through the Argo
   release workflow described in RELEASE.md — never a local push, and never
   a mutable tag;
-- there is no `HEALTHCHECK`: nothing serves an endpoint yet, and a
-  healthcheck that probes nothing would be false evidence. One arrives
-  with the `serve` command and this note's gate rules in the same commit;
 - multi-architecture (`amd64`, `arm64`) builds are the release workflow's
   duty under the same contract — the digest-pinned references are
   manifest digests and resolve per architecture without Dockerfile
   changes.
+
+One earlier deferral has resolved: there *was* no `HEALTHCHECK`, because
+nothing served an endpoint and a healthcheck that probes nothing would be
+false evidence. The `serve` command has since landed (plan Phase 4), and
+the `HEALTHCHECK` arrived with the `probe` command and rule RC-020 in the
+same commit, as Section 4 now records — the deferral ended when there was
+something real to probe.
 
 None of these deferrals weaken the baseline: the version contract and the
 reproducibility rules above are in force from the introduction commit.
@@ -219,13 +242,15 @@ checks, offline and in seconds:
 
 - the `VERSION` grammar (RC-004) and its equality with the workspace
   version and every member's inheritance (RC-005);
-- the Dockerfile rules RC-011 through RC-018 — digest-pinned bases, the
+- the Dockerfile rules RC-011 through RC-018 and RC-020 — digest-pinned bases, the
   toolchain-tag cross-check against `rust-toolchain.toml`, the exact
   build invocation, `COPY`-only context, the bind-mount install RUN with
   its cp destination equal to the entrypoint and its RC-018 pin set
   covering the binary, its parent directory, `/etc`, and `/tmp`, label
-  wiring, the fixed numeric non-root final user, and the
-  `SOURCE_DATE_EPOCH` mtime discipline on every `RUN` — by structural
+  wiring, the fixed numeric non-root final user, the
+  `SOURCE_DATE_EPOCH` mtime discipline on every `RUN`, and the runtime
+  `HEALTHCHECK` over the installed binary's built-in probe mode with its
+  schedule pinned explicitly — by structural
   validation of the Dockerfile, without building anything;
 - the same-commit rule (RC-008 through RC-010) by walking the commit
   history of both version records from the introduction of `VERSION`, and

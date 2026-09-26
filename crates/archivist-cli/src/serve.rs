@@ -347,11 +347,13 @@ fn composition_fault(error: S3ConfigError) -> CliError {
 
 /// Resolve the serve configuration: always non-interactive (CLI-021)
 /// whether or not the flag was passed, with the invocation's `--config`
-/// and key flags applied over the captured environment.
+/// and key flags applied over the captured environment. The `probe`
+/// command resolves through this same composition, so the address it
+/// probes is exactly the address the replica bound.
 ///
 /// # Errors
 /// The registered code of the first configuration fault.
-fn resolve(invocation: &Invocation) -> Result<ResolvedConfig, CliError> {
+pub(crate) fn resolve(invocation: &Invocation) -> Result<ResolvedConfig, CliError> {
     let mut sources = ConfigSources::daemon().map_err(|error| config_fault(&error))?;
     if let Some(path) = invocation.config_path() {
         sources = sources.config_path(path.to_path_buf());

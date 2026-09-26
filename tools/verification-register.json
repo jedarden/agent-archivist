@@ -334,6 +334,12 @@
         "OV-RC-019"
       ]
     },
+    "RC-020": {
+      "status": "planned",
+      "verifications": [
+        "T-RC-020"
+      ]
+    },
     "RCPT-001": {
       "status": "planned",
       "verifications": [
@@ -1150,6 +1156,15 @@
       "owner": "release-container"
     },
     "T-RC-018": {
+      "evidence": [
+        "outcomes"
+      ],
+      "kind": "test",
+      "lane": "fast",
+      "locator": "tools/check-release-container.py",
+      "owner": "release-container"
+    },
+    "T-RC-020": {
       "evidence": [
         "outcomes"
       ],

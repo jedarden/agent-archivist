@@ -385,3 +385,9 @@ its distribution pointer (RC-007) are contract framing owned by the note and
   pinned `SOURCE_DATE_EPOCH` **MUST** produce a bit-identical image digest
   from the same builder, demonstrated by the recorded double-build in
   [release-container.md](release-container.md) Section 6.
+- **RC-020** — The runtime stage **MUST** declare exactly one `HEALTHCHECK`
+  and no other stage any: exec-form `CMD` invoking exactly the installed
+  `ENTRYPOINT` binary in its built-in probe mode (the registered `probe`
+  command's bounded GET on the served process-only liveness route), with
+  `--interval`, `--timeout`, `--start-period`, and `--retries` pinned
+  explicitly, and `HEALTHCHECK NONE` **MUST NOT** appear.

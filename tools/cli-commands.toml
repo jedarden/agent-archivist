@@ -165,6 +165,18 @@ keys = [
   "storage.offline_restore_credentials_ref",
 ]
 
+[commands.probe]
+summary = "Run one bounded liveness probe against the served process-only health route; the release image's HEALTHCHECK mechanism."
+phase = 4
+owner = "archivist-server"
+state_lock = "none"
+stdout = "none"
+operand = "none"
+stdin = "none"
+keys = [
+  "server.listen_address",
+]
+
 # ---------------------------------------------------------------------------
 # Identity and linking control plane (plan Section 5, Phase 3) — owner
 # archivist-auth

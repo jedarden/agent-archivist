@@ -421,6 +421,7 @@ mod tests {
     use super::{ArchivistServer, ShutdownOutcome, StartupError, shutdown_channel};
     use crate::config::ServerConfig;
     use crate::metrics::ShutdownPhase;
+    use crate::probe::probe_live;
     use crate::state::{ServerState, signed_test_control_record};
     use crate::trust::{TenantTrustRoot, TrustConfig};
     use archivist_auth::ed25519;
@@ -620,6 +621,39 @@ mod tests {
             "{response}"
         );
         assert!(response.ends_with("{\"live\":true}"), "{response}");
+    }
+
+    /// The release image's HEALTHCHECK mechanism (release-container
+    /// RC-020) against the real replica: the probe's bounded GET confirms
+    /// a serving replica live. The probe runs on the blocking pool — it
+    /// is a synchronous act, and blocking the test thread would starve
+    /// the very executor the replica's accept loop needs.
+    #[tokio::test]
+    async fn the_probe_confirms_a_serving_replica_live() {
+        let (address, _trigger, _handle) = serving(5).await;
+        let verdict = tokio::task::spawn_blocking(move || probe_live(&address.to_string()))
+            .await
+            .expect("the probe task joins");
+        assert_eq!(verdict, Ok(()));
+    }
+
+    /// The same probe against an address where the replica is not: the
+    /// connect is refused outright, and the verdict is the unreachable
+    /// class the probe command maps onto the registered
+    /// `server.unavailable` exit.
+    #[tokio::test]
+    async fn the_probe_refuses_an_address_where_nothing_serves() {
+        let address = {
+            let listener =
+                std::net::TcpListener::bind("127.0.0.1:0").expect("an ephemeral listener binds");
+            listener
+                .local_addr()
+                .expect("the listener names an address")
+        };
+        assert_eq!(
+            probe_live(&address.to_string()),
+            Err(crate::probe::ProbeFault::Unreachable)
+        );
     }
 
     #[tokio::test]
