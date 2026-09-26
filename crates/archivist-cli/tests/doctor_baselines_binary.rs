@@ -24,6 +24,32 @@
 //!   code is the only finding — no other registered doctor condition
 //!   appears anywhere in the emitted bytes.
 //!
+//! The same surface pins the examination's zero-mutation guarantee, the
+//! row of the local-state matrix a healthy run is the strongest witness
+//! for — the process examined state and answered `ok`, so any byte that
+//! moved is a defect the assertions name. Both tests hold the fixture's
+//! write connection open across the child's run, exactly the shape
+//! CLI-007 names — the report composes *while a mutator owns the
+//! directory* — so the pinned tree is a live one, not a quiescent
+//! leftover:
+//!
+//! - **A foreign-held lock is reported with zero state creation.** The
+//!   fixture holds the advisory lock the way a daemon mid-life does, and
+//!   the examination answers anyway (CLI-007): exit 0, the registered
+//!   `lock_ownership` check `ok`, the evidence's lock state `held`, and
+//!   the state directory's whole recursive shape unchanged across the
+//!   run — the probe opened the holder's lock file without creating one,
+//!   and no spool, journal, or side file of any kind appeared.
+//! - **The examination leaves the state database byte-identical.** Over
+//!   a populated state the full run — every registered check, every
+//!   read-only query — returns the exact bytes the writer left: the
+//!   database and its write-ahead log byte-for-byte identical, no
+//!   journal, and no residue the examination brought into the directory.
+//!   The one file whose bytes a correct reader may mark is `SQLite`'s
+//!   wal-index (`-shm`) — the reader's read-mark is what keeps a
+//!   concurrent checkpoint behind the read — so its presence is pinned
+//!   and its bytes are left to `SQLite`.
+//!
 //! The readiness responder is the smallest stand-in for the ingestion
 //! endpoint the doctor may probe once: a loopback listener that answers
 //! `GET /health/ready` with HTTP 200 and no body. It exists so neither
@@ -31,14 +57,18 @@
 //! readiness answer is true — its 74 comes from the state refusal, not
 //! from an unreachable server.
 
+use std::ffi::OsStr;
 use std::fs::Permissions;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener};
 use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use archivist_client_core::spool::SPOOL_DIR_NAME;
+use archivist_client_core::state::lock::{LOCK_FILE_NAME, StateDirLock};
 use archivist_client_core::state::{STATE_DB_NAME, StateStore};
 use archivist_protocol::json::{self, Value};
 use rusqlite::params;
@@ -331,6 +361,40 @@ fn stream_document(bytes: &[u8]) -> Value {
         .expect("the stream carries one JSON document")
 }
 
+/// The state directory's complete recursive shape — every path, every
+/// directory, and every regular file's bytes — in sorted order, with the
+/// one exemption a correct WAL reader requires: the wal-index scratch
+/// (`-shm`) carries the reader's read-mark, so its presence is pinned
+/// and its bytes belong to `SQLite`. Comparing two snapshots of this shape
+/// proves the examination created, removed, or rewrote nothing without
+/// naming the artifacts it must not touch in advance — an unanticipated
+/// creation, a spool directory, a journal, a lock file, fails as loudly
+/// as a named one.
+fn state_tree(root: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
+    let wal_index = format!("{STATE_DB_NAME}-shm");
+    let mut tree = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        for entry in std::fs::read_dir(&directory)
+            .expect("the fixture tree reads")
+            .flatten()
+        {
+            let path = entry.path();
+            if entry.file_type().expect("the entry type reads").is_dir() {
+                stack.push(path.clone());
+                tree.push((path, None));
+            } else if path.file_name().and_then(OsStr::to_str) == Some(wal_index.as_str()) {
+                tree.push((path, None));
+            } else {
+                let bytes = std::fs::read(&path).expect("the file's bytes read");
+                tree.push((path, Some(bytes)));
+            }
+        }
+    }
+    tree.sort_by(|left, right| left.0.cmp(&right.0));
+    tree
+}
+
 #[test]
 fn the_healthy_fixture_exits_zero_emitting_a_document_with_no_findings() {
     let dir = TempDir::new("healthy");
@@ -402,4 +466,159 @@ fn the_missing_state_smoke_exits_seventy_four_with_only_the_state_io_finding() {
             "only the state_io finding appears, found {other}"
         );
     }
+}
+
+#[test]
+fn a_foreign_held_lock_is_reported_with_zero_state_creation() {
+    let dir = TempDir::new("foreign-lock");
+    let store = seeded_store(&dir);
+    linked_receipt(&store, "2026-09-13T12:00:00Z");
+    // The foreign mutator owns the directory exactly the way the daemon
+    // does: the write connection stays open (its WAL and wal-index are
+    // the live coordination files) and the advisory lock is held for the
+    // examination's whole life. The lock is a property of the holder's
+    // open file description, so the child's no-create probe — a fresh
+    // open and a non-blocking try, never a create — must observe it as
+    // held.
+    let _held = StateDirLock::acquire(dir.path()).expect("the foreign holder acquires");
+    let before = state_tree(dir.path());
+    let server = ReadinessEndpoint::start();
+    let output = run_doctor(&dir, server.endpoint());
+    server.finish();
+    // A held lock is ownership evidence, never a failure (CLI-007): the
+    // report stays available, the process exits 0, and the registered
+    // lock_ownership check answers ok with the evidence naming the
+    // foreign owner's lock state.
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "the report stays available while a mutator owns the directory"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "a held lock writes no diagnostic, found {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope = stream_document(&output.stdout);
+    let result = member(&envelope, "result");
+    let checks = member(result, "checks");
+    assert_eq!(
+        member(checks, "lock_ownership"),
+        &Value::Text("ok".to_owned()),
+        "a foreign owner is not a failed check"
+    );
+    let evidence = member(result, "evidence");
+    assert_eq!(text_member(evidence, "lock"), "held");
+    // Zero state creation: the probe opened the holder's lock file
+    // without creating one of its own, opened no spool, and created no
+    // database side file — every durable byte in the tree, the holder's
+    // lock file and the writer's own WAL included, is identical across
+    // the run, and the wal-index is present exactly as the writer left
+    // it.
+    assert!(
+        dir.path().join(LOCK_FILE_NAME).exists(),
+        "the holder's own lock file is the only one: it survives untouched"
+    );
+    assert!(
+        !dir.path().join(SPOOL_DIR_NAME).exists(),
+        "no spool directory appears"
+    );
+    assert!(
+        !dir.path().join(format!("{STATE_DB_NAME}-journal")).exists(),
+        "no rollback journal appears"
+    );
+    assert_eq!(
+        state_tree(dir.path()),
+        before,
+        "the examination created and modified no state whatsoever"
+    );
+}
+
+#[test]
+fn the_examination_leaves_the_state_database_byte_identical() {
+    let dir = TempDir::new("read-only-db");
+    let store = seeded_store(&dir);
+    // One enrolled source beside the receipt linkage, so the read-only
+    // queries walk a populated sources table too — the same row shape
+    // the operator surface's fixtures enroll. The write connection
+    // stays open across the child's run: the doctor's defining shape is
+    // the daemon-live one, its WAL and wal-index present and owned by
+    // the writer the read-only report must not disturb.
+    store
+        .connection()
+        .execute(
+            "INSERT INTO sources (source_id, harness, upstream_session_id, id_source,
+                session_hash, artifact_kind, adapter_id, adapter_projection_version,
+                adapter_artifact_id, artifact_hash, freshness_lane, last_cursor,
+                created_at, updated_at)
+             VALUES ('01900000-0000-7000-8000-000000000001', 'claude',
+                'upstream-session', 'natural', ?1, 'transcript', 'adapter-1', 'v1',
+                'artifact', ?2, 'freshness', NULL, '2026-09-13T12:00:00Z',
+                '2026-09-13T12:00:00Z')",
+            params![digest(81), digest(82)],
+        )
+        .expect("insert source");
+    linked_receipt(&store, "2026-09-13T12:00:00Z");
+    let database = dir.path().join(STATE_DB_NAME);
+    let before = std::fs::read(&database).expect("the fixture database reads");
+    let before_tree = state_tree(dir.path());
+    let server = ReadinessEndpoint::start();
+    let output = run_doctor(&dir, server.endpoint());
+    server.finish();
+    assert_eq!(output.status.code(), Some(0), "the healthy fixture exits 0");
+    // The examination is byte-for-byte read-only: the bytes the writer
+    // left are the bytes the report read — no counter, no head, no
+    // freelist page moved across every check the doctor ran.
+    let after = std::fs::read(&database).expect("the examined database reads");
+    assert_eq!(after, before, "the state database is byte-identical");
+    // Nothing the examination did reached the write-ahead log either:
+    // a reader appends no frame, so the writer's own WAL bytes are the
+    // ones still on disk.
+    let wal = dir.path().join(format!("{STATE_DB_NAME}-wal"));
+    assert!(
+        wal.exists(),
+        "the writer's live WAL is the coordination the reader joined"
+    );
+    // No journal — a write transaction is the only thing that could
+    // open one — and no residue the examination brought into the
+    // directory: the tree is exactly what the writer left, the wal-index
+    // included, with no lock file and no spool.
+    assert!(
+        !dir.path().join(format!("{STATE_DB_NAME}-journal")).exists(),
+        "no rollback journal appears"
+    );
+    assert!(
+        !dir.path().join(LOCK_FILE_NAME).exists(),
+        "no lock file appears"
+    );
+    assert!(
+        !dir.path().join(SPOOL_DIR_NAME).exists(),
+        "no spool directory appears"
+    );
+    let mut entries: Vec<_> = std::fs::read_dir(dir.path())
+        .expect("the state directory reads")
+        .flatten()
+        .map(|entry| entry.file_name())
+        .collect();
+    entries.sort();
+    let mut expected: Vec<_> = [
+        STATE_DB_NAME.to_owned(),
+        format!("{STATE_DB_NAME}-shm"),
+        format!("{STATE_DB_NAME}-wal"),
+    ]
+    .into_iter()
+    .map(std::ffi::OsString::from)
+    .collect();
+    expected.sort();
+    assert_eq!(
+        entries, expected,
+        "only the writer's own files remain: nothing else appears"
+    );
+    // And the durable shape across the run is identical — the full-tree
+    // comparison, wal-index bytes aside, database and WAL included.
+    assert_eq!(
+        state_tree(dir.path()),
+        before_tree,
+        "the examination left the state exactly as the writer had it"
+    );
 }
