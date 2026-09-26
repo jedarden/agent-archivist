@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Deterministic property tests for the wire contract's framing invariant
-//! (plan Sections 7.1 and 7.4).
+//! Deterministic property tests for the wire contract's framing and
+//! canonicalization invariants (plan Sections 7.1 and 7.4).
 //!
 //! Every loop is seeded from a fixed constant and driven by a hand-rolled
 //! `xorshift64*` generator — the crate declares no dependencies, so no
@@ -30,10 +30,16 @@
 //!    hash, and the derived occurrence and attestation identities and
 //!    the object keys downstream of them never collide within one
 //!    session namespace.
+//! 4. canonicalization is idempotent: parse-then-canonicalize equals the
+//!    canonical form for the conformance corpus's pinned vectors and for
+//!    generated value trees within bounded depth and length, NFC and NFD
+//!    lookalikes stay distinct, member reordering and whitespace cannot
+//!    change canonical meaning, and malformed input fails closed.
 
 use archivist_protocol::derivation::{
     FrameBuilder, artifact_hash, attestation_id, blob_digest, occurrence_id, session_hash,
 };
+use archivist_protocol::json::{self, Object, Value};
 use archivist_protocol::object_key::{AttestationObjectKey, BlobObjectKey, OccurrenceObjectKey};
 use archivist_protocol::sha256::{digest, encode_hex};
 use archivist_protocol::vocabulary::{
@@ -778,4 +784,254 @@ fn downstream_ids_and_object_keys_stay_distinct() {
             "attestation keys collided"
         );
     }
+}
+
+/// Canonicalization is idempotent on the corpus's pinned vectors — and the
+/// pinned bytes themselves hold: `canonical_hex` and the `*_sha256` fields
+/// pin the canonical bytes and their digest exactly, `same_canonical_as`
+/// pins that member reordering and whitespace cannot change canonical
+/// meaning, the NFC/NFD lookalikes pin that Unicode normalization never
+/// merges two distinct byte strings (an identity-ambiguity property), and
+/// the rejections pin that malformed input fails closed.
+#[test]
+fn corpus_vectors_survive_parse_canonicalize_round_trips() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let corpus = std::path::Path::new(manifest_dir)
+        .join("../../schemas/v1/examples/conformance/canonicalization.json");
+    let raw = std::fs::read(&corpus).expect("corpus file is readable");
+    let table = json::parse(&raw).expect("corpus file is valid JSON");
+    let Value::Object(table) = table else {
+        panic!("corpus table is an object");
+    };
+    let Some(Value::Array(cases)) = table.get("cases") else {
+        panic!("corpus table has cases");
+    };
+    assert!(cases.len() >= 3, "the corpus vectors went missing");
+    let canonical_by_id = pin_canonical_vectors(cases);
+    assert_equivalences(cases, &canonical_by_id);
+    assert_rejections(&table);
+}
+
+/// Pass one: every pinned canonical vector parses, canonicalizes to bytes
+/// matching its digest (and, for objects, byte) pins, re-parses, and
+/// re-canonicalizes to itself, and lookalike NFC/NFD pairs stay distinct.
+/// Returns the canonical bytes by case id for the equivalence pass.
+fn pin_canonical_vectors(cases: &[Value]) -> Vec<(&str, Vec<u8>)> {
+    let mut canonical_by_id: Vec<(&str, Vec<u8>)> = Vec::new();
+    let mut pinned_vectors = 0;
+    for case in cases {
+        let Value::Object(case) = case else {
+            panic!("each corpus case is an object");
+        };
+        let id = case_text(case, "id");
+        for member in ["object", "nfc", "nfd"] {
+            let Some(value) = case.get(member) else {
+                continue;
+            };
+            pinned_vectors += 1;
+            let canonical = value.canonical_bytes();
+            let pin_key = if member == "object" {
+                "sha256".to_owned()
+            } else {
+                format!("{member}_sha256")
+            };
+            assert_eq!(
+                encode_hex(&digest(&canonical)),
+                case_text(case, &pin_key),
+                "{id}/{member}: canonical bytes drifted from the pinned digest"
+            );
+            if member == "object" {
+                let Some(Value::Text(hex)) = case.get("canonical_hex") else {
+                    panic!("object case {id} lost its canonical_hex pin");
+                };
+                assert_eq!(
+                    hex_bytes(hex),
+                    canonical,
+                    "{id}: canonical bytes drifted from the pinned hex"
+                );
+            }
+            let reparsed = json::parse(&canonical).unwrap_or_else(|error| {
+                panic!("{id}/{member}: canonical bytes do not re-parse: {error}")
+            });
+            assert_eq!(
+                reparsed.canonical_bytes(),
+                canonical,
+                "{id}/{member}: canonicalization is not idempotent"
+            );
+            canonical_by_id.push((id, canonical));
+        }
+        if let (Some(nfc), Some(nfd)) = (case.get("nfc"), case.get("nfd")) {
+            assert_ne!(
+                nfc.canonical_bytes(),
+                nfd.canonical_bytes(),
+                "{id}: NFC and NFD lookalikes merged into one canonical form"
+            );
+        }
+    }
+    assert!(
+        pinned_vectors >= 3,
+        "the corpus lost its pinned canonical vectors"
+    );
+    canonical_by_id
+}
+
+/// Pass two: noncanonical wire text is equivalent to the canonical form of
+/// the case it names — same bytes, same pinned digest.
+fn assert_equivalences(cases: &[Value], canonical_by_id: &[(&str, Vec<u8>)]) {
+    let mut equivalences = 0;
+    for case in cases {
+        let Value::Object(case) = case else {
+            panic!("each corpus case is an object");
+        };
+        let Some(Value::Text(wire)) = case.get("noncanonical_text") else {
+            continue;
+        };
+        equivalences += 1;
+        let id = case_text(case, "id");
+        let value = json::parse(wire.as_bytes()).expect("pinned noncanonical text still parses");
+        let canonical = value.canonical_bytes();
+        let reparsed = json::parse(&canonical).expect("canonical form parses");
+        assert_eq!(
+            reparsed.canonical_bytes(),
+            canonical,
+            "{id}: canonicalization is not idempotent"
+        );
+        let reference = case_text(case, "same_canonical_as");
+        let (_, same) = canonical_by_id
+            .iter()
+            .find(|(name, _)| *name == reference)
+            .unwrap_or_else(|| panic!("{id}: reference case {reference} went missing"));
+        assert_eq!(
+            &canonical, same,
+            "{id}: reordered text changed canonical meaning"
+        );
+        assert_eq!(
+            encode_hex(&digest(&canonical)),
+            case_text(case, "sha256"),
+            "{id}: canonical digest drifted from the pin"
+        );
+    }
+    assert!(equivalences >= 1, "the corpus lost its equivalence vectors");
+}
+
+/// The rejections fail closed: malformed input is refused, never
+/// canonicalized into something.
+fn assert_rejections(table: &Object) {
+    let Some(Value::Array(rejections)) = table.get("rejections") else {
+        panic!("corpus table has rejections");
+    };
+    assert!(
+        rejections.len() >= 3,
+        "the corpus lost its rejection vectors"
+    );
+    for rejection in rejections {
+        let Value::Object(rejection) = rejection else {
+            panic!("each rejection is an object");
+        };
+        let id = case_text(rejection, "id");
+        let text = case_text(rejection, "text");
+        assert!(
+            json::parse(text.as_bytes()).is_err(),
+            "{id}: malformed input parsed instead of being rejected"
+        );
+    }
+}
+
+/// A corpus member that must be present and must be text.
+fn case_text<'a>(case: &'a Object, key: &str) -> &'a str {
+    match case.get(key) {
+        Some(Value::Text(text)) => text,
+        other => panic!("corpus member {key} is missing or not text: {other:?}"),
+    }
+}
+
+/// Decode a pinned lowercase-hex byte string.
+fn hex_bytes(text: &str) -> Vec<u8> {
+    assert_eq!(text.len() % 2, 0, "pinned hex has even length");
+    text.as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let high = (pair[0] as char).to_digit(16).expect("pinned hex digit");
+            let low = (pair[1] as char).to_digit(16).expect("pinned hex digit");
+            u8::try_from(high * 16 + low).expect("byte fits u8")
+        })
+        .collect()
+}
+
+/// Canonicalization is idempotent on generated value trees within bounded
+/// depth and length: `canonical(canonical(x)) == canonical(x)` and every
+/// canonical form re-parses.
+#[test]
+fn generated_value_trees_canonicalize_idempotently() {
+    let mut prng = Prng::new(0x5EED_0007);
+    for _ in 0..1_000 {
+        let tree = random_value(&mut prng, 0);
+        let once = tree.canonical_bytes();
+        let reparsed = json::parse(&once).expect("canonical bytes always re-parse");
+        let twice = reparsed.canonical_bytes();
+        assert_eq!(
+            once, twice,
+            "canonicalization was not idempotent for {tree:?}"
+        );
+        assert!(once.len() < 64 * 1024, "generated tree exceeded the bound");
+    }
+}
+
+/// A random no-float value tree, bounded to depth 4 and a few dozen nodes.
+fn random_value(prng: &mut Prng, depth: usize) -> Value {
+    let kinds = if depth >= 4 { 4 } else { 6 };
+    match prng.below_usize(kinds) {
+        0 => Value::Null,
+        1 => Value::Bool(prng.below(2) == 0),
+        2 => Value::Int(prng.next_u64().cast_signed()),
+        3 => Value::Text(escaped_text(prng)),
+        4 => Value::Array(random_array(prng, depth)),
+        _ => Value::Object(random_object(prng, depth)),
+    }
+}
+
+fn random_array(prng: &mut Prng, depth: usize) -> Vec<Value> {
+    let len = prng.below_usize(5);
+    (0..len).map(|_| random_value(prng, depth + 1)).collect()
+}
+
+fn random_object(prng: &mut Prng, depth: usize) -> Object {
+    let mut object = Object::new();
+    let members = prng.below_usize(5);
+    for index in 0..members {
+        let key = format!("k{index}-{}", hex_text(prng, 4));
+        let value = random_value(prng, depth + 1);
+        object
+            .insert(&key, value)
+            .unwrap_or_else(|error| panic!("generated member {key} was rejected: {error}"));
+    }
+    object
+}
+
+/// Text with a mix of plain, escape-requiring, and non-ASCII characters.
+fn escaped_text(prng: &mut Prng) -> String {
+    const HEX_DIGITS: &[u8] = b"0123456789abcdef";
+
+    let mut text = String::new();
+    let len = prng.below_usize(24);
+    for _ in 0..len {
+        match prng.below_usize(6) {
+            0 => text.push('"'),
+            1 => text.push('\\'),
+            2 => {
+                let control = u32::try_from(prng.below(0x20)).expect("control fits u32");
+                text.push(char::from_u32(control).expect("control fits char"));
+            }
+            3 => {
+                let astral = 0x1F_600 + u32::try_from(prng.below(0x10)).expect("fits u32");
+                text.push(char::from_u32(astral).expect("astral fits char"));
+            }
+            4 => {
+                let latin = 0x00E9 + u32::try_from(prng.below(0x10)).expect("fits u32");
+                text.push(char::from_u32(latin).expect("latin fits char"));
+            }
+            _ => text.push(HEX_DIGITS[prng.below_usize(HEX_DIGITS.len())] as char),
+        }
+    }
+    text
 }
