@@ -68,12 +68,29 @@
 //! finding — never a path, a row, or an object name the examination
 //! read.
 //!
+//! The same surface completes the environment and remote rows of the
+//! matrix over the same hermetic otherwise-healthy fixture shape: a
+//! persisted adapter-health record left degraded (the source-readability
+//! class), a durable event years ahead of the local clock — far beyond
+//! the five-minute allowance `CLOCK_SKEW_ALLOWANCE_SECONDS` grants —
+//! (the clock-sanity class), an ingest endpoint nothing answers and one
+//! that answers without establishing ready (the server-readiness class,
+//! exit 75), and a migrated state carrying no server-issued receipt at
+//! all (the authorization class, exit 78). One row pins the bound
+//! itself: an endpoint that accepts the connection and never answers
+//! still leaves the process exiting with the registered refusal inside
+//! the probe's own bounded window — never an unbounded network wait.
+//! Every new row also carries the zero-mutation guarantee the baselines
+//! pin: the recursive state shape — every byte the writer left — is
+//! identical across the run.
+//!
 //! The readiness responder is the smallest stand-in for the ingestion
 //! endpoint the doctor may probe once: a loopback listener that answers
-//! `GET /health/ready` with HTTP 200 and no body. It exists so neither
-//! baseline depends on the network, and so the missing-state smoke's
-//! readiness answer is true — its 74 comes from the state refusal, not
-//! from an unreachable server.
+//! `GET /health/ready` with HTTP 200 and no body, or — for the
+//! not-ready row — with 503. It exists so neither baseline depends on
+//! the network, and so the missing-state smoke's readiness answer is
+//! true — its 74 comes from the state refusal, not from an unreachable
+//! server.
 
 use std::ffi::OsStr;
 use std::fs::Permissions;
@@ -209,12 +226,22 @@ fn linked_receipt(store: &StateStore, commit_time: &str) {
     .expect("restore the pinned database mode");
 }
 
+/// The readiness answer the healthy fixtures receive: HTTP 200 for the
+/// registered readiness route, no body.
+const READY_ANSWER: &str = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+/// The answer an ingestion endpoint under load gives without establishing
+/// ready: HTTP 503. The examination accepts only a `200`, so this is the
+/// not-ready row's whole induction.
+const BUSY_ANSWER: &str =
+    "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
 /// The loopback stand-in for the ingestion endpoint: a listener whose
-/// single accepted connection is answered `200` for `GET /health/ready`,
-/// the one readiness request a doctor examination is permitted. The
-/// responder polls `accept` until the probe arrives or the deadline
-/// passes, so a doctor that never probes fails the test with a named
-/// panic instead of hanging the join.
+/// single accepted connection is answered `200` — or, for the not-ready
+/// row, `503` — for `GET /health/ready`, the one readiness request a
+/// doctor examination is permitted. The responder polls `accept` until
+/// the probe arrives or the deadline passes, so a doctor that never
+/// probes fails the test with a named panic instead of hanging the join.
 struct ReadinessEndpoint {
     endpoint: String,
     responder: Option<std::thread::JoinHandle<()>>,
@@ -222,6 +249,16 @@ struct ReadinessEndpoint {
 
 impl ReadinessEndpoint {
     fn start() -> Self {
+        Self::answering(READY_ANSWER)
+    }
+
+    /// An ingestion endpoint that is reachable but does not establish
+    /// ready: the server-readiness row's completed-request induction.
+    fn not_ready() -> Self {
+        Self::answering(BUSY_ANSWER)
+    }
+
+    fn answering(answer: &'static str) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("the loopback listener binds");
         listener
             .set_nonblocking(true)
@@ -229,7 +266,9 @@ impl ReadinessEndpoint {
         let port = listener.local_addr().expect("the bound port reads").port();
         Self {
             endpoint: format!("http://127.0.0.1:{port}"),
-            responder: Some(std::thread::spawn(move || serve_readiness(&listener))),
+            responder: Some(std::thread::spawn(move || {
+                serve_readiness(&listener, answer);
+            })),
         }
     }
 
@@ -259,8 +298,9 @@ impl Drop for ReadinessEndpoint {
 }
 
 /// Answer one readiness probe: read the request head, require the
-/// registered readiness route, answer `200` with no body, and hang up.
-fn serve_readiness(listener: &TcpListener) {
+/// registered readiness route, write the endpoint's fixed answer, and
+/// hang up.
+fn serve_readiness(listener: &TcpListener, answer: &'static str) {
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut stream = loop {
         match listener.accept() {
@@ -292,7 +332,7 @@ fn serve_readiness(listener: &TcpListener) {
         String::from_utf8_lossy(&request)
     );
     stream
-        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        .write_all(answer.as_bytes())
         .and_then(|()| stream.flush())
         .expect("the readiness answer writes");
     let _ = stream.shutdown(Shutdown::Both);
@@ -877,4 +917,159 @@ fn a_floor_above_the_free_space_refuses_with_the_disk_floor_class() {
     let output = run_doctor_with_floor(&dir, server.endpoint(), "1099511627776");
     server.finish();
     assert_registered_refusal(&output, "client.disk_floor", 75, &dir);
+}
+
+// The induced environment and remote rows. Every fixture below is the
+// same otherwise-healthy shape the local-state rows use — one verified
+// receipt, a readiness answer, a floor of one byte — so the induced
+// condition is the only finding, and each row carries the zero-mutation
+// guarantee the baselines pin: the recursive state shape is identical
+// across the run.
+
+#[test]
+fn a_degraded_adapter_health_record_refuses_with_the_source_unreadable_class() {
+    // The source-readability row through the evidence the client itself
+    // persists: an adapter-health record left degraded the way an
+    // adapter's own failed passes leave one. The examination reads the
+    // record, reports the registered refusal, and names neither the
+    // adapter nor the row it found.
+    let dir = TempDir::new("adapter-health");
+    let store = seeded_store(&dir);
+    linked_receipt(&store, "2026-09-13T12:00:00Z");
+    store
+        .connection()
+        .execute(
+            "INSERT INTO adapter_health (adapter_id, health_state)
+             VALUES ('probe', 'degraded')",
+            [],
+        )
+        .expect("degrade the adapter");
+    let before = state_tree(dir.path());
+    let server = ReadinessEndpoint::start();
+    let output = run_doctor(&dir, server.endpoint());
+    server.finish();
+    assert_registered_refusal(&output, "client.source_unreadable", 74, &dir);
+    assert_eq!(
+        state_tree(dir.path()),
+        before,
+        "the examination mutated no state"
+    );
+}
+
+#[test]
+fn a_durable_event_years_ahead_refuses_with_the_clock_skew_class() {
+    // The clock-sanity row: the receipt's durable instants sit years
+    // ahead of the host's real clock — far beyond the five-minute
+    // allowance — so the examination reports the registered refusal
+    // against the handler's own reference instant, without adjusting
+    // either clock.
+    let dir = TempDir::new("clock");
+    let store = seeded_store(&dir);
+    linked_receipt(&store, "2030-01-01T00:00:00Z");
+    let before = state_tree(dir.path());
+    let server = ReadinessEndpoint::start();
+    let output = run_doctor(&dir, server.endpoint());
+    server.finish();
+    assert_registered_refusal(&output, "client.clock_skew", 74, &dir);
+    assert_eq!(
+        state_tree(dir.path()),
+        before,
+        "the examination mutated no state"
+    );
+}
+
+#[test]
+fn an_unreachable_ingest_endpoint_refuses_with_the_server_unavailable_class() {
+    // The server-readiness row for a request that never completes: the
+    // endpoint is a loopback port whose listener was just released, so
+    // the one permitted readiness request is refused by the operating
+    // system — the registered server-failure refusal at its own exit 75.
+    let dir = TempDir::new("server-down");
+    let store = seeded_store(&dir);
+    linked_receipt(&store, "2026-09-13T12:00:00Z");
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("the placeholder listener binds");
+    let port = listener.local_addr().expect("the bound port reads").port();
+    drop(listener);
+    let before = state_tree(dir.path());
+    let output = run_doctor(&dir, &format!("http://127.0.0.1:{port}"));
+    assert_registered_refusal(&output, "server.unavailable", 75, &dir);
+    assert_eq!(
+        state_tree(dir.path()),
+        before,
+        "the examination mutated no state"
+    );
+}
+
+#[test]
+fn a_not_ready_readiness_answer_refuses_with_the_server_unavailable_class() {
+    // The server-readiness row for a request that completes without
+    // establishing ready: the endpoint answers 503, so the examination
+    // reports the same registered refusal — a reachable server is not a
+    // ready one.
+    let dir = TempDir::new("server-busy");
+    let store = seeded_store(&dir);
+    linked_receipt(&store, "2026-09-13T12:00:00Z");
+    let before = state_tree(dir.path());
+    let server = ReadinessEndpoint::not_ready();
+    let output = run_doctor(&dir, server.endpoint());
+    server.finish();
+    assert_registered_refusal(&output, "server.unavailable", 75, &dir);
+    assert_eq!(
+        state_tree(dir.path()),
+        before,
+        "the examination mutated no state"
+    );
+}
+
+#[test]
+fn the_readiness_probe_stays_bounded_against_a_silent_endpoint() {
+    // The bound itself: an endpoint whose kernel completes the TCP
+    // handshake but whose application never answers. An unbounded
+    // readiness wait would hang the examination here forever; the probe's
+    // own timeout must return the registered refusal and let the process
+    // exit. The whole run — child start to exit — must stay far inside
+    // the deadline a stuck probe would blow through.
+    let dir = TempDir::new("silent-endpoint");
+    let store = seeded_store(&dir);
+    linked_receipt(&store, "2026-09-13T12:00:00Z");
+    let silent = TcpListener::bind(("127.0.0.1", 0)).expect("the silent listener binds");
+    let endpoint = format!(
+        "http://127.0.0.1:{}",
+        silent.local_addr().expect("the bound port reads").port()
+    );
+    let before = state_tree(dir.path());
+    let started = Instant::now();
+    let output = run_doctor(&dir, &endpoint);
+    let elapsed = started.elapsed();
+    drop(silent);
+    assert_registered_refusal(&output, "server.unavailable", 75, &dir);
+    assert_eq!(
+        state_tree(dir.path()),
+        before,
+        "the examination mutated no state"
+    );
+    assert!(
+        elapsed < Duration::from_secs(30),
+        "the readiness probe stayed bounded, taking {elapsed:?}"
+    );
+}
+
+#[test]
+fn an_unlinked_state_refuses_with_the_authorization_class() {
+    // The client-linkage row: the migrated state carries no server-issued
+    // receipt at all, so no local linkage evidence exists. The answered
+    // readiness probe is what proves the finding is the missing linkage
+    // and not the server — the authorization class at its own exit 78.
+    let dir = TempDir::new("unlinked");
+    let _store = seeded_store(&dir);
+    let before = state_tree(dir.path());
+    let server = ReadinessEndpoint::start();
+    let output = run_doctor(&dir, server.endpoint());
+    server.finish();
+    assert_registered_refusal(&output, "auth.unlinked", 78, &dir);
+    assert_eq!(
+        state_tree(dir.path()),
+        before,
+        "the examination mutated no state"
+    );
 }

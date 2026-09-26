@@ -9,6 +9,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use archivist_adapter_sdk::status::{AccountLabel, ScanClassification, SourceId, SourceScan};
 use archivist_client_core::cli::Router;
 use archivist_client_core::cli::parse::{self, Parsed};
 use archivist_client_core::cli::registry::Registry;
@@ -18,6 +19,7 @@ use archivist_client_core::state::lock::StateDirLock;
 use archivist_client_core::state::{STATE_DB_NAME, StateStore};
 use archivist_client_core::upload::{Jitter, OsJitter, UploadError, UploadErrorKind};
 use archivist_protocol::json::Value;
+use archivist_protocol::vocabulary::AdapterId;
 use rusqlite::params;
 
 use super::{
@@ -402,6 +404,59 @@ fn doctor_over_emits_the_document_only_when_every_check_passes() {
     assert!(text.contains("\"lock\":\"free\""));
     assert!(text.contains("\"receipt_count\":1"));
     assert!(!text.contains("degraded"));
+}
+
+/// One adapter scan for a source the state has never heard of, carrying
+/// the given classification: the composition point's only way to hand the
+/// doctor a readability observation (the registered `doctor` command
+/// itself passes no scans).
+fn scan_with(classification: ScanClassification) -> SourceScan {
+    SourceScan {
+        source: SourceId::parse("01900000-1111-7222-8333-00000000000c").expect("source id"),
+        adapter: AdapterId::parse("adapter-probe").expect("adapter id"),
+        account: AccountLabel::parse("account-probe").expect("account label"),
+        complete_bytes: 0,
+        complete_events: 0,
+        incomplete_tail_bytes: 0,
+        last_activity: None,
+        active_in_window: false,
+        classification,
+    }
+}
+
+#[test]
+fn doctor_over_reports_an_unreadable_scan_as_source_unreadable() {
+    // The adapter-scan leg of the source-readability row. A readable
+    // classification is measurement, never a finding — the same fixture
+    // stays healthy — while each unreadable classification the vocabulary
+    // closes over is the registered refusal at the local-state exit.
+    let healthy_dir = TempDir::new("doctor-scan-ok");
+    let healthy_store = seeded_store(&healthy_dir);
+    linked_receipt(&healthy_store, "2026-09-13T12:00:00Z");
+    doctor_over(
+        &resolved_for(&healthy_dir),
+        &[scan_with(ScanClassification::Ok)],
+        true,
+    )
+    .expect("a readable scan is not a finding");
+
+    for classification in [
+        ScanClassification::TransportUnreachable,
+        ScanClassification::ReadError,
+        ScanClassification::PermissionDenied,
+    ] {
+        let dir = TempDir::new("doctor-scan-unreadable");
+        let store = seeded_store(&dir);
+        linked_receipt(&store, "2026-09-13T12:00:00Z");
+        let error = doctor_over(&resolved_for(&dir), &[scan_with(classification)], true)
+            .expect_err("an unreadable classification is the registered finding");
+        assert_eq!(
+            error.code(),
+            "client.source_unreadable",
+            "case {classification:?}"
+        );
+        assert_eq!(error.exit_code(), 74, "case {classification:?}");
+    }
 }
 
 #[test]
