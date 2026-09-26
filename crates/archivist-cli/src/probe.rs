@@ -152,7 +152,7 @@ mod tests {
     fn a_live_replica_confirms_the_verdict() {
         let address = serving_liveness_route();
         let resolved = probe_sources()
-            .env("ARCHIVIST_SERVER_LISTEN_ADDRESS", &address.to_string())
+            .env("ARCHIVIST_SERVER_LISTEN_ADDRESS", address.to_string())
             .load()
             .expect("the address resolves");
         assert_eq!(
@@ -172,7 +172,7 @@ mod tests {
                 .expect("the listener names an address")
         };
         let resolved = probe_sources()
-            .env("ARCHIVIST_SERVER_LISTEN_ADDRESS", &address.to_string())
+            .env("ARCHIVIST_SERVER_LISTEN_ADDRESS", address.to_string())
             .load()
             .expect("the address resolves");
         let error = probe_over(&resolved).expect_err("nothing serves on the dropped address");
