@@ -15,6 +15,17 @@
 //! - a session with neither an expectation nor an artifact is
 //!   [`ExactOutcome::Unknown`].
 //!
+//! Closed outcomes are also tracked per inference route
+//! ([`RouteCoverage`]): the ledger partitions expectations by the route
+//! policy each record froze before route selection, so a known proxy or
+//! hook bypass is counted `unobserved` against the integration whose
+//! denominator it joined — never dropped from the totals, never smeared
+//! across routes, and never turned into a coverage claim by absence
+//! alone.  The route view is exact-only: it is derived from frozen
+//! expectations and artifacts alone and never consults the semantic
+//! harness-coverage vocabulary of [`crate::status`], which stays an
+//! independent dimension (plan Phase 9, threat `EC-13`).
+//!
 //! This module is the SDK-side persistence seam.  The ledger owns the frozen
 //! records and exposes content-free snapshots for a durable client or
 //! orchestrator store to write.  It does not depend on a database or a
@@ -664,6 +675,106 @@ impl CoverageReport {
     }
 }
 
+/// One inference route's exact-coverage state: the four closed-outcome
+/// counters every supported integration reports, plus the route's open
+/// denominator.
+///
+/// This is the route-scoped sibling of [`CoverageReport`].  The ledger
+/// derives it by partitioning closed expectations on the route policy
+/// each record froze before route selection, so a known bypass — a
+/// closed expectation with no matching proxy or hook artifact — is
+/// counted against the route whose denominator the expectation joined.
+/// A bypass has no route of its own; attributing it to the declared
+/// route is what keeps the per-route sums equal to the ledger's closed
+/// total, so an unobserved exchange can never vanish between the two
+/// views.
+///
+/// A route with no expectations at all reports zero in every bucket:
+/// absence stays visible as zeroes instead of being promoted to a
+/// complete-coverage claim.  Deliberately, this type exposes **no**
+/// completeness predicate — a route, like a session, can hold an
+/// observed and an unobserved expectation at the same time, and the
+/// exact-coverage contract requires both to stay visible (plan Phase 9,
+/// threat `EC-13`).
+///
+/// The view is exact-only: it is a pure function of the ledger's frozen
+/// records and never consults the semantic harness-coverage vocabulary
+/// ([`crate::status::CoverageState`]).  The two dimensions are reported
+/// side by side, never merged in either direction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RouteCoverage {
+    /// The route — the supported integration — this state is about.
+    pub route: RoutePolicy,
+    /// Closed expectations on this route with all required artifacts.
+    pub observed: u64,
+    /// Closed expectations on this route with some but not all required
+    /// artifacts.
+    pub partial: u64,
+    /// Closed expectations on this route whose integration failed.
+    pub failed: u64,
+    /// Closed expectations on this route with no matching artifacts: the
+    /// known-bypass count of the declared integration.
+    pub unobserved: u64,
+    /// Expectations on this route persisted but not closed yet.
+    pub open_expectations: u64,
+}
+
+impl RouteCoverage {
+    /// The zeroed state of one route.
+    #[must_use]
+    pub const fn new(route: RoutePolicy) -> Self {
+        Self {
+            route,
+            observed: 0,
+            partial: 0,
+            failed: 0,
+            unobserved: 0,
+            open_expectations: 0,
+        }
+    }
+
+    /// Count one outcome using the registry vocabulary.
+    ///
+    /// [`ExactOutcome::Unknown`] returns zero: it names a session
+    /// denominator — no expectation and no artifact — and belongs to no
+    /// route.
+    #[must_use]
+    pub const fn count(&self, outcome: ExactOutcome) -> u64 {
+        match outcome {
+            ExactOutcome::Observed => self.observed,
+            ExactOutcome::Partial => self.partial,
+            ExactOutcome::Failed => self.failed,
+            ExactOutcome::Unobserved => self.unobserved,
+            ExactOutcome::Unknown => 0,
+        }
+    }
+
+    /// The number of closed expectation records on this route.
+    #[must_use]
+    pub const fn closed_expectations(&self) -> u64 {
+        self.observed + self.partial + self.failed + self.unobserved
+    }
+
+    /// The bounded report representation: a fixed key set of the route
+    /// token, the four closed-outcome counters, and the open
+    /// denominator.  No identifier, payload, or semantic coverage token
+    /// appears in it.
+    #[must_use]
+    pub fn to_json(&self) -> Value {
+        let mut object = Object::new();
+        object.set("route", Value::Text(self.route.token().to_owned()));
+        object.set("observed", Value::Int(saturating_i64(self.observed)));
+        object.set("partial", Value::Int(saturating_i64(self.partial)));
+        object.set("failed", Value::Int(saturating_i64(self.failed)));
+        object.set("unobserved", Value::Int(saturating_i64(self.unobserved)));
+        object.set(
+            "open_expectations",
+            Value::Int(saturating_i64(self.open_expectations)),
+        );
+        Value::Object(object)
+    }
+}
+
 /// Why a ledger operation was refused.  All variants are closed and contain
 /// no identifiers or provider text, keeping errors safe for status/metrics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1012,6 +1123,52 @@ impl ExpectedInferenceLedger {
         report
     }
 
+    /// One route's exact-coverage state: the four closed-outcome counters
+    /// of every expectation that froze this route policy, plus the
+    /// route's open denominator.
+    ///
+    /// A closed expectation with no matching artifact counts `unobserved`
+    /// here — against the route it declared before route selection — so a
+    /// known proxy or hook bypass lands on the integration whose
+    /// denominator it joined and stays part of that integration's
+    /// reported state.  The result is exact-only: it never reflects or
+    /// alters the semantic harness-coverage dimension.
+    #[must_use]
+    pub fn route_coverage(&self, route: RoutePolicy) -> RouteCoverage {
+        let mut coverage = RouteCoverage::new(route);
+        for entry in self.expectations.values() {
+            if entry.record.route_policy != route {
+                continue;
+            }
+            match entry.record.outcome {
+                Some(ExactOutcome::Observed) => coverage.observed += 1,
+                Some(ExactOutcome::Partial) => coverage.partial += 1,
+                Some(ExactOutcome::Failed) => coverage.failed += 1,
+                Some(ExactOutcome::Unobserved) => coverage.unobserved += 1,
+                // A session denominator, not a route one: a record closed
+                // through the ledger never carries it, and a restored
+                // record that does stays outside the route buckets, exactly
+                // as it stays outside `reconcile`'s closed counters.
+                Some(ExactOutcome::Unknown) => {}
+                None => coverage.open_expectations += 1,
+            }
+        }
+        coverage
+    }
+
+    /// Every supported integration's exact-coverage state: one
+    /// [`RouteCoverage`] per route in the closed [`RoutePolicy`]
+    /// vocabulary, in registry order — including a route the ledger holds
+    /// no expectations for, which reports zero in every bucket rather
+    /// than silently reading as covered.  This iterates the same closed
+    /// route vocabulary the [`crate::compatibility::CompatibilityMatrix`]
+    /// rows key on, so every supported integration reports its observed,
+    /// partial, failed, and unobserved state.
+    #[must_use]
+    pub fn route_states(&self) -> [RouteCoverage; 2] {
+        RoutePolicy::all().map(|route| self.route_coverage(route))
+    }
+
     /// The number of pending artifacts whose expectation has not been loaded.
     #[must_use]
     pub fn pending_artifacts(&self) -> usize {
@@ -1025,6 +1182,14 @@ fn validate_attempt_count(attempts: u64) -> Result<(), LedgerError> {
     } else {
         Ok(())
     }
+}
+
+/// A counter rendered into the no-float JSON domain: saturating at
+/// `i64::MAX`, mirroring the status contract's bounded integers — a
+/// report figure that would overflow the wire integer domain is clipped,
+/// never wrapped and never a float.
+fn saturating_i64(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
 }
 
 fn evaluate(record: &ExpectedInferenceRecord, artifacts: &[ObservedArtifact]) -> ExactOutcome {
@@ -1104,7 +1269,11 @@ mod tests {
     }
 
     fn record(seed: u8) -> ExpectedInferenceRecord {
-        ExpectedInferenceRecord::new(id(seed), session(seed), RoutePolicy::SdkHook, timestamp())
+        record_on(seed, RoutePolicy::SdkHook)
+    }
+
+    fn record_on(seed: u8, route: RoutePolicy) -> ExpectedInferenceRecord {
+        ExpectedInferenceRecord::new(id(seed), session(seed), route, timestamp())
     }
 
     fn artifact(seed: u8, ordinal: u64, kind: InferenceArtifactKind) -> ObservedArtifact {
@@ -1274,5 +1443,169 @@ mod tests {
             "transport-error"
         );
         assert_eq!(ExpectedEvent::Terminal.token(), "terminal");
+    }
+
+    #[test]
+    fn route_bypass_counts_unobserved_on_the_declared_route_only_after_close() {
+        let mut ledger = ExpectedInferenceLedger::new();
+        let key = id(7);
+        ledger
+            .persist(record_on(7, RoutePolicy::Proxy))
+            .expect("persist");
+        // While the expectation is open, the absent artifacts are an open
+        // denominator on the declared route — never a coverage claim and
+        // never silently unobserved.
+        let open = ledger.route_coverage(RoutePolicy::Proxy);
+        assert_eq!(open.open_expectations, 1);
+        assert_eq!(open.count(ExactOutcome::Observed), 0);
+        assert_eq!(open.count(ExactOutcome::Unobserved), 0);
+
+        // The known bypass: the proxy-declared expectation closes with no
+        // matching artifact.  It lands `unobserved` on the proxy
+        // integration whose denominator it joined, and the hook route
+        // stays untouched.
+        assert_eq!(ledger.close_completed(&key), Ok(ExactOutcome::Unobserved));
+        let proxy = ledger.route_coverage(RoutePolicy::Proxy);
+        assert_eq!(proxy.unobserved, 1);
+        assert_eq!(proxy.observed, 0);
+        assert_eq!(proxy.closed_expectations(), 1);
+        assert_eq!(
+            ledger.route_coverage(RoutePolicy::SdkHook),
+            RouteCoverage::new(RoutePolicy::SdkHook)
+        );
+    }
+
+    #[test]
+    fn route_states_cover_every_route_and_partition_the_closed_denominator() {
+        let mut ledger = ExpectedInferenceLedger::new();
+        // Proxy: one observed exchange and one known bypass.
+        ledger
+            .persist(record_on(1, RoutePolicy::Proxy))
+            .expect("persist");
+        ledger
+            .record_artifact(artifact(1, 0, InferenceArtifactKind::ProviderRequest))
+            .expect("request");
+        ledger
+            .record_artifact(artifact(1, 0, InferenceArtifactKind::ProviderResponse))
+            .expect("response");
+        assert_eq!(ledger.close_completed(&id(1)), Ok(ExactOutcome::Observed));
+        ledger
+            .persist(record_on(2, RoutePolicy::Proxy))
+            .expect("persist");
+        assert_eq!(ledger.close_completed(&id(2)), Ok(ExactOutcome::Unobserved));
+
+        // SdkHook: one partial, one failed, and one still open.
+        ledger
+            .persist(record_on(3, RoutePolicy::SdkHook))
+            .expect("persist");
+        ledger
+            .record_artifact(artifact(3, 0, InferenceArtifactKind::ProviderRequest))
+            .expect("request");
+        assert_eq!(ledger.close_completed(&id(3)), Ok(ExactOutcome::Partial));
+        ledger
+            .persist(record_on(4, RoutePolicy::SdkHook))
+            .expect("persist");
+        assert_eq!(
+            ledger.close_failed(&id(4), IntegrationFailure::RouteSelectionFailed),
+            Ok(ExactOutcome::Failed)
+        );
+        ledger
+            .persist(record_on(5, RoutePolicy::SdkHook))
+            .expect("persist");
+
+        // A session with no exact evidence at all keeps its `unknown`
+        // denominator out of every route bucket.
+        ledger.register_session(session(6));
+
+        let states = ledger.route_states();
+        assert_eq!(states.map(|state| state.route), RoutePolicy::all());
+        assert_eq!(states[0].observed, 1);
+        assert_eq!(states[0].unobserved, 1);
+        assert_eq!(states[0].partial, 0);
+        assert_eq!(states[0].failed, 0);
+        assert_eq!(states[0].open_expectations, 0);
+        assert_eq!(states[1].partial, 1);
+        assert_eq!(states[1].failed, 1);
+        assert_eq!(states[1].open_expectations, 1);
+        assert_eq!(states[1].observed, 0);
+        assert_eq!(states[1].unobserved, 0);
+
+        // No closed expectation vanishes between the two views: each
+        // outcome counter sums to the ledger total across routes, and the
+        // session-level `unknown` denominator stays off every route.
+        let report = ledger.reconcile();
+        for outcome in [
+            ExactOutcome::Observed,
+            ExactOutcome::Partial,
+            ExactOutcome::Failed,
+            ExactOutcome::Unobserved,
+        ] {
+            let per_route: u64 = states.iter().map(|state| state.count(outcome)).sum();
+            assert_eq!(per_route, report.count(outcome));
+        }
+        assert_eq!(report.unknown, 1);
+        assert!(
+            states
+                .iter()
+                .all(|state| state.count(ExactOutcome::Unknown) == 0)
+        );
+    }
+
+    #[test]
+    fn a_route_without_expectations_reports_zeroes_not_completeness() {
+        // A fresh ledger reports an explicit zero state for every supported
+        // integration: absence of expectations stays visible as zeroes in
+        // the route view instead of reading as covered.
+        let mut ledger = ExpectedInferenceLedger::new();
+        assert_eq!(
+            ledger.route_states(),
+            [
+                RouteCoverage::new(RoutePolicy::Proxy),
+                RouteCoverage::new(RoutePolicy::SdkHook),
+            ]
+        );
+
+        // Activity on one integration never absorbs the other's row: the
+        // proxy route keeps reporting its zeroes alongside the hook's open
+        // denominator.
+        ledger
+            .persist(record_on(8, RoutePolicy::SdkHook))
+            .expect("persist");
+        let states = ledger.route_states();
+        assert_eq!(states[0], RouteCoverage::new(RoutePolicy::Proxy));
+        assert_eq!(states[1].open_expectations, 1);
+    }
+
+    #[test]
+    fn route_coverage_json_is_bounded_with_a_fixed_exact_only_key_set() {
+        let coverage = RouteCoverage {
+            route: RoutePolicy::SdkHook,
+            observed: 2,
+            partial: 1,
+            failed: 1,
+            unobserved: 3,
+            open_expectations: 1,
+        };
+        // The whole wire shape is fixed: the route token, the four
+        // closed-outcome counters, and the open denominator, in canonical
+        // key order — no identifier, payload, or semantic harness-coverage
+        // token ever appears in the route view.
+        let json = coverage.to_json();
+        let text = String::from_utf8(json.canonical_bytes()).expect("json is utf8");
+        assert_eq!(
+            text,
+            "{\"failed\":1,\"observed\":2,\"open_expectations\":1,\
+             \"partial\":1,\"route\":\"sdk_hook\",\"unobserved\":3}"
+        );
+
+        // Counters clip at the wire integer bound instead of wrapping or
+        // becoming floats.
+        let clipped = RouteCoverage {
+            observed: u64::MAX,
+            ..RouteCoverage::new(RoutePolicy::Proxy)
+        };
+        let clipped_text =
+            String::from_utf8(clipped.to_json().canonical_bytes()).expect("json is utf8");
+        assert!(clipped_text.contains("\"observed\":9223372036854775807"));
     }
 }
