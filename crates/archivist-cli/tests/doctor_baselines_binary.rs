@@ -718,15 +718,14 @@ fn an_unresolvable_configuration_refuses_with_the_usage_class_before_any_state()
     let output = run_doctor_with_config(&dir, "http://127.0.0.1:9", &absent);
     assert_registered_refusal(&output, "cli.usage_error", 64, &dir);
     // The refusal retired before the examination: the doctor created and
-    // opened no state path at all — the fixture directory holds nothing
-    // but the configuration file that cannot be read.
+    // opened no state path at all — the named configuration file is
+    // absent by construction, and nothing else appears beside it.
     let entries: Vec<_> = std::fs::read_dir(dir.path())
         .expect("the fixture directory is readable")
         .collect();
-    assert_eq!(
-        entries.len(),
-        1,
-        "only the named configuration file exists, no state path is opened"
+    assert!(
+        entries.is_empty(),
+        "the configuration refusal opens no state path"
     );
 }
 
