@@ -55,10 +55,14 @@ the `cryptography` wheel is absent the driver installs a stand-in for
 exactly the raw-Ed25519 surface the corpora generators touch, backed by
 its own RFC 8032 implementation, so the derived publics and signatures are
 bit-identical to the wheel's and anything beyond that surface fails
-loudly. The live categories fetch the pinned MinIO reference binaries
-once per work directory and SHA-256-verify them against the pins in
-`minio-reference-profile.md` Section 1 before use (the release asset name
-puts the platform first: `minio.linux-amd64.<RELEASE>`).
+loudly; where the host `openssl` is too broken to answer
+`openssl rand -hex` (the reference provisioner's mint invocation), the
+run ships a stand-in on PATH implementing exactly that one invocation
+and failing loudly for anything else. The live categories fetch the
+pinned MinIO reference binaries once per work directory and SHA-256-verify
+them against the pins in `minio-reference-profile.md` Section 1 before
+use (the release asset name puts the platform first:
+`minio.linux-amd64.<RELEASE>`).
 
 Knobs (environment variables, all defaulted):
 
@@ -155,12 +159,15 @@ credential, one after:
    the run's tenant UUID, the pinned control-authority public, the minted
    identity secret keys, and the generic credential shapes (the
    `ACCESS_KEY=`/`SECRET_KEY=` document literals and `PRIVATE KEY` PEM
-   armor). The generic shapes exempt exactly the installed binary: its
-   bytes legitimately carry the server's own vocabulary (the credential
-   document literals the storage config parses and the `PRIVATE KEY`
-   constants the protocol redaction detector matches). The deny *values*
-   — tenant material, authority public, the run's own secrets — cover the
-   binary like every other byte. Matches are reported as file names only;
+   armor). The generic shapes apply only to the files the image adds
+   beyond its digest-pinned base and the installed binary: both of those
+   legitimately carry the same vocabulary — the binary's own credential-
+   document and redaction-detector constants, and the base crypto
+   libraries' (`gpgv`, `gnutls`) PEM-armor strings. Base content is
+   pinned by digest, so its bytes are a base-move decision, exactly as
+   the vulnerability policy treats base findings. The deny *values* —
+   tenant material, authority public, the run's own secrets — cover
+   every byte of every file. Matches are reported as file names only;
    values are never echoed.
 3. **Filesystem leg**: the running image's own root is grepped two ways —
    the stateful trees (`/etc`, `/tmp`) for the full shape set, and the

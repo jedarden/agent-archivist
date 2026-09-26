@@ -452,9 +452,14 @@ def _final_inventory(layers: list[pathlib.Path]) -> set[str]:
 
 
 # The generic deny patterns the byte scan adds to the run's own values: a
-# credential document's field names and private-key PEM armor. They exempt
-# exactly BINARY_PATH (see there); the certificate armor of a TLS trust
-# store never matches, because a certificate is not a private key.
+# credential document's field names and private-key PEM armor. They apply
+# only to the files the image adds beyond its digest-pinned base and the
+# installed binary: both of those legitimately carry the same vocabulary —
+# the binary's own parsing and redaction constants (see BINARY_PATH), and
+# the base's crypto libraries (gpgv, gnutls), whose PEM-armor strings are
+# the same class. Base content is pinned by digest, so its bytes are a
+# base-move decision, exactly as the vulnerability policy treats base
+# findings; anything the build stages add is held to the full scan.
 _GENERIC_PATTERNS = (
     b"ACCESS_KEY=",
     b"SECRET_KEY=",
@@ -604,7 +609,9 @@ def mode_scan_image(args: argparse.Namespace) -> int:
     hits: list[str] = []
     for layer_name, name, data in _iter_layer_bytes(layers):
         scanned += len(data)
-        tokens = deny_tokens if name == BINARY_PATH else deny_tokens + list(_GENERIC_PATTERNS)
+        tokens = deny_tokens
+        if name != BINARY_PATH and name not in base_files:
+            tokens = tokens + list(_GENERIC_PATTERNS)
         if _denied(data, tokens):
             hits.append(f"{layer_name}:{name}")
     if config is not None:

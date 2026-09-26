@@ -266,6 +266,28 @@ chmod 555 "$SMOKE_WORK_DIR/bin/minio" "$SMOKE_WORK_DIR/bin/mc"
 PATH="$SMOKE_WORK_DIR/bin:$PATH"
 export PATH
 
+# The reference provisioner mints its secrets with `openssl rand -hex 32`.
+# A builder whose openssl is broken (a missing shared library, a botched
+# upgrade) must not turn into a smoke failure or, worse, an empty secret:
+# when openssl cannot answer a probe, this run ships a stand-in ahead of it
+# on PATH implementing exactly that one invocation over the python3
+# standard library, and failing loudly for anything else.
+if ! openssl rand -hex 8 >/dev/null 2>&1; then
+  cat > "$SMOKE_WORK_DIR/bin/openssl" <<'SH'
+#!/usr/bin/env bash
+# Minimal openssl stand-in: implements only `rand -hex N` (the reference
+# provisioner's use), via the python3 standard library. Anything else
+# fails loudly — this is not a general openssl.
+if [ "${1:-}" = rand ] && [ "${2:-}" = -hex ] && [ -n "${3:-}" ]; then
+  exec python3 -c 'import secrets, sys; print(secrets.token_hex(int(sys.argv[1])))' "$3"
+fi
+echo "openssl shim: only 'rand -hex N' is implemented" >&2
+exit 1
+SH
+  chmod +x "$SMOKE_WORK_DIR/bin/openssl"
+  echo "[smoke] system openssl unusable; the run's rand shim is on PATH"
+fi
+
 # 2. MinIO on loopback, single-node single-drive (the reference shape).
 # Readiness probes the server's own health endpoint over plain HTTP — the
 # language mc speaks to it; the replicas' endpoint is decided separately.
