@@ -4,6 +4,7 @@
 //! the automated integrity checks, constraint enforcement, read-only
 //! snapshots, and the rule that diagnostics stay content-free.
 
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -39,6 +40,11 @@ impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+
+/// A path's permission bits, the mode comparisons below read.
+fn mode_of(path: &Path) -> u32 {
+    path.metadata().expect("metadata").permissions().mode() & 0o777
 }
 
 /// A 36-character lowercase UUID-shaped identifier, distinct per seed.
@@ -191,6 +197,52 @@ fn foreign_keys_are_configured_on_open() {
         .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
         .expect("foreign_keys pragma");
     assert_eq!(enabled, 1);
+}
+
+// --- CFG-023 permission posture ---------------------------------------------
+
+#[test]
+fn open_creates_the_database_file_private() {
+    let dir = TempDir::new("create-private");
+    let mut store = StateStore::open(&dir.path().join("state.db")).expect("open file db");
+    store.migrate().expect("migrate");
+    assert_eq!(
+        mode_of(&dir.path().join("state.db")),
+        0o600,
+        "state database is mode 0600"
+    );
+}
+
+#[test]
+fn an_unsafe_pre_existing_database_mode_is_refused_not_repaired() {
+    let dir = TempDir::new("unsafe-db-mode");
+    let database = dir.path().join("state.db");
+    let mut store = StateStore::open(&database).expect("open file db");
+    store.migrate().expect("migrate");
+    drop(store);
+    std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o644))
+        .expect("loosen the database mode");
+
+    let error = StateStore::open(&database).expect_err("open must refuse");
+    assert_eq!(error.kind(), StateErrorKind::Unavailable);
+    assert!(
+        error.detail().contains("permissions"),
+        "refusal names the permission condition: {}",
+        error.detail()
+    );
+    let rendered = error.to_string();
+    let path_text = database.to_string_lossy();
+    assert!(
+        !rendered.contains(path_text.as_ref()),
+        "error leaked the path: {rendered}"
+    );
+    assert!(
+        SafeMessage::parse(&rendered).is_ok(),
+        "refusal stays a safe message: {rendered}"
+    );
+    // Refused, never repaired: the offending mode is exactly what the
+    // next attempt will see too.
+    assert_eq!(mode_of(&database), 0o644, "the mode is left untouched");
 }
 
 #[test]

@@ -23,8 +23,8 @@ use archivist_protocol::vocabulary::AdapterId;
 use rusqlite::params;
 
 use super::{
-    INTERNAL, LOCK_HELD, daemon_loop, doctor, doctor_over, handlers, inventory_over, run_once_over,
-    status_over, verify_state_over,
+    INTERNAL, LOCK_HELD, STATE_IO, daemon_loop, doctor, doctor_over, handlers, inventory_over,
+    run_once_over, status_over, verify_state_over,
 };
 
 /// Render a composed document to canonical text for member assertions.
@@ -177,8 +177,7 @@ fn seeded_store(dir: &TempDir) -> StateStore {
 }
 
 /// One verified receipt with its frozen request, so the doctor's linkage
-/// check passes and an induced condition is the only finding left. The
-/// schema's open does not pin the database mode, so the fixture restores it.
+/// check passes and an induced condition is the only finding left.
 fn linked_receipt(store: &StateStore, commit_time: &str) {
     let request_id = uid("req");
     store
@@ -213,11 +212,6 @@ fn linked_receipt(store: &StateStore, commit_time: &str) {
             params![request_id, "ab".repeat(64), digest(92), commit_time],
         )
         .expect("insert receipt");
-    std::fs::set_permissions(
-        store.connection().path().expect("file-backed store"),
-        std::fs::Permissions::from_mode(0o600),
-    )
-    .expect("restore the pinned database mode");
 }
 
 #[test]
@@ -591,6 +585,30 @@ fn run_once_refuses_a_second_mutator_with_the_registered_exit() {
     let error = run_once_over(&resolved_for(&dir), &[]).expect_err("lock held");
     assert_eq!(error.code(), LOCK_HELD);
     assert_eq!(error.exit_code(), 75);
+}
+
+#[test]
+fn run_once_refuses_a_loose_database_mode_with_the_registered_exit() {
+    let dir = TempDir::new("run-once-db-mode");
+    let store = seeded_store(&dir);
+    drop(store);
+    let database = dir.path().join(STATE_DB_NAME);
+    std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o644))
+        .expect("loosen the database mode");
+    let error = run_once_over(&resolved_for(&dir), &[]).expect_err("unsafe permissions");
+    assert_eq!(error.code(), STATE_IO);
+    assert_eq!(error.exit_code(), 74);
+    let body = String::from_utf8(error.body_bytes()).expect("refusal utf-8");
+    assert!(
+        !body.contains(dir.path().to_string_lossy().as_ref()),
+        "the refusal is content-free: no fixture path appears"
+    );
+    // Refused, never repaired: the offending mode survives the mutator.
+    assert_eq!(
+        database.metadata().expect("metadata").permissions().mode() & 0o777,
+        0o644,
+        "the loose mode is left untouched"
+    );
 }
 
 /// A sleeper that cancels on its first wait and reports the cancel: the

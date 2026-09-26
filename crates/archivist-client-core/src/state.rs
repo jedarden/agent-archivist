@@ -10,10 +10,12 @@
 //! the lock (the `read_only` command class, CLI-007).
 //!
 //! Opening a mutator connection configures it before anything else runs:
-//! WAL journaling with `synchronous = FULL` so a committed transaction is
-//! durable, `foreign_keys = ON` so the schema's referential contract is
-//! enforced rather than decorative, and a busy timeout so a `status`
-//! reader's snapshot never fails an upload.
+//! the database file is created mode `0600` — pinned explicitly, and a
+//! pre-existing file at any other mode is refused, never repaired
+//! (CFG-023) — then WAL journaling with `synchronous = FULL` so a
+//! committed transaction is durable, `foreign_keys = ON` so the schema's
+//! referential contract is enforced rather than decorative, and a busy
+//! timeout so a `status` reader's snapshot never fails an upload.
 //!
 //! Migrations are hand-written steps in [`migrations`], applied in order in
 //! one transaction each, recorded in a `schema_migrations` history table,
@@ -32,6 +34,8 @@
 //! path or transcript content.
 
 use std::fmt;
+use std::fs::{OpenOptions, Permissions};
+use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
 use std::path::Path;
 
 use rusqlite::{Connection, OpenFlags};
@@ -261,6 +265,60 @@ fn driver_error(err: &rusqlite::Error) -> StateError {
     }
 }
 
+/// The static error for every database-file failure that is not a
+/// permission refusal.
+fn database_file_unusable() -> StateError {
+    StateError::with_detail(
+        StateErrorKind::Unavailable,
+        "state database file could not be prepared",
+    )
+}
+
+/// The static error for a CFG-023 permission refusal.
+fn unsafe_permissions() -> StateError {
+    StateError::with_detail(
+        StateErrorKind::Unavailable,
+        "state database file permissions are unsafe",
+    )
+}
+
+/// Create the database file when absent — mode `0600`, pinned explicitly
+/// so a permissive process umask cannot widen it — and refuse anything
+/// that pre-exists with other permissions (CFG-023). The file is created
+/// empty and handed straight to the driver, which reads a zero-length
+/// file as a fresh database; the write-ahead log and wal-index the
+/// connection then creates take their mode from the database file, so
+/// the pin covers the sidecars too.
+fn prepare_database_file(path: &Path) -> Result<(), StateError> {
+    let existed = path.exists();
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)
+        .map_err(|_| database_file_unusable())?;
+    if !existed {
+        // Pin the mode explicitly so a permissive process umask cannot
+        // widen what this process just created.
+        file.set_permissions(Permissions::from_mode(0o600))
+            .map_err(|_| database_file_unusable())?;
+    }
+    // A database that predates this process must already carry the pinned
+    // mode: refuse, never repair (CFG-023).
+    let mode = file
+        .metadata()
+        .map_err(|_| database_file_unusable())?
+        .permissions()
+        .mode()
+        & 0o777;
+    if mode != 0o600 {
+        return Err(unsafe_permissions());
+    }
+    Ok(())
+}
+
 /// The content-free result of the automated integrity checks: one verdict
 /// per check, never the offending rows or values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -302,20 +360,30 @@ impl StateStore {
     /// it: WAL journaling, `synchronous = FULL`, foreign keys on, busy
     /// timeout. The schema is not touched until [`StateStore::migrate`].
     ///
-    /// Opening the database itself mutates nothing, but a caller of this
-    /// method is a mutator: single-mutator ownership (plan Section 7.9)
-    /// requires holding [`lock::StateDirLock`] on the containing state
-    /// directory for the connection's whole life, and a refused second
-    /// mutator reports [`StateErrorKind::LockHeld`] from that acquisition.
-    /// Readers open [`StateSnapshot`] instead, which takes neither the
-    /// lock nor a write path.
+    /// The file is created mode `0600`, pinned explicitly against a
+    /// permissive process umask (CFG-023), and a database that pre-exists
+    /// with any other mode is refused rather than widened or narrowed —
+    /// the same contract the mutator lock applies to the state directory
+    /// and its lock file. The write-ahead log and wal-index the connection
+    /// goes on to create inherit the database file's own mode from the
+    /// driver, so pinning the database pins the sidecars with it.
+    ///
+    /// Opening the database itself mutates nothing beyond that creation,
+    /// but a caller of this method is a mutator: single-mutator ownership
+    /// (plan Section 7.9) requires holding [`lock::StateDirLock`] on the
+    /// containing state directory for the connection's whole life, and a
+    /// refused second mutator reports [`StateErrorKind::LockHeld`] from
+    /// that acquisition. Readers open [`StateSnapshot`] instead, which
+    /// takes neither the lock nor a write path.
     ///
     /// # Errors
     ///
     /// [`StateErrorKind::Unavailable`] when the file cannot be opened or
-    /// WAL mode cannot be established; the path never appears in the error.
+    /// WAL mode cannot be established — unusable, or unsafe permissions
+    /// (CFG-023); the path never appears in the error.
     /// [`StateErrorKind::Busy`] when another process holds the write lock.
     pub fn open(path: &Path) -> Result<Self, StateError> {
+        prepare_database_file(path)?;
         let conn = Connection::open(path).map_err(|ref err| driver_error(err))?;
         configure(&conn, true)?;
         Ok(Self { conn })

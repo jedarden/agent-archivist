@@ -68,6 +68,16 @@
 //! finding — never a path, a row, or an object name the examination
 //! read.
 //!
+//! The same surface pins the mutator's own creation posture (CFG-023):
+//! the state `run --once` creates over a fresh directory lands at the
+//! pinned modes — the database `0600`, never a umask default — a
+//! database loosened the way an out-of-band writer would is refused by
+//! the mutator itself with the registered local-state class before the
+//! driver touches the file, and the binary's own fresh state verifies
+//! healthy through the examination once it carries a receipt: the row
+//! that cannot pass while the creation mode is unpinned, since a
+//! umask-default database mode is itself the permissions refusal.
+//!
 //! The same surface completes the environment and remote rows of the
 //! matrix over the same hermetic otherwise-healthy fixture shape: a
 //! persisted adapter-health record left degraded (the source-readability
@@ -230,8 +240,7 @@ fn seeded_store(dir: &TempDir) -> StateStore {
 
 /// One verified receipt with its frozen request, so the doctor's linkage
 /// check passes and the healthy fixture's only remaining answer is the
-/// document. The schema's open does not pin the database mode, so the
-/// fixture restores it.
+/// document.
 fn linked_receipt(store: &StateStore, commit_time: &str) {
     let request_id = uid("req");
     // The receipt row's own secret material and key identifier are
@@ -272,11 +281,6 @@ fn linked_receipt(store: &StateStore, commit_time: &str) {
             params![request_id, signature, digest(92), commit_time],
         )
         .expect("insert receipt");
-    std::fs::set_permissions(
-        store.connection().path().expect("file-backed store"),
-        Permissions::from_mode(0o600),
-    )
-    .expect("restore the pinned database mode");
 }
 
 /// The readiness answer the healthy fixtures receive: HTTP 200 for the
@@ -729,6 +733,22 @@ fn assert_registered_refusal(output: &Output, code: &str, exit: i32, dir: &TempD
     assert_content_free("the refusal document", &output.stderr, dir.path());
 }
 
+/// Run the compiled binary's `run --once` command in JSON non-interactive
+/// mode over the fixture and capture its real streams. The cycle probes
+/// nothing — the ingest endpoint is configuration the scheduler plans
+/// around, not a request this foreground form makes — so the endpoint may
+/// name a port nothing answers.
+fn run_once(dir: &TempDir, endpoint: &str) -> Output {
+    let mut command = doctor_command(dir, endpoint, "1");
+    command.args(["run", "--once", "--json", "--non-interactive"]);
+    command.output().expect("the archivist binary runs")
+}
+
+/// A path's permission bits, the pinned-mode assertions read.
+fn mode_of(path: &Path) -> u32 {
+    path.metadata().expect("metadata").permissions().mode() & 0o777
+}
+
 /// The state directory's complete recursive shape — every path, every
 /// directory, and every regular file's bytes — in sorted order, with the
 /// one exemption a correct WAL reader requires: the wal-index scratch
@@ -842,6 +862,135 @@ fn the_missing_state_smoke_exits_seventy_four_with_only_the_state_io_finding() {
     // identifier, secret, SQL text, or operating-system error anywhere
     // in the bytes the refusal emitted.
     assert_content_free("the missing-state refusal", stderr.as_bytes(), dir.path());
+}
+
+// The mutator's own creation posture (CFG-023). The rows above observe
+// the examination; these observe the writer: the state the binary
+// itself creates must land at the pinned modes, a loosened database
+// must be refused by the mutator itself, and the binary's own fresh
+// state must verify healthy once it carries a receipt.
+
+#[test]
+fn run_once_creates_the_state_at_the_pinned_modes() {
+    let dir = TempDir::new("run-once-create");
+    let output = run_once(&dir, "http://127.0.0.1:9");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "one cycle over a fresh directory succeeds: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // The whole layout the mutator created carries its pinned modes
+    // (CFG-023): the database 0600 — never the umask default — the lock
+    // file 0600, and the spool directory 0700.
+    assert_eq!(
+        mode_of(&dir.path().join(STATE_DB_NAME)),
+        0o600,
+        "the binary creates the state database mode 0600"
+    );
+    assert_eq!(
+        mode_of(&dir.path().join(LOCK_FILE_NAME)),
+        0o600,
+        "the lock file is mode 0600"
+    );
+    assert_eq!(
+        mode_of(&dir.path().join(SPOOL_DIR_NAME)),
+        0o700,
+        "the spool directory is mode 0700"
+    );
+}
+
+#[test]
+fn a_loose_pre_existing_state_database_refuses_the_mutator() {
+    // The mutator side of the permissions row: a database loosened the
+    // way an out-of-band writer would is refused by `run --once` itself
+    // — the registered local-state class, content-free — before the
+    // driver touches the file, and the offending mode survives the
+    // refusal untouched.
+    let dir = TempDir::new("run-once-db-mode");
+    let store = seeded_store(&dir);
+    linked_receipt(&store, "2026-09-13T12:00:00Z");
+    drop(store);
+    let database = dir.path().join(STATE_DB_NAME);
+    std::fs::set_permissions(&database, Permissions::from_mode(0o644))
+        .expect("loosen the database mode");
+    let output = run_once(&dir, "http://127.0.0.1:9");
+    assert_registered_refusal(&output, "client.state_io", 74, &dir);
+    // Refused, never repaired — and the refusal retired before the
+    // driver opened anything: no write-ahead log or wal-index appeared
+    // beside the database the mutator refused.
+    assert_eq!(
+        mode_of(&database),
+        0o644,
+        "the loose mode is left untouched"
+    );
+    assert!(
+        !dir.path().join(format!("{STATE_DB_NAME}-wal")).exists(),
+        "the refusal opened no write-ahead log"
+    );
+    assert!(
+        !dir.path().join(format!("{STATE_DB_NAME}-shm")).exists(),
+        "the refusal opened no wal-index"
+    );
+}
+
+#[test]
+fn doctor_over_binary_created_state_reports_no_permissions_finding() {
+    // The row the fixed creation posture exists for: state the binary
+    // itself created — `run --once` over a fresh directory — verifies
+    // healthy once it carries a receipt. While the creation mode was
+    // unpinned the database landed at the umask default, the
+    // examination reported the permissions refusal for every
+    // binary-created fixture, and none could ever verify healthy.
+    let dir = TempDir::new("run-once-healthy");
+    let output = run_once(&dir, "http://127.0.0.1:9");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "the cycle over a fresh directory succeeds: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // The binary's own database reopens for the fixture receipt — itself
+    // proof of the mode it landed at, since the mutator now refuses any
+    // other — and the migration it already carries is idempotent.
+    let mut store =
+        StateStore::open(&dir.path().join(STATE_DB_NAME)).expect("reopen the binary's state");
+    store.migrate().expect("migrate is idempotent");
+    linked_receipt(&store, "2026-09-13T12:00:00Z");
+    drop(store);
+    let server = ReadinessEndpoint::start();
+    let doctor_output = run_doctor(&dir, server.endpoint());
+    server.finish();
+    assert_eq!(
+        doctor_output.status.code(),
+        Some(0),
+        "the binary's own state verifies healthy: {}",
+        String::from_utf8_lossy(&doctor_output.stderr)
+    );
+    assert!(
+        doctor_output.stderr.is_empty(),
+        "a healthy doctor writes no diagnostic, found {:?}",
+        String::from_utf8_lossy(&doctor_output.stderr)
+    );
+    let envelope = stream_document(&doctor_output.stdout);
+    assert_eq!(text_member(&envelope, "schema"), "archivist.cli-output/v1");
+    let result = member(&envelope, "result");
+    assert_eq!(text_member(result, "verdict"), "ok");
+    let checks = member(result, "checks");
+    match checks {
+        Value::Object(object) => {
+            assert_eq!(object.iter().count(), 9, "every registered check answers");
+            for (name, verdict) in object.iter() {
+                assert_eq!(verdict, &Value::Text("ok".to_owned()), "{name} passes");
+            }
+        }
+        other => panic!("the checks are an object, found {other:?}"),
+    }
+    assert_content_free(
+        "the binary-created healthy result document",
+        &doctor_output.stdout,
+        dir.path(),
+    );
 }
 
 #[test]

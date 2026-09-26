@@ -734,8 +734,6 @@ mod tests {
         let database = dir.path().join(STATE_DB_NAME);
         let mut store = StateStore::open(&database).expect("open state");
         store.migrate().expect("migrate state");
-        std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o600))
-            .expect("set database mode");
     }
 
     fn now() -> Timestamp {
@@ -808,8 +806,7 @@ mod tests {
 
     /// One verified receipt with its frozen request, so the examination's
     /// linkage evidence is satisfied: an induced condition is then the only
-    /// finding a test asserts on. Restores the pinned database mode the
-    /// schema's open does not pin itself.
+    /// finding a test asserts on.
     fn linked_receipt(dir: &TempDir, commit_time: &str) {
         let database = dir.path().join(STATE_DB_NAME);
         let store = StateStore::open(&database).expect("reopen state");
@@ -850,8 +847,6 @@ mod tests {
             )
             .expect("insert receipt");
         drop(store);
-        std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o600))
-            .expect("restore the pinned database mode");
     }
 
     #[test]
@@ -915,8 +910,6 @@ mod tests {
             )
             .expect("drop the newest migration history row");
         drop(store);
-        std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o600))
-            .expect("restore the pinned database mode");
         let result = inspect(&resolved_for(&dir), &[], true, &now()).expect("doctor result");
         assert_eq!(result.findings(), &[Finding::SqliteIntegrity]);
         assert_eq!(
@@ -947,8 +940,6 @@ mod tests {
             )
             .expect("orphan the receipt");
         drop(store);
-        std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o600))
-            .expect("restore the pinned database mode");
         let result = inspect(&resolved_for(&dir), &[], true, &now()).expect("doctor result");
         assert_eq!(result.findings(), &[Finding::SqliteIntegrity]);
     }
@@ -996,8 +987,6 @@ mod tests {
             )
             .expect("degrade the adapter");
         drop(store);
-        std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o600))
-            .expect("restore the pinned database mode");
         let result = inspect(&resolved_for(&dir), &[], true, &now()).expect("doctor result");
         assert_eq!(result.findings(), &[Finding::SourceReadability]);
         assert_eq!(result.evidence().unreadable_sources(), 1);
