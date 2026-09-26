@@ -218,6 +218,52 @@ every identity in the set checks out mixed-case, the never-rotated
 control-admin and backup/restore originals included, so the word was
 never accurate.
 
+## Phase 10 writer code surface (2026-09-26, bead aa-20c60828)
+
+The two Phase 10 identities stopped being credential-only: the code
+surface that consumes them has landed, so the provisioning story now runs
+end to end from the per-role OpenBao paths to a type-checked namespace
+boundary. What landed, in consumption order:
+
+- **Configuration.** The validated pair surface (`ScopedWritersConfig`
+  in `crates/archivist-storage-s3/src/config.rs`) assembles both halves
+  behind one fail-closed gate — each writer's credential reference
+  through the closed reference grammar, a literal value refused before
+  any store exists, one credential refused for both namespaces (bead
+  `aa-3beccbab`, children `aa-75e94035`/`aa-c0fe28d3`; tests
+  `scoped_writers_configuration_builds_the_two_halves`,
+  `scoped_writers_refuse_a_literal_credential_value`,
+  `scoped_writers_refuse_one_credential_for_both_namespaces`). The
+  deployment-side settings are `storage.catalog_write_credentials_ref`
+  and `storage.derived_write_credentials_ref`, registered in the config
+  registry with `file:` examples and no literal anywhere (bead
+  `aa-29dbe7c6`) — the replica-facing name for the pairs this note
+  provisions into `secret/rs-manager/iad-ci/armor/archivist-catalog-writer`
+  and `.../archivist-derived-writer`.
+- **Namespace boundary in code.** The tenant-level scope types
+  (`CatalogCheckpointKey`, `DerivedObjectKey`, and their list prefixes,
+  `crates/archivist-storage/src/scoped_write.rs`) parse only keys below
+  their own tenant's catalog/ or derived/ namespace, and the S3 backends
+  (`S3CatalogWriteStore`, `S3DerivedWriteStore`) re-check the same
+  predicate at the request edge — the writer-side mirror of the
+  control-admin scope tests (beads `aa-7a404d7c` and `aa-057ab358`;
+  proving surface `crates/archivist-storage-s3/tests/scoped_writer_scope.rs`,
+  including `the_edge_policy_denies_the_raw_and_control_prefixes` and
+  `configured_writers_reject_every_out_of_scope_prefix_and_action`, with
+  12 `compile_fail` doc tests pinning the action set at exactly put+list).
+- **Write-path integration.** The deterministic catalog rebuild composes
+  the two writers through the store traits
+  (`crates/archivist-cli/src/catalog.rs`, `rebuild_over`/`rebuild_loop`
+  over `CatalogWriteStore` and `DerivedWriteStore`), and the S3 pair
+  above is the production binding, constructible only from the validated
+  `ScopedWritersConfig`.
+
+What did not change: the identity set, the ACL strings, the anchors, and
+residency. Both pairs stay vault-resident at v1; no ExternalSecret
+references either per-role path; a host becomes resident only when a
+deployment carries the two `*_ref` settings, and none does yet — the
+empty-prefix state this note records is unchanged by code landing alone.
+
 ## Enforcement notes
 
 - Prefix matching is literal `strings.HasPrefix` after ACL normalization:
