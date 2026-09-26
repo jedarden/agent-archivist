@@ -208,6 +208,20 @@ plan Section 7.1's compatibility rules over this family are the
 [schema compatibility corpus](schema-compatibility.md), gated the same
 way.
 
+The Rust side of the family is generated, not re-typed:
+`tools/bindingsgen.py` emits
+`crates/archivist-protocol/src/bindings.rs` — a crate-private module of
+the URN space, closed-enum token sets with their bearing and fail-closed
+metadata, pinned version and plan constants, and reserved-field and
+member-name lists — and `archivist-protocol`'s `vocabulary` and
+`envelope` consume those constants instead of hand-typed copies. Two
+fast-lane steps keep the three layers (schemas, bindings, consumers)
+from drifting apart: `tools/bindingsgen.py --verify` byte-compares the
+committed module against a fresh regeneration (a schema edit without
+regeneration fails, and so does a hand edit of the generated file), and
+`--self-test` proves the rejection paths; inside the crate, tests pin
+each hand-written enum mapping against its generated slice.
+
 ## Open questions
 
 - The certificate's authority-rotation story is deliberately minimal:

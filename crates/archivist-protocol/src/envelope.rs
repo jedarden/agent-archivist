@@ -51,27 +51,25 @@ use crate::vocabulary::{
     VersionToken,
 };
 
-/// The wire protocol family of the `/v1/ingest` route (plan Section 7.1).
-pub const PROTOCOL_VERSION: i64 = 1;
+/// The wire protocol family of the `/v1/ingest` route (plan Section 7.1;
+/// the schema-pinned const, read from the generated bindings).
+pub const PROTOCOL_VERSION: i64 = crate::bindings::INGEST_ENVELOPE_PROTOCOL_VERSION;
 
-/// The envelope schema major version (plan Section 7.1).
-pub const ENVELOPE_VERSION: i64 = 1;
+/// The envelope schema major version (plan Section 7.1; the schema-pinned
+/// const, read from the generated bindings).
+pub const ENVELOPE_VERSION: i64 = crate::bindings::INGEST_ENVELOPE_ENVELOPE_VERSION;
 
 /// Maximum size of the canonical envelope serialization
-/// (`ingest-envelope.json` `canonicalMaxBytes`; plan Section 7.6).
-pub const CANONICAL_MAX_BYTES: usize = 65_536;
+/// (`ingest-envelope.json` `canonicalMaxBytes`; plan Section 7.6; read from
+/// the generated bindings).
+pub const CANONICAL_MAX_BYTES: usize = crate::bindings::INGEST_ENVELOPE_META_CANONICAL_MAX_BYTES;
 
 /// Per-attempt and server member names an envelope must never carry: freezing
 /// any of them would break the retry contract (see the module docs and the
-/// schema's `not` block).
-pub const RESERVED_FIELDS: [&str; 6] = [
-    "authorization_epoch",
-    "authorization_key_id",
-    "authorization_timestamp",
-    "commit_time",
-    "correlation_id",
-    "signature",
-];
+/// schema's `not` block). The list is the schema's `reservedFields` metadata,
+/// read from the generated bindings; a schema-side change lands here at the
+/// next regeneration or breaks the build.
+pub const RESERVED_FIELDS: [&str; 6] = crate::bindings::INGEST_ENVELOPE_RESERVED_FIELDS;
 
 /// Why an envelope byte sequence or value is not a valid version 1 envelope.
 ///
@@ -668,42 +666,10 @@ fn retained(object: &Object) -> Object {
 }
 
 /// The member names this envelope version defines (required plus optional),
-/// in schema order.
-const ENVELOPE_FIELD_NAMES: [&str; 33] = [
-    "adapter_artifact_id",
-    "adapter_id",
-    "adapter_projection_version",
-    "artifact_kind",
-    "attestation_id",
-    "blob_digest",
-    "capture_time",
-    "compressed_size",
-    "envelope_creation_time",
-    "envelope_version",
-    "generation",
-    "harness",
-    "id_source",
-    "inference_request_id",
-    "incoming_checksum",
-    "incoming_checksum_algorithm",
-    "occurrence_id",
-    "orchestrator_attempt_id",
-    "origin_client_id",
-    "parent_session_id",
-    "protocol_version",
-    "range_end",
-    "range_kind",
-    "range_start",
-    "request_id",
-    "source_time",
-    "storage_profile",
-    "tenant_id",
-    "trace_id",
-    "transport_encoding",
-    "uncompressed_size",
-    "upstream_session_id",
-    "uploader_client_id",
-];
+/// alphabetical — the schema's field-name set, read from the generated
+/// bindings, so an envelope member added or removed in the schema lands here
+/// at the next regeneration.
+const ENVELOPE_FIELD_NAMES: [&str; 33] = crate::bindings::INGEST_ENVELOPE_FIELD_NAMES;
 
 #[cfg(test)]
 mod tests {

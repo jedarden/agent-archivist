@@ -7,7 +7,8 @@
 # Lanes:
 #   - Fast:  fmt, build, clippy (-D warnings), rustdoc, stub scan, crate
 #     graph, license gate, error-code registry gate, metrics registry
-#     gate, config-key registry gate, wire-schema coherence gate, CLI
+#     gate, config-key registry gate, wire-schema coherence gate, the
+#     protocol-bindings regeneration drift gate, CLI
 #     command registry gate,
 #     release container baseline gate, storage-profile registry gate,
 #     adapter compatibility-matrix gate,

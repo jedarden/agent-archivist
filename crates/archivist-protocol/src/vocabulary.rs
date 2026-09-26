@@ -16,7 +16,12 @@
 //! value of the enum to inhabit, so an unrecognized security- or
 //! identity-bearing value is a parse failure, never a best-effort guess
 //! (plan Section 7.1). Adding a token is a v1-compatible schema change that
-//! lands here as a new variant plus its token mapping.
+//! lands here as a new variant plus its token mapping. The token sets
+//! themselves are read from the schema-generated bindings
+//! ([`crate::bindings`], emitted by `tools/bindingsgen.py` from
+//! `schemas/v1`), and each enum's variant mapping is pinned against its
+//! generated slice by a test, so a schema edit without regeneration fails
+//! the suite rather than drifting silently.
 //!
 //! [`schemas/v1/common.json`]: ../../../schemas/v1/common.json
 
@@ -602,8 +607,13 @@ impl FromStr for Ed25519Signature {
 
 /// Define a fail-closed enum: known tokens become variants, anything else is
 /// a grammar failure (plan Section 7.1 unknown-enum fail-closed).
+///
+/// `$binding` is the schema-generated token slice the enum's `tokens()` reads
+/// (see `crate::bindings`); the `variant => token` mapping below is pinned
+/// against that slice by the `generated_bindings_match_the_variant_mappings`
+/// tests, so the schemas stay the authority and a drift fails the suite.
 macro_rules! closed_enum {
-    ($(#[$doc:meta])* $name:ident { $($(#[$vdoc:meta])* $variant:ident => $token:literal),+ $(,)? }) => {
+    ($(#[$doc:meta])* $name:ident { $($(#[$vdoc:meta])* $variant:ident => $token:literal),+ $(,)? }, $binding:path) => {
         $(#[$doc])*
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         pub enum $name {
@@ -611,10 +621,11 @@ macro_rules! closed_enum {
         }
 
         impl $name {
-            /// Every known token, in schema order.
+            /// Every known token, in schema order (the generated bindings
+            /// slice).
             #[must_use]
             pub fn tokens() -> &'static [&'static str] {
-                &[$($token),+]
+                $binding
             }
 
             /// The canonical wire token.
@@ -661,7 +672,8 @@ closed_enum!(
         FileSlice => "file-slice",
         /// A versioned allowlisted projection of database events.
         DatabaseProjection => "database-projection",
-    }
+    },
+        crate::bindings::ENUM_COMMON_ARTIFACT_KIND_TOKENS
 );
 closed_enum!(
     /// Range coordinate kind (`range-kind`): an input to the occurrence
@@ -671,7 +683,8 @@ closed_enum!(
         Byte => "byte",
         /// Projected-event ordinals.
         Event => "event",
-    }
+    },
+        crate::bindings::ENUM_COMMON_RANGE_KIND_TOKENS
 );
 closed_enum!(
     /// Origin of the upstream session identifier (`id-source`):
@@ -682,7 +695,8 @@ closed_enum!(
         /// Adapter-minted `UUIDv4` stand-in for a missing harness session ID —
         /// never inferred from a path name.
         Synthetic => "synthetic",
-    }
+    },
+        crate::bindings::ENUM_COMMON_ID_SOURCE_TOKENS
 );
 closed_enum!(
     /// Named canonical storage encoder (`storage-profile`): determines
@@ -693,7 +707,8 @@ closed_enum!(
         /// Zstandard level 3, single-threaded, no dictionary, content size
         /// and checksum enabled (plan Section 7.6).
         ZstdV1 => "zstd-v1",
-    }
+    },
+        crate::bindings::ENUM_COMMON_STORAGE_PROFILE_TOKENS
 );
 closed_enum!(
     /// Declared wire encoding of the payload part (`transport-encoding`): a
@@ -705,7 +720,8 @@ closed_enum!(
         /// One Zstandard frame of the canonical bytes — a transport
         /// convenience, distinct from the `zstd-v1` storage profile.
         Zstd => "zstd",
-    }
+    },
+        crate::bindings::ENUM_COMMON_TRANSPORT_ENCODING_TOKENS
 );
 closed_enum!(
     /// Algorithm of the envelope's incoming representation checksum
@@ -713,7 +729,8 @@ closed_enum!(
     ChecksumAlgorithm {
         /// SHA-256, the only v1 algorithm.
         Sha256 => "sha256",
-    }
+    },
+        crate::bindings::ENUM_COMMON_CHECKSUM_ALGORITHM_TOKENS
 );
 closed_enum!(
     /// Per-object storage outcome (`storage-outcome`): exactly what the
@@ -728,7 +745,8 @@ closed_enum!(
         /// The commit is logically done; a writer-only profile cannot prove
         /// the physical result (RCPT-004).
         LogicallyCommittedUnknownPhysicalResult => "logically_committed_unknown_physical_result",
-    }
+    },
+        crate::bindings::ENUM_COMMON_STORAGE_OUTCOME_TOKENS
 );
 closed_enum!(
     /// Digital signature algorithm (`signature-algorithm`): Ed25519 only in
@@ -736,7 +754,8 @@ closed_enum!(
     SignatureAlgorithm {
         /// Ed25519 (RFC 8032).
         Ed25519 => "ed25519",
-    }
+    },
+        crate::bindings::ENUM_COMMON_SIGNATURE_ALGORITHM_TOKENS
 );
 closed_enum!(
     /// Exact-inference artifact kind (`artifact_kind` of
@@ -760,7 +779,8 @@ closed_enum!(
         Usage => "usage",
         /// A failure that produced no decodable provider response.
         TransportError => "transport-error",
-    }
+    },
+        crate::bindings::ENUM_INFERENCE_ARTIFACT_ARTIFACT_KIND_TOKENS
 );
 closed_enum!(
     /// Why a retry was started (`retry_reason` of
@@ -780,7 +800,8 @@ closed_enum!(
         StreamIncomplete => "stream-incomplete",
         /// A deadline the boundary enforces.
         Timeout => "timeout",
-    }
+    },
+        crate::bindings::ENUM_INFERENCE_ARTIFACT_RETRY_REASON_TOKENS
 );
 closed_enum!(
     /// Where a usage record's counters were extracted from
@@ -793,7 +814,8 @@ closed_enum!(
         ResponseBody => "response-body",
         /// One decoded event of a streamed attempt.
         StreamEvent => "stream-event",
-    }
+    },
+        crate::bindings::ENUM_INFERENCE_ARTIFACT_USAGE_SOURCE_TOKENS
 );
 closed_enum!(
     /// Closed transport-failure classification (`error_class` of
@@ -824,7 +846,8 @@ closed_enum!(
         /// A counted residual for a failure the boundary could not
         /// classify.
         Other => "other",
-    }
+    },
+        crate::bindings::ENUM_INFERENCE_ARTIFACT_ERROR_CLASS_TOKENS
 );
 
 #[cfg(test)]
@@ -982,6 +1005,129 @@ mod tests {
             StorageOutcome::LogicallyCommittedUnknownPhysicalResult
         );
         assert!(SignatureAlgorithm::parse("rsa").is_err());
+    }
+
+    /// Every closed enum's hand-written `variant => token` mapping must equal
+    /// the slice the schema-generated bindings carry: the schemas stay the
+    /// authority for the token sets (plan Phase 1 exit gate), and a schema
+    /// edit that skipped regeneration — or a hand-edited mapping — fails
+    /// here. Compile time already pins each slice's existence and
+    /// `tokens()`'s source; these tests pin the values, one per source
+    /// schema.
+    #[test]
+    fn generated_bindings_match_the_common_json_mappings() {
+        let schema = "schemas/v1/common.json";
+        let pairs: &[(&str, &[&str], &[&str])] = &[
+            (
+                schema,
+                crate::bindings::ENUM_COMMON_ARTIFACT_KIND_TOKENS,
+                &["file-slice", "database-projection"],
+            ),
+            (
+                schema,
+                crate::bindings::ENUM_COMMON_RANGE_KIND_TOKENS,
+                &["byte", "event"],
+            ),
+            (
+                schema,
+                crate::bindings::ENUM_COMMON_ID_SOURCE_TOKENS,
+                &["upstream", "synthetic"],
+            ),
+            (
+                schema,
+                crate::bindings::ENUM_COMMON_STORAGE_PROFILE_TOKENS,
+                &["zstd-v1"],
+            ),
+            (
+                schema,
+                crate::bindings::ENUM_COMMON_TRANSPORT_ENCODING_TOKENS,
+                &["identity", "zstd"],
+            ),
+            (
+                schema,
+                crate::bindings::ENUM_COMMON_CHECKSUM_ALGORITHM_TOKENS,
+                &["sha256"],
+            ),
+            (
+                schema,
+                crate::bindings::ENUM_COMMON_STORAGE_OUTCOME_TOKENS,
+                &[
+                    "created",
+                    "already_present",
+                    "replaced_equivalent",
+                    "logically_committed_unknown_physical_result",
+                ],
+            ),
+            (
+                schema,
+                crate::bindings::ENUM_COMMON_SIGNATURE_ALGORITHM_TOKENS,
+                &["ed25519"],
+            ),
+        ];
+        assert_pairs(schema, pairs);
+    }
+
+    #[test]
+    fn generated_bindings_match_the_inference_artifact_json_mappings() {
+        let schema = "schemas/v1/inference-artifact.json";
+        let pairs: &[(&str, &[&str], &[&str])] = &[
+            (
+                schema,
+                crate::bindings::ENUM_INFERENCE_ARTIFACT_ARTIFACT_KIND_TOKENS,
+                &[
+                    "provider-request",
+                    "provider-response",
+                    "streaming-event",
+                    "retry",
+                    "usage",
+                    "transport-error",
+                ],
+            ),
+            (
+                schema,
+                crate::bindings::ENUM_INFERENCE_ARTIFACT_RETRY_REASON_TOKENS,
+                &[
+                    "http-status",
+                    "rate-limit",
+                    "transport-error",
+                    "stream-incomplete",
+                    "timeout",
+                ],
+            ),
+            (
+                schema,
+                crate::bindings::ENUM_INFERENCE_ARTIFACT_USAGE_SOURCE_TOKENS,
+                &["response-body", "stream-event"],
+            ),
+            (
+                schema,
+                crate::bindings::ENUM_INFERENCE_ARTIFACT_ERROR_CLASS_TOKENS,
+                &[
+                    "connect",
+                    "dns",
+                    "tls-handshake",
+                    "read-timeout",
+                    "write-timeout",
+                    "connection-reset",
+                    "stream-interrupted",
+                    "transfer-decode",
+                    "other",
+                ],
+            ),
+        ];
+        assert_pairs(schema, pairs);
+    }
+
+    /// Compare one schema's generated token slices with the hand-written
+    /// variant mappings, entry by entry.
+    fn assert_pairs(schema: &str, pairs: &[(&str, &[&str], &[&str])]) {
+        for (source, generated, mapping) in pairs {
+            let source: &str = source;
+            assert_eq!(source, schema, "pairs grouped by their source schema");
+            let generated: &[&str] = generated;
+            let mapping: &[&str] = mapping;
+            assert_eq!(generated, mapping, "enum token drift against {schema}");
+        }
     }
 
     #[test]

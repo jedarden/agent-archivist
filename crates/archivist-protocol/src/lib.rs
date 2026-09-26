@@ -28,6 +28,11 @@
 //!   reconstruction fold relies on — attempt boundaries, dense attempt and
 //!   event ordinals, and the exactly-one transport-error rule below the
 //!   decoded-content boundary.
+//! - [`bindings`] — schema-derived constants generated from the
+//!   `schemas/v1` family by `tools/bindingsgen.py` (crate-private, so the
+//!   public surface does not grow): the URN space, closed enum token sets,
+//!   pinned version and plan constants, and reserved-field name lists that
+//!   [`vocabulary`] and [`envelope`] consume instead of re-typing them.
 //! - [`attempt_reconstruction`] — the read-side fold over an ordered
 //!   artifact stream: independent attempt timelines, retry edges, usage,
 //!   stream prefixes, and explicit completed, transport-failed,
@@ -104,6 +109,14 @@
 
 pub mod attempt_reconstruction;
 pub mod attempt_sequence;
+// Generated from schemas/v1 by tools/bindingsgen.py (see the module header):
+// crate-private schema-derived constants, deliberately broader than the
+// items consumed today. Formatting is rustfmt-skipped so regeneration stays
+// byte-exact; the bindings drift gate (tools/bindingsgen.py --verify) owns
+// the file's content.
+#[allow(dead_code)]
+#[rustfmt::skip]
+mod bindings;
 pub mod correlation;
 pub mod derivation;
 pub mod envelope;
