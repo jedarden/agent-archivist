@@ -356,6 +356,13 @@ digest; a divergence is a failed baseline change no matter which rule
 loosened. The recorded run in the Examples section below is the pilot
 evidence registered for RC-019 (verification `OV-RC-019`).
 
+The extraction-and-ssh shape above is also how the image's runtime
+acceptance runs: the five-category smoke harness (health, secret,
+vulnerability, signature-input, multi-replica) builds from the same kind
+of clean git-archive extraction on the same builder — see
+[image-smoke.md](image-smoke.md) for the categories, their failure
+modes, and the reference environment they stand up.
+
 ## Examples
 
 The `0.1.0` baseline this note ships with: `VERSION` is `0.1.0`, the
