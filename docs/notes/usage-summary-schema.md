@@ -40,6 +40,7 @@ different question. The Phase 10 material and where it lives:
 | Raw evidence | `occurrence_id` — the `occurrence-v1` digest, never a raw object path |
 | Source-reported identity | `model_id`, `service_tier` — optional, omitted-never-null |
 | The harness-reported denominator | `harness_usage` — `measured` or `unknown`, never absent, never a third encoding |
+| The provider-observed denominator | `provider_usage` — reserved member, `measured` or `unknown`, and **absent** when the occurrence is outside exact-capture coverage |
 
 `harness_usage` is the record's contract core. `measured` is a complete
 object: every count required, at least one assistant message summed
@@ -164,15 +165,32 @@ here: the closed shape is the compatibility rule
 (`additionalProperties: false`, unknown fields rejected), and anything
 beyond it — new members, redefined fields, changed digest rules — is
 `usage_summary_version` 2. Unknown security-bearing enum values fail
-closed, the plan Section 7.1 rule, not a compatibility break.
+closed, the plan Section 7.1 rule, not a compatibility break. The one
+sanctioned in-major addition is already spent: `provider_usage` landed
+inside pre-release v1 as the sibling record revision, so the closed
+shape now rejects everything outside the two denominators, and the next
+new member — whatever it is — is version 2.
 
 The first denominator is semantic and complete for every supported
-adapter. The Phase 9 provider-observed counts are a **separate,
-reserved member** with its own coverage state, to be added by a sibling
-record revision — never merged into `harness_usage`, never summed with
-it; a row may carry both, either, or neither. Until that revision
-lands, the closed shape rejects everything outside `harness_usage`, so
-no interim encoding can blur the boundary.
+adapter. The Phase 9 provider-observed counts are the **second
+denominator, `provider_usage`**: a separate, reserved member with its
+own coverage state — never merged into `harness_usage`, never summed
+with it; a row may carry both, either, or neither. Its `measured`
+object aggregates the exact-inference `usage` artifacts reconciled to
+the occurrence (`input_tokens`, `output_tokens`, `total_tokens`, and
+`usage_report_count ≥ 1` as the coverage denominator, the analog of
+`assistant_message_count`); `total_tokens` is the providers' own
+reported total retained as reported, never recomputed from the parts.
+Its `unknown` is the bounded refusal over a closed set of two:
+`unreconciled` (covered traffic whose exact count does not yet exist)
+and `malformed`. And the member's **absence is itself the third
+coverage state**, distinct from its `unknown`: absent means the
+occurrence is outside exact-capture coverage entirely — traffic that
+was neither routed nor hooked — while `unknown` means covered traffic
+whose exact count still does not exist. No producer API emits the member
+yet: it stays reserved until the Phase 9 join that aggregates usage
+reports per occurrence exists to derive it, so every committed
+`provider_usage` row is generator-pinned.
 
 ## Canonical serialization
 
@@ -194,7 +212,7 @@ in the generator or the bundle. The occurrence IDs cited as provenance
 are the very IDs the [raw-provenance bundle](raw-provenance-schemas.md)
 materializes, so the two bundles together demonstrate the Phase 10
 traceability sentence: token questions answered by a content-free row
-that traces to raw evidence by occurrence ID alone. The five scenarios:
+that traces to raw evidence by occurrence ID alone. The eight scenarios:
 
 1. **full-coverage** — every measured member at a nonzero value, model
    and tier present: the fixture that round-trips the full shape.
@@ -214,6 +232,18 @@ that traces to raw evidence by occurrence ID alone. The five scenarios:
 5. **usage-unsupported** — the region parses but the pinned projection
    does not support its shape: `unknown`/`unsupported`, with both
    identity members omitted rather than invented.
+6. **provider-observed** — both denominators measured on one row: the
+   harness semantic counts and the provider boundary's own counts
+   disagree (the provider's total includes tokens the harness never
+   saw), and the record carries both without any grand total.
+7. **provider-only** — the harness denominator is `unknown`/`absent`
+   while the provider denominator is measured: exact capture answered
+   the question the harness could not. The row carries exactly one of
+   the two denominators and validates.
+8. **provider-unreconciled** — covered traffic whose exact count does
+   not exist yet: `provider_usage` present as `unknown`/`unreconciled`
+   beside a measured harness denominator, the third cell of the
+   coverage matrix (member-absent rows appear among scenarios 3–5).
 
 Regeneration and verification:
 
@@ -236,12 +266,21 @@ negative matrix plus the structural cases (counts beside an `unknown`,
 a measured record missing a count member, zero summed messages,
 negative and fractional counts, an extra ephemeral class, null where a
 member is omitted, the `harness_usage` member removed, unknown version
-or pipeline) with a valid control that must not be rejected, and proves
-the committed records collectively exercise every member the schema
-defines — required and optional, measured and unknown, both ephemeral
-classes. Exit codes: 0 pass, 2 bundle directory missing, 3 byte drift,
-non-canonical formatting, or schema/invariant failure, 4 `jsonschema`
-unavailable.
+or pipeline) with a valid control that must not be rejected, proves the
+two denominators cannot collapse: the provider counters cannot ride
+`harness_usage`, the harness axes cannot ride `provider_usage`, the
+artifact's own counter names cannot be hoisted to the root, and the
+provider denominator cannot be summed into one number — with rows
+carrying one denominator and both staying valid as controls — pins the
+both/either/neither coverage matrix of the committed records against
+the manifest's counts, and reconciles the reserved provider member
+with the exact-inference artifact schema's own `usage`-kind definition
+(read from `schemas/v1/inference-artifact.json`, never restated). It
+then proves the committed records collectively exercise every member
+the schema defines — required and optional, measured and unknown, both
+ephemeral classes, both denominators. Exit codes: 0 pass, 2 bundle
+directory missing, 3 byte drift, non-canonical formatting, or
+schema/invariant failure, 4 `jsonschema` unavailable.
 
 `--self-test` proves the same rejection paths without the committed
 bundle: the digest construction recomputes from a record's own
@@ -253,10 +292,15 @@ per-record invariants reject every fault class (tampered digest, null
 where a member is omitted, counts beside an `unknown`, a reason outside
 the closed set, wrong pipeline or projection identity, an
 unvouchable occurrence, zero summed messages, negative and fractional
-counts, an extra ephemeral class) while a valid record passes clean;
+counts, an extra ephemeral class — and the provider denominator's own:
+measured-with-zero-reports, counts beside its `unknown`, a reason
+outside its closed set, the denominator summed into one number) while
+valid records pass clean — one denominator alone and both together;
 `--generate` writes every file byte-identically, is idempotent on its
-own bundle, and refuses a foreign directory; and the schema rejects
-the whole reserved-name matrix while the valid control stays valid.
+own bundle, and refuses a foreign directory; the schema rejects
+the whole reserved-name matrix while the valid control stays valid; and
+the reconciliation with the exact-inference artifact schema catches
+drift injected on either side of the two schemas.
 It shares `--verify`'s exit-code contract: 0 pass, 3 on any failed
 proof, 4 `jsonschema` unavailable.
 

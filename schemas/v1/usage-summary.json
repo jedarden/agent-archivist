@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:agent-archivist:schema:v1:usage-summary",
   "title": "Agent Archivist usage summary (usage_summary_version 1, pipeline usage-v1)",
-  "description": "The versioned, content-free derived record the deterministic catalog rebuild emits per raw occurrence (plan Phase 10, token accounting): the model identity and service tier the source reported, the harness-reported token counts read straight from the raw bytes — input, output, cache-read, cache-creation by ephemeral class, and reasoning — the number of assistant messages they were summed from, the adapter projection version that read them, and the raw occurrence provenance — nothing else. It is called usage, never consumption: `consumption-policy-v1` governs who may read derived content, which is a different question. Absent, malformed, or unsupported source usage is the bounded state `unknown`, never zero, so an incomplete source can never read as free. The record is content-free: no transcript text, no prompt, no tool argument, and no monetary amount appears anywhere in it — cost is computed at query time, outside the archive, from model, service tier, token counts, and a versioned price table, because provider prices change retroactively and per contract, and a stored amount would be unreproducible from the raw bytes and wrong from the moment pricing moved. Because the record carries no transcript content it is not subject to `use-approval-v1`; it stays tenant-scoped and inherits raw retention — a swept occurrence loses its usage row in the same pass, because a catalog row that cannot be rebuilt from the raw prefix is a divergence. The record is derivation-stable: every member is a deterministic function of the cited occurrence's raw bytes, the immutable pipeline version, and the pinned adapter projection version — wall-clock, producer, and run identity never enter — so a rebuild from the same raw prefix and pipeline version reproduces byte-identical records and digests (plan Phase 10 exit gate).",
+  "description": "The versioned, content-free derived record the deterministic catalog rebuild emits per raw occurrence (plan Phase 10, token accounting): the model identity and service tier the source reported, the harness-reported token counts read straight from the raw bytes — input, output, cache-read, cache-creation by ephemeral class, and reasoning — the number of assistant messages they were summed from, the adapter projection version that read them, the raw occurrence provenance, and the provider-observed counts the provider boundary itself reported (a reserved member: defined here now, optional until the Phase 9 exact-inference producer ships, carried with its own coverage state, and never summed with the harness counts) — nothing else. It is called usage, never consumption: `consumption-policy-v1` governs who may read derived content, which is a different question. Absent, malformed, or unsupported source usage is the bounded state `unknown`, never zero, so an incomplete source can never read as free — a rule that holds inside each denominator separately: the record carries two usage denominators as two members, `harness_usage` (required, semantic, complete for every supported adapter) and `provider_usage` (reserved, exact, covering only the routed or hooked traffic the Phase 9 boundary observed), each with its own measured-or-unknown coverage state, never merged into one member and never summed into one number, and a row may carry both, either, or neither. The record is content-free: no transcript text, no prompt, no tool argument, and no monetary amount appears anywhere in it — cost is computed at query time, outside the archive, from model, service tier, token counts, and a versioned price table, because provider prices change retroactively and per contract, and a stored amount would be unreproducible from the raw bytes and wrong from the moment pricing moved. Because the record carries no transcript content it is not subject to `use-approval-v1`; it stays tenant-scoped and inherits raw retention — a swept occurrence loses its usage row in the same pass, because a catalog row that cannot be rebuilt from the raw prefix is a divergence. The record is derivation-stable: every member is a deterministic function of the cited occurrence's raw bytes, the immutable pipeline version, and the pinned adapter projection version — wall-clock, producer, and run identity never enter — so a rebuild from the same raw prefix and pipeline version reproduces byte-identical records and digests (plan Phase 10 exit gate).",
   "type": "object",
   "x-archivist": {
     "mediaType": "application/vnd.agent-archivist.usage-summary+json;version=1",
@@ -31,7 +31,7 @@
         "description": "SHA-256 under the domain label `usage-summary-v1` (UTF-8 label bytes, one 0x00 terminator, then an 8-byte unsigned big-endian length and exactly that many bytes, the ingest-identifiers encodings reused) over the RFC 8785 canonicalization of the complete record with the `usage_summary_digest` member removed — exactly the exclusion shape `episode-v1`, the control-record-v1 signature, and the receipt-key certificate use, so one verifier core pattern walks every family. Self-verifying: an auditor recomputes it from the record's own bytes and refuses a mismatch (VAL-005). Acyclic by construction: the digest member is excluded from its own preimage, and no member of a usage summary references any record derived from it."
       }
     ],
-    "denominatorBoundary": "this schema defines the harness-reported denominator only. The Phase 9 provider-observed counts are a separate, reserved member with its own coverage state, added by the sibling record revision — never merged into `harness_usage`, never summed with it. The first denominator is semantic and complete for every supported adapter; the second is exact and covers only routed or hooked traffic; a row may carry both, either, or neither (plan Phase 10, token accounting). Until that member lands, the closed shape rejects everything outside `harness_usage`, so no interim encoding can blur the boundary",
+    "denominatorBoundary": "the record carries two usage denominators as two separate members, never one. `harness_usage` (required) is the harness-reported denominator: semantic and complete for every supported adapter, read from the raw bytes by the pinned adapter projection. `provider_usage` (reserved: defined here, optional in v1) is the Phase 9 provider-observed denominator: exact, and covering only the routed or hooked traffic the exact-inference boundary captured — its counters are the `usage` artifact kind's own bounded intersection (schemas/v1/inference-artifact.json), reconciled to the occurrence by the Phase 9 join that has not shipped; the member's shape is pinned now so no interim encoding can blur the boundary, and no v1 row is required to carry it until that producer exists. Each denominator holds its own coverage state inside its own object — `measured` or `unknown` — so neither can be collapsed into the other and no single member can express both; the grand-total and artifact-counter names are reserved below, so nothing at the root can sum the two into one number. The member's absence is itself a state, distinct from its `unknown`: absent means the occurrence is outside exact-capture coverage entirely (traffic that was neither routed nor hooked), while `unknown` means covered traffic whose exact count still does not exist. A row may carry both, either, or neither (plan Phase 10, token accounting)",
     "reservedFields": [
       "aggregate_tokens",
       "amount",
@@ -118,6 +118,9 @@
       "usd",
       "use_approval",
       "usage_cost",
+      "usage_input_tokens",
+      "usage_output_tokens",
+      "usage_total_tokens",
       "verdict"
     ]
   },
@@ -136,7 +139,7 @@
   "properties": {
     "usage_summary_version": {
       "const": 1,
-      "description": "Usage-summary schema major version (plan Section 7.1): the record-shape axis, independent of the pipeline axis below. Integer, currently 1. The derived family takes the control-family deviation from the plan's retain-ignore envelope rule, recorded for the episode family in docs/notes/derived-episode-schema.md and extended to this one: the closed shape is the compatibility rule, and anything beyond it — new members (including the reserved provider-observed denominator, which lands as a sibling record revision while the family is pre-release), redefined fields, changed digest rules — is usage_summary_version 2.",
+      "description": "Usage-summary schema major version (plan Section 7.1): the record-shape axis, independent of the pipeline axis below. Integer, currently 1. The derived family takes the control-family deviation from the plan's retain-ignore envelope rule, recorded for the episode family in docs/notes/derived-episode-schema.md and extended to this one: the closed shape is the compatibility rule, and anything beyond it — new members past the two landed denominators (the reserved provider-observed denominator itself landed inside pre-release v1 as the sibling record revision, the family's one sanctioned in-major addition), redefined fields, changed digest rules — is usage_summary_version 2.",
       "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
     },
     "usage_summary_digest": {
@@ -189,6 +192,11 @@
       "$ref": "#/$defs/harness-usage",
       "description": "The harness-reported denominator: the token counts the harness itself wrote into the raw bytes, as read by the pinned adapter projection version. Exactly one of the two states below — a `measured` object whose every count is required and real, or an `unknown` object naming why no count exists. There is no third encoding: a source that omitted usage cannot be expressed as zeros, because the measured branch demands every member with at least one summed message, and omitting this member entirely is itself invalid — the bounded state is mandatory, not optional.",
       "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+    },
+    "provider_usage": {
+      "$ref": "#/$defs/provider-usage",
+      "description": "The provider-observed denominator (plan Phase 10, token accounting; Phase 9 exact inference): the token counts the provider's own boundary reported for this occurrence's routed or hooked traffic, as the exact-inference family's `usage` artifact kind carried them (schemas/v1/inference-artifact.json) and the Phase 9 join reconciled to this occurrence. Reserved: the member's shape is pinned here now — ahead of that producer — so the boundary between the two denominators is exact from day one, but it is optional in v1 and no row is required to carry it until Phase 9 ships. Omitted — never null, never zeros — when the occurrence is outside exact-capture coverage entirely, traffic that was neither routed nor hooked: this denominator covers only captured traffic, so the member's absence is the not-covered state, distinct from the `unknown` refusal inside it. When present, exactly one of the two states below — a `measured` object carrying the artifact schema's bounded intersection summed over the reconciled usage reports, or an `unknown` object naming why no exact count reconciles. Never merged into `harness_usage`, never summed with it: the two denominators answer different questions — the first semantic and complete for every supported adapter, the second exact and partial by design — and nothing in this record compares, reconciles, or averages them against each other.",
+      "x-archivist": { "bearing": "security", "compat": "optional-additive-v1", "failClosed": true }
     }
   },
   "$defs": {
@@ -296,6 +304,73 @@
         }
       },
       "description": "Cache-creation tokens by ephemeral class — the classes the harness-reported axis distinguishes, both always stated. Total cache-creation is the sum of the classes, computed at query time; no separate total member exists, so the record carries one authoritative breakdown rather than two numbers that can disagree."
+    },
+    "provider-usage": {
+      "oneOf": [
+        { "$ref": "#/$defs/provider-usage-measured" },
+        { "$ref": "#/$defs/provider-usage-unknown" }
+      ],
+      "description": "The two-state contract of the provider-observed denominator — the same measured-or-refused discipline `harness-usage` pins, held in its own object over its own members, so neither denominator can be expressed inside the other and no single member can carry both. Capture coverage itself is not a state here: the member's presence is coverage, its absence is the not-covered state (traffic the Phase 9 boundary never saw), and `unknown` is reserved for covered traffic whose exact count still does not exist."
+    },
+    "provider-usage-measured": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "state",
+        "total_tokens",
+        "usage_report_count"
+      ],
+      "properties": {
+        "state": {
+          "const": "measured",
+          "description": "The Phase 9 join reconciled at least one `usage` artifact of the exact-inference family to this occurrence, and the counters below are summed over exactly those reports — each report's counters exactly as the boundary extracted them.",
+          "x-archivist": { "bearing": "security", "failClosed": true }
+        },
+        "input_tokens": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Provider-observed input tokens: the sum over the reconciled usage reports of each report's `usage_input_tokens` — the bounded intersection all supported providers expose, per the exact-inference artifact schema's own definition. The provider's accounting of the traffic, not the harness's accounting of the messages: nothing here is read out of the raw transcript bytes, and nothing here rewrites or replaces `harness_usage`."
+        },
+        "output_tokens": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Provider-observed output tokens: the sum over the reconciled usage reports of each report's `usage_output_tokens`, normalized as `input_tokens` is."
+        },
+        "total_tokens": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Provider-observed total: the sum over the reconciled usage reports of each report's `usage_total_tokens` — each retained as the provider reported it rather than recomputed, because a provider's own arithmetic (cached or discounted tokens) must never be silently rewritten. The one total in the record, and it is the provider's own: the harness-reported denominator deliberately carries components with no total member at all, and no member anywhere sums the two denominators together. Input plus output at most total is the artifact family's producer invariant, validated downstream (VAL-002), not schema syntax."
+        },
+        "usage_report_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807,
+          "description": "The number of exact-inference `usage` artifacts the counts were summed from — the coverage denominator of this aggregate, the provider-side analog of `assistant_message_count`. There is no measured-with-zero-reports encoding: traffic the boundary captured without any usage report is the `unknown`/`unreconciled` refusal, never zeros. The artifact's own per-report `usage_source` member (response-body or stream-event) deliberately does not appear here: a per-occurrence aggregate over several reports has no single source, so the member stays in the artifact where it is exact.",
+          "x-archivist": { "bearing": "structural" }
+        }
+      },
+      "description": "The measured provider-observed denominator: the exact-inference family's bounded intersection, summed over the reconciled usage reports. The member set is the artifact schema's own usage-counter definition (usage_input_tokens, usage_output_tokens, usage_total_tokens) under this family's member names, plus the report count that makes the aggregate's coverage explicit — the reconciliation tools/usagegen.py --verify enforces mechanically against schemas/v1/inference-artifact.json itself, so neither schema can drift from the other."
+    },
+    "provider-usage-unknown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason",
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "const": "unknown",
+          "description": "Covered traffic whose exact count still does not exist: the bounded refusal, carried instead of numbers. A provider denominator that is `unknown` carries no count member at all — zeros next to the refusal would reintroduce the ambiguity the state exists to remove — and the member itself stays present precisely so the row does not read as uncovered.",
+          "x-archivist": { "bearing": "security", "failClosed": true }
+        },
+        "reason": {
+          "type": "string",
+          "enum": ["unreconciled", "malformed"],
+          "description": "Why no exact count exists, from the closed v1 set. `unreconciled`: exact-capture material reconciles to this occurrence but contains no `usage` artifact among it — the boundary observed the traffic without extracting a usage report, so no exact count exists and none may be invented. `malformed`: a reconciled `usage` artifact's counters were absent or outside the bounded intersection's non-negative integer domain, so no honest count can be projected from them. Security-bearing and fail-closed: the reason is what keeps captured-but-unreported traffic from reading as free, so a value outside the set is rejected, never coerced; growth of the set is a schema major.",
+          "x-archivist": { "bearing": "security", "compat": "required-v1", "failClosed": true }
+        }
+      },
+      "description": "The bounded refusal of the provider-observed denominator: covered traffic (the member is present) for which no exact count reconciles. This is not the not-covered state — an occurrence outside capture coverage omits the member entirely — and it is never zeros."
     }
   },
   "not": {
@@ -385,6 +460,9 @@
       { "required": ["usd"] },
       { "required": ["use_approval"] },
       { "required": ["usage_cost"] },
+      { "required": ["usage_input_tokens"] },
+      { "required": ["usage_output_tokens"] },
+      { "required": ["usage_total_tokens"] },
       { "required": ["verdict"] }
     ]
   }

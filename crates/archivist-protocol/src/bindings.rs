@@ -2076,7 +2076,7 @@ pub(crate) const USAGE_SUMMARY_META_CLOSED_SHAPE: bool = true;
 pub(crate) const USAGE_SUMMARY_META_CONTENT_BOUNDARY: &str = "the record is numeric and referential only. The member grammars make the content-freeness claim mechanical rather than aspirational: model_id, service_tier, adapter_id, and the enum members are bounded tokens that cannot carry a sentence; the token counts are integers; and the reserved list rejects by name every carrier of transcript text, prompt, tool argument, or monetary amount. The negative matrix in tools/usagegen.py --verify injects each reserved name into a valid record and proves the schema rejects it";
 
 /// The `denominatorBoundary` metadata of `schemas/v1/usage-summary.json`.
-pub(crate) const USAGE_SUMMARY_META_DENOMINATOR_BOUNDARY: &str = "this schema defines the harness-reported denominator only. The Phase 9 provider-observed counts are a separate, reserved member with its own coverage state, added by the sibling record revision — never merged into `harness_usage`, never summed with it. The first denominator is semantic and complete for every supported adapter; the second is exact and covers only routed or hooked traffic; a row may carry both, either, or neither (plan Phase 10, token accounting). Until that member lands, the closed shape rejects everything outside `harness_usage`, so no interim encoding can blur the boundary";
+pub(crate) const USAGE_SUMMARY_META_DENOMINATOR_BOUNDARY: &str = "the record carries two usage denominators as two separate members, never one. `harness_usage` (required) is the harness-reported denominator: semantic and complete for every supported adapter, read from the raw bytes by the pinned adapter projection. `provider_usage` (reserved: defined here, optional in v1) is the Phase 9 provider-observed denominator: exact, and covering only the routed or hooked traffic the exact-inference boundary captured — its counters are the `usage` artifact kind's own bounded intersection (schemas/v1/inference-artifact.json), reconciled to the occurrence by the Phase 9 join that has not shipped; the member's shape is pinned now so no interim encoding can blur the boundary, and no v1 row is required to carry it until that producer exists. Each denominator holds its own coverage state inside its own object — `measured` or `unknown` — so neither can be collapsed into the other and no single member can express both; the grand-total and artifact-counter names are reserved below, so nothing at the root can sum the two into one number. The member's absence is itself a state, distinct from its `unknown`: absent means the occurrence is outside exact-capture coverage entirely (traffic that was neither routed nor hooked), while `unknown` means covered traffic whose exact count still does not exist. A row may carry both, either, or neither (plan Phase 10, token accounting)";
 
 /// The `derivationStability` metadata of `schemas/v1/usage-summary.json`.
 pub(crate) const USAGE_SUMMARY_META_DERIVATION_STABILITY: &str = "every member is a deterministic function of the cited occurrence's raw bytes, pipeline_id + pipeline_version, and the adapter projection version that read the usage region. No wall-clock, producer, run, assessment, approval, policy, or price input exists to make two derivations of the same inputs diverge — which is what makes the Phase 10 byte-identical-rebuild exit gate possible, and why every wall-clock, producer, and run-identity name is in the reserved list below";
@@ -2103,7 +2103,7 @@ pub(crate) const USAGE_SUMMARY_META_WRITE_ORDER: &str = "after the cited occurre
 /// `schemas/v1/usage-summary.json` (x-archivist.reservedFields), in
 /// schema order: names the record rejects outright, so retries
 /// cannot fork identity on them.
-pub(crate) const USAGE_SUMMARY_RESERVED_FIELDS: [&str; 86] = [
+pub(crate) const USAGE_SUMMARY_RESERVED_FIELDS: [&str; 89] = [
     "aggregate_tokens",
     "amount",
     "approval",
@@ -2189,13 +2189,16 @@ pub(crate) const USAGE_SUMMARY_RESERVED_FIELDS: [&str; 86] = [
     "usd",
     "use_approval",
     "usage_cost",
+    "usage_input_tokens",
+    "usage_output_tokens",
+    "usage_total_tokens",
     "verdict",
 ];
 
 /// Every top-level member name `schemas/v1/usage-summary.json` defines,
 /// alphabetical: the known-name set against which unknown members
 /// are recognized.
-pub(crate) const USAGE_SUMMARY_FIELD_NAMES: [&str; 11] = [
+pub(crate) const USAGE_SUMMARY_FIELD_NAMES: [&str; 12] = [
     "adapter_id",
     "adapter_projection_version",
     "harness_usage",
@@ -2203,6 +2206,7 @@ pub(crate) const USAGE_SUMMARY_FIELD_NAMES: [&str; 11] = [
     "occurrence_id",
     "pipeline_id",
     "pipeline_version",
+    "provider_usage",
     "service_tier",
     "tenant_id",
     "usage_summary_digest",
@@ -2236,6 +2240,21 @@ pub(crate) const ENUM_USAGE_SUMMARY_PIPELINE_ID_BEARING: &str = "security";
 
 /// Whether the `pipeline_id` enum in `schemas/v1/usage-summary.json` is declared fail-closed.
 pub(crate) const ENUM_USAGE_SUMMARY_PIPELINE_ID_FAIL_CLOSED: bool = true;
+
+/// Closed enum tokens of `provider-usage-unknown/reason` in `schemas/v1/usage-summary.json`.
+/// Bearing `security`; fail-closed: true.
+/// Schema order is wire order; unknown values fail closed on the
+/// wire (plan Section 7.1).
+pub(crate) const ENUM_USAGE_SUMMARY_PROVIDER_USAGE_UNKNOWN_REASON_TOKENS: &[&str] = &[
+    "unreconciled",
+    "malformed",
+];
+
+/// Bearing of the `provider-usage-unknown/reason` enum in `schemas/v1/usage-summary.json`.
+pub(crate) const ENUM_USAGE_SUMMARY_PROVIDER_USAGE_UNKNOWN_REASON_BEARING: &str = "security";
+
+/// Whether the `provider-usage-unknown/reason` enum in `schemas/v1/usage-summary.json` is declared fail-closed.
+pub(crate) const ENUM_USAGE_SUMMARY_PROVIDER_USAGE_UNKNOWN_REASON_FAIL_CLOSED: bool = true;
 
 /// The canonical schema URN of `schemas/v1/use-approval.json`, read from
 /// the schema's own `$id`.

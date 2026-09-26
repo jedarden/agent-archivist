@@ -14,8 +14,9 @@
 //! - every record is exactly its RFC 8785 canonical form plus one LF;
 //! - every schema rule this crate can evaluate without a JSON Schema
 //!   engine holds: required members, the closed shape, the reserved
-//!   `not` block, the two-state `harness_usage` contract, the closed enums
-//!   and bounded grammars;
+//!   `not` block, the two-state `harness_usage` contract, the two-state
+//!   `provider_usage` contract (the second, reserved denominator), the
+//!   closed enums and bounded grammars;
 //! - `usage_summary_digest` recomputes from each record's own canonical
 //!   bytes with the pinned `usage-summary-v1` construction (VAL-005);
 //! - the object key re-derives from the stored bytes and matches the
@@ -47,6 +48,12 @@ fn schema_path() -> PathBuf {
 /// The shared vocabulary path.
 fn common_schema_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/v1/common.json")
+}
+
+/// The exact-inference artifact schema the reserved denominator
+/// reconciles with.
+fn inference_schema_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/v1/inference-artifact.json")
 }
 
 /// The raw-provenance bundle whose occurrence IDs the corpus cites.
@@ -481,6 +488,61 @@ fn check_unknown(failures: &mut Vec<String>, rel: &str, usage: &Object) {
     }
 }
 
+/// The provider denominator's `measured` branch: the artifact schema's
+/// bounded intersection plus the report-count coverage denominator, in a
+/// closed shape — nothing else fits, so no harness axis and no per-report
+/// member can ride it.
+fn check_provider_measured(failures: &mut Vec<String>, rel: &str, usage: &Object) {
+    for name in ["input_tokens", "output_tokens", "total_tokens"] {
+        match usage.get(name) {
+            Some(value) if count_valid(value) => {}
+            Some(Value::Int(count)) => {
+                failures.push(format!(
+                    "{rel}: provider_usage.{name} must be non-negative, got {count}"
+                ));
+            }
+            other => failures.push(format!(
+                "{rel}: provider_usage.{name} must be an integer, got {other:?}"
+            )),
+        }
+    }
+    match usage.get("usage_report_count") {
+        Some(Value::Int(count)) if *count >= 1 => {}
+        Some(Value::Int(count)) => failures.push(format!(
+            "{rel}: measured provider usage must sum at least one usage report, got {count}"
+        )),
+        other => failures.push(format!(
+            "{rel}: usage_report_count must be an integer, got {other:?}"
+        )),
+    }
+    demand(
+        failures,
+        format!("{rel}: measured provider usage must carry exactly the closed counter set"),
+        usage.len() == 5,
+    );
+}
+
+/// The provider denominator's `unknown` branch: the refusal over the
+/// closed reason set — covered traffic whose exact count does not exist,
+/// never zeros and never silence.
+fn check_provider_unknown(failures: &mut Vec<String>, rel: &str, usage: &Object) {
+    demand(
+        failures,
+        format!("{rel}: an unknown provider usage carries no count member at all"),
+        usage.len() == 2,
+    );
+    match usage.get("reason") {
+        Some(Value::Text(reason)) => demand(
+            failures,
+            format!("{rel}: provider unknown reason {reason:?} is outside the closed v1 set"),
+            matches!(reason.as_str(), "unreconciled" | "malformed"),
+        ),
+        other => failures.push(format!(
+            "{rel}: provider unknown reason must be text, got {other:?}"
+        )),
+    }
+}
+
 #[test]
 fn corpus_manifest_pins_the_committed_bytes() {
     let root = corpus_root();
@@ -490,10 +552,10 @@ fn corpus_manifest_pins_the_committed_bytes() {
     demand(
         &mut failures,
         format!(
-            "manifest: expected the five scenario records, got {}",
+            "manifest: expected the eight scenario records, got {}",
             entries.len()
         ),
-        entries.len() == 5,
+        entries.len() == 8,
     );
     for (rel, bytes, sha) in &entries {
         match read(&root, rel) {
@@ -710,6 +772,478 @@ fn harness_usage_follows_the_two_state_contract() {
         &mut failures,
         "corpus: usage summary digests must be pairwise distinct".to_string(),
         distinct.len() == digests.len(),
+    );
+
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The reserved provider-observed denominator's own two-state contract:
+/// every record's `provider_usage` is either absent (outside capture
+/// coverage) or a well-formed measured/unknown object over its own
+/// members, and the corpus pins every cell of the both/either/neither
+/// coverage matrix — a row may carry both, either, or neither.
+#[test]
+fn provider_usage_follows_its_own_two_state_contract() {
+    let root = corpus_root();
+    let mut failures = Vec::new();
+
+    let mut both_measured = 0usize;
+    let mut harness_only = 0usize;
+    let mut provider_only = 0usize;
+    let mut neither_measured = 0usize;
+    let mut provider_unknown = 0usize;
+    let mut provider_absent = 0usize;
+
+    for (rel, _, _) in manifest_entries(&root).expect("manifest.json parses") {
+        let parsed = load_json(&root, &rel).expect("record parses");
+        let record = as_object(&parsed, &rel).expect("record is an object");
+        let harness_measured = matches!(
+            record.get("harness_usage"),
+            Some(Value::Object(usage)) if usage.get("state")
+                == Some(&Value::Text("measured".to_owned()))
+        );
+        // Absence is itself the third coverage state — outside exact
+        // capture entirely — and counts as not measured in the matrix.
+        let provider_measured = match record.get("provider_usage") {
+            None => {
+                provider_absent += 1;
+                false
+            }
+            Some(Value::Object(usage)) => match usage.get("state") {
+                Some(Value::Text(state)) if state == "measured" => {
+                    check_provider_measured(&mut failures, &rel, usage);
+                    true
+                }
+                Some(Value::Text(state)) if state == "unknown" => {
+                    provider_unknown += 1;
+                    check_provider_unknown(&mut failures, &rel, usage);
+                    false
+                }
+                other => {
+                    failures.push(format!(
+                        "{rel}: provider_usage.state must be measured or unknown, got {other:?}"
+                    ));
+                    false
+                }
+            },
+            other => {
+                failures.push(format!(
+                    "{rel}: provider_usage must be an object when present, got {other:?}"
+                ));
+                false
+            }
+        };
+        if provider_measured && harness_measured {
+            both_measured += 1;
+        } else if provider_measured {
+            provider_only += 1;
+        } else if harness_measured {
+            harness_only += 1;
+        } else {
+            neither_measured += 1;
+        }
+    }
+
+    // Every cell of the plan's both/either/neither matrix is populated.
+    for (cell, count) in [
+        ("both denominators measured", both_measured),
+        ("only the harness denominator measured", harness_only),
+        ("only the provider denominator measured", provider_only),
+        ("neither denominator measured", neither_measured),
+        ("provider denominator unknown", provider_unknown),
+        ("provider member absent", provider_absent),
+    ] {
+        demand(
+            &mut failures,
+            format!("corpus: the {cell} cell is empty — every coverage outcome must be pinned"),
+            count >= 1,
+        );
+    }
+
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The two denominators cannot be expressed as one member: they are two
+/// distinct schema properties with distinct `$defs` shapes, each closed
+/// over its own axes, the provider member reserved (optional) while the
+/// harness member is required, and the grand-total and artifact-counter
+/// names reserved at the root so nothing can sum or hoist the two into
+/// one member.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn the_two_denominators_are_separate_members() {
+    let schema = load_json(
+        schema_path().parent().unwrap(),
+        schema_path().file_name().unwrap().to_str().unwrap(),
+    )
+    .expect("usage-summary.json parses");
+    let schema = as_object(&schema, "usage-summary.json").expect("schema is an object");
+    let mut failures = Vec::new();
+
+    let Some(Value::Object(properties)) = schema.get("properties") else {
+        panic!("schema: properties must be an object");
+    };
+    let usage_members: Vec<&str> = properties
+        .iter()
+        .filter(|(name, _)| name.ends_with("_usage"))
+        .map(|(name, _)| name)
+        .collect();
+    demand(
+        &mut failures,
+        format!("schema: exactly two usage-denominator members must exist, got {usage_members:?}"),
+        usage_members.len() == 2
+            && usage_members.contains(&"harness_usage")
+            && usage_members.contains(&"provider_usage"),
+    );
+
+    // The harness member is required; the provider member is reserved —
+    // optional until the Phase 9 producer ships, never folded into the
+    // required set.
+    let required = text_list(
+        schema
+            .get("required")
+            .expect("schema pins required members"),
+        "schema required",
+    )
+    .expect("schema required is a string array");
+    demand(
+        &mut failures,
+        "schema: harness_usage must stay required".to_string(),
+        required.iter().any(|name| name == "harness_usage"),
+    );
+    demand(
+        &mut failures,
+        "schema: the reserved provider_usage must stay optional in v1".to_string(),
+        !required.iter().any(|name| name == "provider_usage"),
+    );
+    // The reservation is declared, not incidental: the provider member
+    // carries the optional-additive compat bearing, so tooling reads the
+    // reservation from the schema's own metadata instead of inferring it
+    // from the required list's silence.
+    let provider_compat = properties
+        .get("provider_usage")
+        .and_then(|meta| as_object(meta, "properties.provider_usage").ok())
+        .and_then(|meta| meta.get("x-archivist"))
+        .and_then(|meta| as_object(meta, "x-archivist").ok())
+        .and_then(|meta| meta.get("compat"));
+    demand(
+        &mut failures,
+        "schema: the reserved provider_usage must declare the \
+         optional-additive-v1 compat bearing"
+            .to_string(),
+        provider_compat == Some(&Value::Text("optional-additive-v1".to_owned())),
+    );
+
+    // Each denominator's measured object is closed over its own axes:
+    // `input_tokens`/`output_tokens` are shared axis names inside two
+    // different members; the axes unique to one denominator must not leak
+    // into the other's object.
+    let Some(Value::Object(defs)) = schema.get("$defs") else {
+        panic!("schema: $defs must be an object");
+    };
+    let measured_shapes = ["harness-usage-measured", "provider-usage-measured"];
+    let mut shapes = std::collections::BTreeMap::new();
+    for def in measured_shapes {
+        let shape = defs
+            .get(def)
+            .and_then(|shape| as_object(shape, def).ok())
+            .unwrap_or_else(|| panic!("schema: ${def} must exist"));
+        let Some(Value::Object(props)) = shape.get("properties") else {
+            panic!("schema: {def}.properties must be an object");
+        };
+        shapes.insert(def, props.clone());
+        demand(
+            &mut failures,
+            format!("schema: {def} must be the closed shape (additionalProperties false)"),
+            shape.get("additionalProperties") == Some(&Value::Bool(false)),
+        );
+    }
+    let harness_axes: Vec<String> = shapes["harness-usage-measured"]
+        .iter()
+        .map(|(name, _)| name.to_owned())
+        .collect();
+    let provider_axes: Vec<String> = shapes["provider-usage-measured"]
+        .iter()
+        .map(|(name, _)| name.to_owned())
+        .collect();
+    for axis in ["total_tokens", "usage_report_count", "usage_source"] {
+        demand(
+            &mut failures,
+            format!("schema: the harness denominator cannot carry the provider axis {axis}"),
+            !harness_axes.iter().any(|name| name == axis),
+        );
+    }
+    for axis in [
+        "cache_read_tokens",
+        "cache_creation",
+        "reasoning_tokens",
+        "assistant_message_count",
+    ] {
+        demand(
+            &mut failures,
+            format!("schema: the provider denominator cannot carry the harness axis {axis}"),
+            !provider_axes.iter().any(|name| name == axis),
+        );
+    }
+
+    // The refusal shapes are separate too: two closed reason enums, one
+    // per denominator, each in its own object.
+    for (def, reasons) in [
+        (
+            "harness-usage-unknown",
+            vec!["absent", "malformed", "unsupported"],
+        ),
+        ("provider-usage-unknown", vec!["unreconciled", "malformed"]),
+    ] {
+        let shape = defs
+            .get(def)
+            .and_then(|shape| as_object(shape, def).ok())
+            .unwrap_or_else(|| panic!("schema: ${def} must exist"));
+        let Some(Value::Object(props)) = shape.get("properties") else {
+            panic!("schema: {def}.properties must be an object");
+        };
+        let Some(Value::Object(reason)) = props.get("reason") else {
+            panic!("schema: {def}.reason must be an object");
+        };
+        let tokens = text_list(
+            reason
+                .get("enum")
+                .unwrap_or_else(|| panic!("schema: {def}.reason.enum")),
+            "reason enum",
+        )
+        .expect("reason enum is a string array");
+        demand(
+            &mut failures,
+            format!("schema: {def}.reason must be the closed set {reasons:?}"),
+            tokens == reasons,
+        );
+    }
+
+    // The grand-total names and the artifact schema's own counter names
+    // are reserved at the root, and the `not` block rejects exactly the
+    // reserved set — nothing at the top level can sum the denominators
+    // into one member or hoist the artifact's payload into the row.
+    let reserved = reserved_fields(schema);
+    for name in [
+        "aggregate_tokens",
+        "combined_tokens",
+        "summed_tokens",
+        "total_tokens",
+        "usage_input_tokens",
+        "usage_output_tokens",
+        "usage_total_tokens",
+    ] {
+        demand(
+            &mut failures,
+            format!("schema: {name} must be reserved at the root"),
+            reserved.iter().any(|reserved| reserved == name),
+        );
+    }
+    let Some(Value::Object(not)) = schema.get("not") else {
+        panic!("schema: the not block must exist");
+    };
+    let Some(Value::Array(any_of)) = not.get("anyOf") else {
+        panic!("schema: the not block must carry anyOf");
+    };
+    let rejected: Vec<String> = any_of
+        .iter()
+        .filter_map(|entry| as_object(entry, "not.anyOf entry").ok())
+        .filter(|entry| entry.len() == 1 && entry.contains("required"))
+        .filter_map(|entry| {
+            text_list(
+                entry
+                    .get("required")
+                    .expect("the required key was just checked"),
+                "not.anyOf required",
+            )
+            .ok()
+        })
+        .flatten()
+        .collect();
+    let mut sorted_reserved = reserved.clone();
+    sorted_reserved.sort();
+    let mut sorted_rejected = rejected.clone();
+    sorted_rejected.sort();
+    demand(
+        &mut failures,
+        "schema: the not block must reject exactly the reserved set".to_string(),
+        sorted_reserved == sorted_rejected,
+    );
+
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The reserved provider-observed denominator reconciles with the
+/// exact-inference artifact schema's own definition (aa-b5cf6541): the
+/// `usage` artifact kind's required counters — read from
+/// inference-artifact.json itself, never restated here — map member for
+/// member onto `provider-usage-measured`, on the same shared u63 domain,
+/// with the artifact's per-report `usage_source` deliberately absent from
+/// the per-occurrence aggregate.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn provider_usage_reconciles_with_the_inference_artifact_schema() {
+    let schema = load_json(
+        schema_path().parent().unwrap(),
+        schema_path().file_name().unwrap().to_str().unwrap(),
+    )
+    .expect("usage-summary.json parses");
+    let schema = as_object(&schema, "usage-summary.json").expect("schema is an object");
+    let artifact = load_json(
+        inference_schema_path().parent().unwrap(),
+        inference_schema_path()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap(),
+    )
+    .expect("inference-artifact.json parses");
+    let artifact =
+        as_object(&artifact, "inference-artifact.json").expect("artifact schema is an object");
+    let mut failures = Vec::new();
+
+    // The artifact side: the `usage` kind's own definition.
+    let Some(Value::Array(all_of)) = artifact.get("allOf") else {
+        panic!("inference-artifact.json: allOf must be an array");
+    };
+    let usage_branch = all_of
+        .iter()
+        .filter_map(|branch| as_object(branch, "allOf entry").ok())
+        .find(|branch| {
+            branch
+                .get("if")
+                .and_then(|cond| as_object(cond, "if").ok())
+                .and_then(|cond| cond.get("properties"))
+                .and_then(|props| as_object(props, "if.properties").ok())
+                .and_then(|props| props.get("artifact_kind"))
+                .and_then(|kind| as_object(kind, "artifact_kind").ok())
+                .and_then(|kind| kind.get("const"))
+                == Some(&Value::Text("usage".to_owned()))
+        })
+        .expect("inference-artifact.json: the usage-kind branch exists");
+    let then = as_object(
+        usage_branch
+            .get("then")
+            .expect("the usage branch carries a then"),
+        "then",
+    )
+    .expect("then is an object");
+    let artifact_required = text_list(
+        then.get("required")
+            .expect("the usage kind requires members"),
+        "usage-kind required",
+    )
+    .expect("usage-kind required is a string array");
+    for member in ["metadata", "usage_source"] {
+        demand(
+            &mut failures,
+            format!("artifact: the usage kind must require {member}"),
+            artifact_required.iter().any(|name| name == member),
+        );
+    }
+    let metadata_required = then
+        .get("properties")
+        .and_then(|props| as_object(props, "then.properties").ok())
+        .and_then(|props| props.get("metadata"))
+        .and_then(|shape| as_object(shape, "metadata").ok())
+        .and_then(|shape| shape.get("required"))
+        .map(|required| text_list(required, "metadata required").expect("a string array"))
+        .unwrap_or_default();
+    // The counter mapping this reconciliation pins: the artifact's own
+    // counter names onto the summary member names.
+    let counter_map = [
+        ("input_tokens", "usage_input_tokens"),
+        ("output_tokens", "usage_output_tokens"),
+        ("total_tokens", "usage_total_tokens"),
+    ];
+    for (_, theirs) in counter_map {
+        demand(
+            &mut failures,
+            format!(
+                "artifact: the usage kind's counter set must include {theirs} (bounded intersection)"
+            ),
+            metadata_required.iter().any(|name| name == theirs),
+        );
+    }
+    let artifact_metadata_props = artifact
+        .get("properties")
+        .and_then(|props| as_object(props, "properties").ok())
+        .and_then(|props| props.get("metadata"))
+        .and_then(|shape| as_object(shape, "metadata").ok())
+        .and_then(|shape| shape.get("properties"))
+        .and_then(|props| as_object(props, "metadata.properties").ok())
+        .expect("the metadata allowlist carries properties");
+    for (_, theirs) in counter_map {
+        let counter = artifact_metadata_props
+            .get(theirs)
+            .and_then(|shape| as_object(shape, theirs).ok())
+            .unwrap_or_else(|| panic!("artifact: {theirs} must exist"));
+        demand(
+            &mut failures,
+            format!("artifact: {theirs} must stay the shared u63 counter"),
+            counter.get("$ref")
+                == Some(&Value::Text(
+                    "urn:agent-archivist:schema:v1:common#/$defs/u63".to_owned(),
+                )),
+        );
+    }
+
+    // The summary side: the measured provider denominator carries exactly
+    // the mapped counters plus its state and report count, all u63, in a
+    // closed shape — and no per-report source member.
+    let Some(Value::Object(defs)) = schema.get("$defs") else {
+        panic!("schema: $defs must be an object");
+    };
+    let measured = as_object(
+        defs.get("provider-usage-measured")
+            .expect("provider-usage-measured exists"),
+        "provider-usage-measured",
+    )
+    .expect("provider-usage-measured is an object");
+    let Some(Value::Object(props)) = measured.get("properties") else {
+        panic!("schema: provider-usage-measured.properties must be an object");
+    };
+    let required = text_list(
+        measured
+            .get("required")
+            .expect("provider-usage-measured pins requireds"),
+        "provider-usage-measured required",
+    )
+    .expect("a string array");
+    for (ours, _) in counter_map {
+        demand(
+            &mut failures,
+            format!("schema: the provider denominator must require {ours}"),
+            required.iter().any(|name| name == ours),
+        );
+        demand(
+            &mut failures,
+            format!("schema: the provider counter {ours} must stay the shared u63"),
+            props
+                .get(ours)
+                .and_then(|shape| as_object(shape, ours).ok())
+                .and_then(|shape| shape.get("$ref"))
+                == Some(&Value::Text(
+                    "urn:agent-archivist:schema:v1:common#/$defs/u63".to_owned(),
+                )),
+        );
+    }
+    demand(
+        &mut failures,
+        "schema: the measured provider denominator must require the report-count coverage denominator"
+            .to_string(),
+        required.iter().any(|name| name == "usage_report_count"),
+    );
+    demand(
+        &mut failures,
+        "schema: the artifact's per-report usage_source cannot ride the per-occurrence aggregate"
+            .to_string(),
+        !props.contains("usage_source"),
+    );
+    demand(
+        &mut failures,
+        "schema: the provider denominator must be the closed counter shape".to_string(),
+        props.len() == 5,
     );
 
     assert!(failures.is_empty(), "{}", failures.join("\n"));

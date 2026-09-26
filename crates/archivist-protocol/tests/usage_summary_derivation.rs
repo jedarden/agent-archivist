@@ -6,8 +6,8 @@
 //!
 //! `usage_summary_corpus.rs` validates the committed bytes against the
 //! schema's own rules; this file makes the committed corpus vectors double
-//! as implementation tests of the *producer*: each of the five scenarios
-//! is re-derived through the real derivation
+//! as implementation tests of the *producer*: each of the five harness
+//! scenarios is re-derived through the real derivation
 //! ([`UsageSummary::derive`]) from pinned projection inputs, and the
 //! output must be byte-identical to the committed record — digest,
 //! canonical serialization, object key, and identity members included.
@@ -18,6 +18,16 @@
 //! from the raw-provenance bundle's occurrence manifests, the same source
 //! the generator cites, so the replay exercises the exact traceability
 //! path the governed family pins.
+//!
+//! The corpus's three provider-observed scenarios (`provider-observed`,
+//! `provider-only`, `provider-unreconciled`) are generator-pinned only:
+//! `provider_usage` is the reserved second denominator, and no producer
+//! API emits it here — it reconciles the exact-inference artifact family
+//! (`provider_usage_reconciles_with_the_inference_artifact_schema` and
+//! `the_two_denominators_are_separate_members` in
+//! `usage_summary_corpus.rs` check that structurally) and stays reserved
+//! until the Phase 9 join that aggregates usage reports per occurrence
+//! exists to derive it from.
 
 use std::fs;
 use std::path::{Path, PathBuf};
