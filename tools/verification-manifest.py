@@ -19,6 +19,8 @@ Subcommands:
          present in the evaluated commit.
   emit   Write a manifest for the current commit from a run's outcomes file
          (TSV ``name<TAB>pass|fail`` lines or the equivalent JSON object).
+         The committed SBOM's digest is recorded in the ``sbom`` section
+         (docs/notes/release-container.md RC-024, RELEASE.md release step 1).
   sync   Add register skeleton entries for requirements not yet mapped.
   self-test
          Prove the rejection paths against sandbox roots: the committed
@@ -59,6 +61,7 @@ REGISTER_PATH = Path("tools/verification-register.json")
 REQUIREMENTS_PATH = Path("docs/notes/requirements.md")
 TOOLCHAIN_PATH = Path("rust-toolchain.toml")
 LOCK_PATH = Path("Cargo.lock")
+SBOM_PATH = Path("containers/agent-archivist/sbom.json")
 FIXTURES_PATH = Path("fixtures")
 
 REGISTER_VERSION = 1
@@ -93,6 +96,9 @@ PILOT_EVIDENCE_KINDS = (
 )
 ARTIFACT_KINDS = ("oci", "archive", "checksum")
 SBOM_FORMATS = ("cyclonedx", "spdx")
+# The one SBOM the repository carries (docs/notes/release-container.md
+# RC-021); `emit` records its digest per RELEASE.md release step 1 (RC-024).
+SBOM_FORMAT = "cyclonedx"
 
 # Verification owners, one per requirement group (plan Section 16). A new
 # requirement group is a reviewed change that extends this map, the plan's
@@ -582,6 +588,17 @@ def manifest_environment_errors(
                     f"({actual_lock})",
                 )
             )
+    sbom = manifest.get("sbom")
+    if isinstance(sbom, dict) and DIGEST_RE.match(str(sbom.get("digest", ""))):
+        actual_sbom = file_digest(root / SBOM_PATH)
+        if sbom["digest"] != actual_sbom:
+            errors.append(
+                (
+                    STALE,
+                    f"manifest sbom digest does not match the evaluated {SBOM_PATH} "
+                    f"({actual_sbom})",
+                )
+            )
     fixture = manifest.get("fixture_digest")
     actual_fixture = fixture_digest(root)
     if isinstance(fixture, str) and (fixture == "absent" or DIGEST_RE.match(fixture)):
@@ -989,6 +1006,9 @@ def cmd_emit(
         return report(
             [(MALFORMED, f"cannot digest pinned build inputs {', '.join(missing)}")]
         )
+    # The committed SBOM's digest is release evidence (RELEASE.md release
+    # step 1, RC-024); absent before RC-021's baseline, an empty section.
+    sbom_digest = file_digest(root / SBOM_PATH)
 
     outcome_entries: dict[str, dict] = {}
     for name, result in outcomes.items():
@@ -1019,7 +1039,11 @@ def cmd_emit(
         "outcomes": outcome_entries,
         "benchmarks": {},
         "capability_reports": {},
-        "sbom": {},
+        "sbom": (
+            {"format": SBOM_FORMAT, "digest": sbom_digest}
+            if sbom_digest is not None
+            else {}
+        ),
         "artifacts": {},
         "pilot_evidence": {},
     }
@@ -1352,6 +1376,73 @@ def self_test() -> int:
         case(
             "lock digest drift",
             full_errors(root, manifest, SANDBOX_COMMIT),
+            True,
+            STALE,
+        )
+
+        root = write_sandbox(base / "k2")
+        manifest = sandbox_manifest(root)
+        manifest["sbom"] = {"format": "cyclonedx", "digest": "sha256:" + "3" * 64}
+        case(
+            "sbom digest drift",
+            full_errors(root, manifest, SANDBOX_COMMIT),
+            True,
+            STALE,
+        )
+
+        # The sbom section is release evidence (RC-024): emit populates it
+        # from the committed document and check binds it to the evaluated
+        # tree — recording, then staleness when the document moves after
+        # the fact.
+        register = clone(SANDBOX_REGISTER)
+        register["requirements"]["TST-001"]["verifications"] = ["T-TST-001"]
+        register["verifications"]["T-TST-001"]["evidence"] = ["outcomes", "sbom"]
+        del register["verifications"]["OV-TST-001"]
+        root = write_sandbox(base / "k3", register)
+        sbom_file = root / SBOM_PATH
+        sbom_file.parent.mkdir(parents=True, exist_ok=True)
+        sbom_file.write_text('{"bomFormat": "CycloneDX"}\n', encoding="utf-8")
+        outcomes = base / "sbom-outcomes.tsv"
+        outcomes.write_text("fmt\tpass\nT-TST-001\tpass\n", encoding="utf-8")
+        emitted = base / "sbom-manifest.json"
+        sbom_recorded = (
+            run_quiet(
+                [
+                    "emit",
+                    "--outcomes",
+                    str(outcomes),
+                    "--output",
+                    str(emitted),
+                    "--root",
+                    str(root),
+                    "--commit",
+                    SANDBOX_COMMIT,
+                ]
+            )
+            == 0
+            and json.loads(emitted.read_text(encoding="utf-8"))["sbom"]
+            == {"format": "cyclonedx", "digest": file_digest(sbom_file)}
+            and run_quiet(
+                ["check", "--manifest", str(emitted), "--root", str(root),
+                 "--commit", SANDBOX_COMMIT]
+            )
+            == 0
+        )
+        if sbom_recorded:
+            passed += 1
+            print("  ok  accepts: emit records the committed sbom digest and check binds it")
+        else:
+            failed += 1
+            print(
+                "  FAIL should accept: emit records the committed sbom "
+                "digest and check binds it"
+            )
+        sbom_file.write_text('{"bomFormat": "CycloneDX", "moved": true}\n', encoding="utf-8")
+        case(
+            "sbom changed after the manifest was emitted",
+            full_errors(
+                root, json.loads(emitted.read_text(encoding="utf-8")), SANDBOX_COMMIT
+            ),
             True,
             STALE,
         )

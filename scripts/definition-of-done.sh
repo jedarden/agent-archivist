@@ -10,7 +10,8 @@
 #     gate, config-key registry gate, wire-schema coherence gate, the
 #     protocol-bindings regeneration drift gate, CLI
 #     command registry gate,
-#     release container baseline gate, storage-profile registry gate,
+#     release container baseline gate, release SBOM determinism gate,
+#     storage-profile registry gate,
 #     adapter compatibility-matrix gate,
 #     control trust schema gate, threat-model acceptance gate,
 #     synthetic-fixture, conformance-corpus, compat-corpus,
@@ -205,10 +206,19 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   run_check "protocol bindings policy"  python3 tools/bindingsgen.py --self-test
   # Release container baseline (docs/notes/release-container.md): the
   # VERSION grammar and its equality with the workspace version, the
-  # digest-pinned two-stage Dockerfile matching the pinned toolchain, and
-  # the same-commit rule for the two version records walked over git
-  # history; `--self-test` proves the rejection paths.
+  # digest-pinned two-stage Dockerfile matching the pinned toolchain, the
+  # same-commit rule for the two version records walked over git history,
+  # and the committed SBOM's presence, CycloneDX 1.5 shape, subject
+  # version, and Cargo.lock coherence (RC-021 through RC-023);
+  # `--self-test` proves the rejection paths.
   run_check "release container baseline"  python3 tools/check-release-container.py --self-test
+  # Release image SBOM determinism (docs/notes/release-container.md
+  # RC-021 through RC-023): the committed CycloneDX document is the
+  # deterministic output of the committed generator over this tree —
+  # two runs byte-identical, the byte-compare sensitive to a single
+  # mutated character, and the committed copy fresh. Plain bash plus the
+  # Python standard library: offline, no docker, no git.
+  run_check "release sbom"  containers/agent-archivist/generate-sbom.sh --self-test
   # Storage-profile registry (docs/notes/storage-profiles.md and
   # tools/storage-profiles.toml): the community qualification path —
   # profile classes with MinIO pinned as the one reference profile,

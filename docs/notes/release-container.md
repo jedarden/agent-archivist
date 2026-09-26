@@ -17,15 +17,16 @@ pins the baseline the gate can check on every commit, before any image is
 published.
 
 The artifacts are
-[`containers/agent-archivist/VERSION`](../../containers/agent-archivist/VERSION)
-and
-[`containers/agent-archivist/Dockerfile`](../../containers/agent-archivist/Dockerfile);
+[`containers/agent-archivist/VERSION`](../../containers/agent-archivist/VERSION),
+[`containers/agent-archivist/Dockerfile`](../../containers/agent-archivist/Dockerfile),
+and the committed SBOM
+[`containers/agent-archivist/sbom.json`](../../containers/agent-archivist/sbom.json);
 `tools/check-release-container.py` (fast lane of
 [`scripts/definition-of-done.sh`](../../scripts/definition-of-done.sh))
-rejects a version file, Dockerfile, or commit history that violates any
-rule marked enforceable below. When this document and the tool disagree,
-the tool's pinned constants decide, and one of the two is wrong and must
-be fixed in the same commit.
+rejects a version file, Dockerfile, SBOM, or commit history that violates
+any rule marked enforceable below. When this document and the tool
+disagree, the tool's pinned constants decide, and one of the two is wrong
+and must be fixed in the same commit.
 
 ## 1. Scope and authority
 
@@ -211,6 +212,51 @@ carries the next rule number:
   **MUST NOT** appear. The directive is image-config metadata: it adds no
   layer and takes no part in the RC-018 mtime discipline.
 
+One further rule family is supply-chain contract — what the image claims
+to contain — and rides the same baseline: the image's software bill of
+materials, deterministic like the build itself, plus the manifest entry
+that binds the claim to the qualified commit (RELEASE.md, release step 1).
+
+- **RC-021** — The release image **MUST** ship a software bill of
+  materials committed at `containers/agent-archivist/sbom.json`: a
+  CycloneDX 1.5 JSON document whose subject is the release unit
+  (`agent-archivist` at the `VERSION` content) and whose components are
+  exactly the `Cargo.lock` package set — one component per `[[package]]`,
+  `pkg:cargo/<name>@<version>` purls, ordered by name then version, with
+  the same-commit discipline as the version records: a dependency change
+  and the SBOM regeneration land in one commit, and the document is never
+  hand-edited. The committed copy is part of the per-commit baseline the
+  gate checks (presence, schema, subject version, lock coherence); a
+  missing, stale, or edited SBOM fails the fast lane exactly as a broken
+  Dockerfile does.
+- **RC-022** — The SBOM **MUST** be a deterministic function of the tree —
+  a pure function of `Cargo.lock`, `vendor/`, and `VERSION`, rendered by
+  the committed generator
+  (`containers/agent-archivist/generate-sbom.sh`, plain bash plus the
+  Python standard library; no network, no container runtime, no git). The
+  output is canonical (key-sorted JSON, components ordered by name then
+  version), carries no serial number or other random identifier, and takes
+  no input from the wall clock: `SOURCE_DATE_EPOCH` is its only clock,
+  rendered as `metadata.timestamp`. Two runs over one tree **MUST** be
+  byte-identical — the same acceptance shape as RC-019, held at document
+  level where it can be checked on every commit, offline and in seconds.
+- **RC-023** — Every registry component **MUST** be corroborated against
+  its vendored source before it may enter the SBOM: the vendored manifest
+  (`vendor/<name>[-<version>]/Cargo.toml`) must name the same package and
+  version as `Cargo.lock`, and the crate checksum recorded in the
+  vendored `.cargo-checksum.json` must equal `Cargo.lock`'s. The SBOM's
+  hashes are therefore the lock's checksums as proven against the shipped
+  sources, and an unvendored dependency cannot enter the document — the
+  SBOM facet of RC-014's vendoring rule.
+- **RC-024** — The qualified commit's verification manifest **MUST**
+  record the SBOM digest: `sbom.format` `cyclonedx` and `sbom.digest`,
+  the SHA-256 of the committed `sbom.json`, populated by
+  `tools/verification-manifest.py emit` (RELEASE.md, release step 1), so
+  the dependency claim is signed evidence like every other release
+  artifact rather than a file that merely sits in the tree. A manifest
+  whose SBOM digest does not match the evaluated tree is stale evidence
+  and fails, exactly as a drifted lock digest does.
+
 ## 5. What is deliberately not yet true
 
 The project is design-stage (plan Section 17). Accordingly:
@@ -255,12 +301,29 @@ checks, offline and in seconds:
 - the same-commit rule (RC-008 through RC-010) by walking the commit
   history of both version records from the introduction of `VERSION`, and
   the release-tag rule (RC-006) by resolving every `vX.Y.Z` tag against
-  the `VERSION` content at its commit.
+  the `VERSION` content at its commit;
+- the SBOM rules RC-021 through RC-023 in two complementary halves:
+  structurally, the gate validates the committed document — presence,
+  CycloneDX 1.5 shape, subject at the `VERSION` content, and component
+  set, order, purls, and checksums reconciled against `Cargo.lock` — and
+  `--self-test` proves the rejection paths over mutated documents; and
+  end to end, the fast lane runs the committed generator's `--self-test`
+  (`generate-sbom.sh`), which regenerates the document twice and proves
+  the two runs byte-identical, the byte-compare sensitive to a single
+  mutated character, and the committed copy exactly this tree's output.
 
 `--self-test` first validates the committed tree, then proves the
-rejection paths — mutated version files, mutated Dockerfiles, and
-synthetic divergent histories — the same way the other registry gates do.
-Output is content-free: paths, versions, digests, and commit counts only.
+rejection paths — mutated version files, mutated Dockerfiles, mutated
+SBOM documents, and synthetic divergent histories — the same way the
+other registry gates do. Output is content-free: paths, versions,
+digests, and commit counts only.
+
+RC-024 sits outside this gate: the SBOM digest is recorded by
+`tools/verification-manifest.py emit` into the run's
+`verification-manifest.json` (RELEASE.md, release step 1) and bound to
+the evaluated tree the same way the toolchain and lock digests are — a
+manifest keyed to a commit whose SBOM has since changed is stale
+evidence.
 
 The reproducibility property (RC-019) itself sits outside the per-commit
 gate — the gate is offline, seconds-fast, and never builds anything. It is
@@ -316,8 +379,14 @@ demonstrably diverged (`sha256:5216…d69` versus `sha256:ca8f…b88` from
 one tree), and diffing the layer tars of a still-diverging successor
 showed the two images differing only in the `/etc` and `/tmp` directory
 mtimes — stamped one wall-clock second apart by the build itself — which
-is why the install RUN pins all four paths. A hypothetical `0.2.0`
-release bumps `Cargo.toml` and `VERSION` to `0.2.0` in one commit and
+is why the install RUN pins all four paths. The committed SBOM baseline
+rides the same clock: `containers/agent-archivist/sbom.json` is the
+generator's output for this tree at `SOURCE_DATE_EPOCH=1789272549` (the
+double-build epoch above, rendered as `metadata.timestamp`
+`2026-09-13T04:09:09Z`) — 99 components, the 12 workspace crates marked
+`archivist:source: workspace` and the 87 registry crates carrying their
+`Cargo.lock` checksums and `archivist:vendored` locators. A hypothetical
+`0.2.0` release bumps `Cargo.toml` and `VERSION` to `0.2.0` in one commit and
 tags that commit `v0.2.0`; a commit that bumps only `Cargo.toml` is
 rejected by the gate as a same-commit violation even if the next commit
 repairs it.

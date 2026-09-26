@@ -32,8 +32,10 @@ The machine-checked baseline for this contract is
 [docs/notes/release-container.md](docs/notes/release-container.md):
 `tools/check-release-container.py` (definition-of-done fast lane) enforces the
 `VERSION` grammar, its equality with the workspace version at every commit,
-the same-commit rule over git history, release-tag matching, and the
-digest-pinned Dockerfile whose builder tag matches the pinned toolchain.
+the same-commit rule over git history, release-tag matching, the
+digest-pinned Dockerfile whose builder tag matches the pinned toolchain, and
+the committed CycloneDX SBOM against the lock (RC-021 through RC-023;
+RC-024 binds its digest into the verification manifest of release step 1).
 
 ## Release sequence
 

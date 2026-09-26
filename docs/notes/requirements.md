@@ -391,3 +391,24 @@ its distribution pointer (RC-007) are contract framing owned by the note and
   command's bounded GET on the served process-only liveness route), with
   `--interval`, `--timeout`, `--start-period`, and `--retries` pinned
   explicitly, and `HEALTHCHECK NONE` **MUST NOT** appear.
+- **RC-021** — The release image **MUST** ship a CycloneDX 1.5 SBOM
+  committed at `containers/agent-archivist/sbom.json` — subject
+  `agent-archivist` at the `VERSION` content, components exactly the
+  `Cargo.lock` package set with `pkg:cargo/<name>@<version>` purls ordered
+  by name then version — regenerated in the same commit as any dependency
+  change and never hand-edited; the committed copy is part of the
+  per-commit baseline the gate checks.
+- **RC-022** — The SBOM **MUST** be a deterministic function of the tree
+  (`Cargo.lock`, `vendor/`, `VERSION`), rendered by the committed
+  generator with canonical, sorted output, no serial number or other
+  random identifier, and `SOURCE_DATE_EPOCH` as its only clock; two runs
+  over one tree **MUST** be byte-identical.
+- **RC-023** — Every registry component **MUST** be corroborated against
+  its vendored source — the vendored manifest names the same package and
+  version, and the vendored `.cargo-checksum.json` crate checksum equals
+  `Cargo.lock`'s — so an unvendored dependency cannot enter the SBOM.
+- **RC-024** — The qualified commit's verification manifest **MUST**
+  record the SBOM digest (`sbom.format` `cyclonedx`, `sbom.digest` the
+  SHA-256 of the committed SBOM) per RELEASE.md release step 1, and a
+  manifest whose SBOM digest does not match the evaluated tree is stale
+  evidence.

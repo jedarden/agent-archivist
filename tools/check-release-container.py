@@ -34,7 +34,13 @@ Validates ``containers/agent-archivist/VERSION`` and
    history of both version records from the commit that introduced the
    ``VERSION`` file, no commit diverges and the file never disappears;
    and every ``vX.Y.Z`` release tag resolves to a commit whose ``VERSION``
-   is exactly ``X.Y.Z`` (RC-006).
+   is exactly ``X.Y.Z`` (RC-006);
+5. the SBOM rules (RC-021 through RC-023): the committed
+   ``containers/agent-archivist/sbom.json`` — a CycloneDX 1.5 document
+   whose subject is the release unit at the ``VERSION`` content and whose
+   components are exactly the ``Cargo.lock`` package set, canonically
+   ordered, each registry component carrying the lock's checksum and a
+   vendored locator that resolves under ``vendor/``.
 
 On success it prints a content-free summary and exits 0. Any failure
 prints a report on stderr and exits 2.
@@ -43,12 +49,12 @@ prints a report on stderr and exits 2.
 validators against mutated copies and the history and tag validators
 against synthetic sequences, failing unless every bad sample is rejected
 and every good sample accepted — proving the rejection paths (a version
-record that moved alone, a floating base tag, a dropped build flag)
-rather than only the accept path. When the ambient directory is a bare
-tree with no repository history (a ``git archive`` extraction), the
-ambient history/tag walk is skipped for the base case and those
-validators are proven by the synthetic cases alone; plain check mode
-still fails without a walkable HEAD.
+record that moved alone, a floating base tag, a dropped build flag, a
+hand-edited SBOM) rather than only the accept path. When the ambient
+directory is a bare tree with no repository history (a ``git archive``
+extraction), the ambient history/tag walk is skipped for the base case
+and those validators are proven by the synthetic cases alone; plain
+check mode still fails without a walkable HEAD.
 
 Usage::
 
@@ -62,16 +68,21 @@ commit counts only.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 import subprocess
 import sys
 import tomllib
+from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 VERSION_REL = "containers/agent-archivist/VERSION"
 DOCKERFILE_REL = "containers/agent-archivist/Dockerfile"
+SBOM_REL = "containers/agent-archivist/sbom.json"
+GENERATOR_REL = "containers/agent-archivist/generate-sbom.sh"
 
 # RC-004: strict core SemVer — three numeric components, no leading zeros,
 # no pre-release or build metadata. Widening this grammar is a contract
@@ -104,6 +115,21 @@ HEALTHCHECK_OPTIONS = ("interval", "timeout", "start-period", "retries")
 DURATION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)?(?:ms|s|m|h)$")
 RETRIES_RE = re.compile(r"^[0-9]+$")
 
+# RC-021/RC-022: the committed SBOM is the generator's document and
+# nothing else — no serial number or other random identifier may appear,
+# and the only clock input is the SOURCE_DATE_EPOCH rendering pinned as
+# metadata.timestamp. RC-023: registry components carry the lock's
+# checksum plus a vendored locator that resolves under vendor/.
+CYCLONDX_SCHEMA = "http://cyclonedx.org/schema/bom-1.5.schema.json"
+CYCLONDX_SPEC = "1.5"
+SBOM_SUBJECT = "agent-archivist"
+SBOM_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+PURL_PREFIX = "pkg:cargo/"
+SOURCE_PROPERTY = "archivist:source"
+VENDORED_PROPERTY = "archivist:vendored"
+WORKSPACE_SOURCE = "workspace"
+VENDORED_VALUE_RE = re.compile(r"^vendor/[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
 IMAGE_REF_RE = re.compile(
     r"^(?P<name>[a-z0-9][a-z0-9./_-]*)"
     r"(?::(?P<tag>[^\s@]+))?"
@@ -120,10 +146,13 @@ FROM_RE = re.compile(r"^(\S+)(?:\s+[Aa][Ss]\s+([A-Za-z0-9_.-]+))?\s*$")
 #   member_versions  crate name -> declared [package] version (None: inherits)
 #   toolchain        rust-toolchain.toml channel (None: unreadable)
 #   dockerfile       raw Dockerfile text (None: file absent)
+#   sbom_text        raw SBOM document text (None: file absent)
+#   lock_packages    Cargo.lock [[package]] rows (name/version/source/checksum)
+#   vendored_dirs    names of the directories under vendor/
 #   history          oldest-first (commit, cargo version, VERSION content)
 #   tags             (tag, VERSION content at the tagged commit or None)
 TREE_KEYS = ("version_text", "cargo_version", "member_versions", "toolchain",
-             "dockerfile")
+             "dockerfile", "sbom_text")
 
 # Appended by load_state() when the ambient directory is a bare tree (for
 # example a `git archive` extraction) rather than a repository. Plain check
@@ -180,6 +209,263 @@ def validate_version_record(state: dict) -> list[str]:
                 f"RC-005: member crate {crate} pins its own [package] "
                 f"version {declared!r}; member crates must inherit "
                 f"version.workspace = true")
+    return violations
+
+
+def version_of(state: dict) -> str | None:
+    """The VERSION content when it already satisfies RC-004, else None —
+    the record-grammar failures are validate_version_record's; the SBOM
+    subject check only needs the well-formed value to compare against."""
+    text = state["version_text"]
+    if (text is not None and text.endswith("\n") and "\n" not in text[:-1]
+            and "\r" not in text and SEMVER_RE.match(text[:-1])):
+        return text[:-1]
+    return None
+
+
+def validate_sbom(state: dict) -> list[str]:
+    """RC-021 through RC-023: the committed SBOM is the generator's
+    document for this tree — presence, CycloneDX 1.5 shape, the subject at
+    the VERSION content, and the components reconciled against Cargo.lock.
+    The byte-exact freshness of the committed copy is the generator's own
+    ``--check``, which the fast lane runs beside this gate."""
+    violations: list[str] = []
+    text = state["sbom_text"]
+    if text is None:
+        return [f"RC-021: {SBOM_REL} is missing; the release image's "
+                "dependency claim is part of the baseline (RC-021)"]
+    try:
+        document = json.loads(text)
+    except ValueError:
+        return [f"RC-021: {SBOM_REL} is not valid JSON"]
+    if not isinstance(document, dict):
+        return [f"RC-021: {SBOM_REL} must be a JSON object"]
+
+    expected_top = {"$schema", "bomFormat", "specVersion", "version",
+                    "metadata", "components"}
+    if set(document) != expected_top:
+        return [
+            f"RC-021: {SBOM_REL} top-level keys must be exactly "
+            f"{sorted(expected_top)}, found {sorted(document)} — the "
+            "document is the generator's output and nothing else; a "
+            "serialNumber or other random identifier violates RC-022"
+        ]
+    if document["$schema"] != CYCLONDX_SCHEMA:
+        violations.append(
+            f"RC-021: $schema must be {CYCLONDX_SCHEMA}, found "
+            f"{document['$schema']!r}")
+    if document["bomFormat"] != "CycloneDX":
+        violations.append(
+            f"RC-021: bomFormat must be CycloneDX, found "
+            f"{document['bomFormat']!r}")
+    if document["specVersion"] != CYCLONDX_SPEC:
+        violations.append(
+            f"RC-021: specVersion must be {CYCLONDX_SPEC}, found "
+            f"{document['specVersion']!r}")
+    if document["version"] != 1:
+        violations.append(
+            f"RC-021: the document version must be 1, found "
+            f"{document['version']!r}")
+
+    version = version_of(state)
+
+    # metadata: the SOURCE_DATE_EPOCH rendering, the committed generator,
+    # and the release unit at the workspace version (RC-005 equality).
+    metadata = document["metadata"]
+    if not isinstance(metadata, dict) \
+            or set(metadata) != {"timestamp", "tools", "component"}:
+        violations.append(
+            "RC-021: metadata must be exactly {timestamp, tools, component}")
+    else:
+        stamp = metadata["timestamp"]
+        if not isinstance(stamp, str) or SBOM_TIMESTAMP_RE.match(stamp) is None:
+            violations.append(
+                f"RC-021: metadata.timestamp must be the RFC 3339 UTC "
+                f"SOURCE_DATE_EPOCH rendering (RC-022), found {stamp!r}")
+        else:
+            try:
+                datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ")
+            except ValueError:
+                violations.append(
+                    f"RC-021: metadata.timestamp {stamp!r} is not a real "
+                    "calendar time")
+        tools = metadata["tools"]
+        if not isinstance(tools, dict) or set(tools) != {"components"} \
+                or not isinstance(tools["components"], list) \
+                or len(tools["components"]) != 1 \
+                or not isinstance(tools["components"][0], dict):
+            violations.append(
+                "RC-021: metadata.tools must name exactly one component")
+        else:
+            tool = tools["components"][0]
+            if set(tool) != {"type", "name", "version"}:
+                violations.append(
+                    "RC-021: the tool entry must be exactly "
+                    "{type, name, version}")
+            else:
+                if tool["type"] != "application" or tool["name"] != GENERATOR_REL:
+                    violations.append(
+                        f"RC-021: metadata.tools must name the committed "
+                        f"generator {GENERATOR_REL!r}, found "
+                        f"{tool['name']!r}")
+                if not (isinstance(tool["version"], str)
+                        and SEMVER_RE.match(tool["version"])):
+                    violations.append(
+                        f"RC-021: the generator's recorded version "
+                        f"{tool['version']!r} is not strict core SemVer")
+                elif version is not None and tool["version"] != version:
+                    violations.append(
+                        f"RC-021: the generator's recorded version "
+                        f"{tool['version']!r} diverges from VERSION "
+                        f"{version!r}")
+        subject = metadata["component"]
+        if not isinstance(subject, dict) \
+                or set(subject) != {"type", "bom-ref", "name", "version"}:
+            violations.append(
+                "RC-021: metadata.component must be exactly "
+                "{type, bom-ref, name, version}")
+        else:
+            if subject["type"] != "application" \
+                    or subject["name"] != SBOM_SUBJECT:
+                violations.append(
+                    f"RC-021: the SBOM subject must be the release unit "
+                    f"{SBOM_SUBJECT!r}, found {subject['name']!r}")
+            if isinstance(subject["version"], str) \
+                    and SEMVER_RE.match(subject["version"]):
+                if version is not None and subject["version"] != version:
+                    violations.append(
+                        f"RC-021: the SBOM subject version "
+                        f"{subject['version']!r} diverges from the "
+                        f"workspace version {version!r} — they are one "
+                        "fact (RC-005) and move in the same commit")
+                expected_ref = f"{PURL_PREFIX}{SBOM_SUBJECT}@{subject['version']}"
+                if subject["bom-ref"] != expected_ref:
+                    violations.append(
+                        f"RC-021: the subject bom-ref must be "
+                        f"{expected_ref!r}, found {subject['bom-ref']!r}")
+            else:
+                violations.append(
+                    f"RC-021: the SBOM subject version "
+                    f"{subject['version']!r} is not strict core SemVer")
+
+    # components: exactly the Cargo.lock package set, canonically ordered,
+    # every registry component corroborated (RC-023).
+    components = document["components"]
+    if not isinstance(components, list) or not components:
+        violations.append(
+            "RC-021: components must be a non-empty list — the Cargo.lock "
+            "package set")
+        return violations
+
+    lock_index = {(p["name"], p["version"]): (p["source"], p["checksum"])
+                  for p in state["lock_packages"]}
+    pairs: list[tuple] = []
+    for component in components:
+        if not isinstance(component, dict):
+            violations.append("RC-021: every component must be an object")
+            continue
+        name, ver = component.get("name"), component.get("version")
+        where = (f"component {name!r}@{ver!r}"
+                 if isinstance(name, str) and isinstance(ver, str)
+                 else "component")
+        known = {"type", "bom-ref", "name", "version", "purl", "properties",
+                 "hashes"}
+        unknown = sorted(set(component) - known)
+        if unknown:
+            violations.append(
+                f"RC-021: {where} carries unknown keys {unknown}")
+        if name is not None and ver is not None:
+            pairs.append((name, ver))
+        expected_purl = f"{PURL_PREFIX}{name}@{ver}"
+        if component.get("type") != "library":
+            violations.append(
+                f"RC-021: {where} must be a library, found "
+                f"{component.get('type')!r}")
+        if component.get("purl") != expected_purl \
+                or component.get("bom-ref") != expected_purl:
+            violations.append(
+                f"RC-021: {where} must carry bom-ref and purl "
+                f"{expected_purl!r}")
+
+        props = component.get("properties")
+        source = None
+        if not isinstance(props, list):
+            violations.append(
+                f"RC-021: {where} must carry a properties list")
+        else:
+            named: dict[str, str] = {}
+            for prop in props:
+                if not isinstance(prop, dict) \
+                        or set(prop) != {"name", "value"} \
+                        or not isinstance(prop["name"], str) \
+                        or not isinstance(prop["value"], str):
+                    violations.append(
+                        f"RC-021: {where} carries a malformed property")
+                    continue
+                named[prop["name"]] = prop["value"]
+            source = named.get(SOURCE_PROPERTY)
+            if source is None:
+                violations.append(
+                    f"RC-021: {where} does not declare {SOURCE_PROPERTY}")
+
+        if source == WORKSPACE_SOURCE:
+            if props != [{"name": SOURCE_PROPERTY, "value": WORKSPACE_SOURCE}]:
+                violations.append(
+                    f"RC-021: {where} is a workspace crate; its properties "
+                    f"must be exactly the {SOURCE_PROPERTY}: "
+                    f"{WORKSPACE_SOURCE} pair")
+            if "hashes" in component:
+                violations.append(
+                    f"RC-023: {where} is a workspace crate, not a vendored "
+                    "crate — it carries no crate checksum")
+        elif source is not None:
+            lock_row = lock_index.get((name, ver))
+            if lock_row is None:
+                violations.append(
+                    f"RC-021: {where} is not in Cargo.lock — the components "
+                    "are exactly the lock's package set")
+                continue
+            lock_source, lock_checksum = lock_row
+            if source != lock_source:
+                violations.append(
+                    f"RC-021: {where} declares source {source!r}, "
+                    f"Cargo.lock says {lock_source!r}")
+            if component.get("hashes") != [
+                    {"alg": "SHA-256", "content": lock_checksum}]:
+                violations.append(
+                    f"RC-023: {where} must carry exactly the Cargo.lock "
+                    "checksum as its SHA-256 hash "
+                    f"({lock_checksum!r})")
+            if props[:1] != [{"name": SOURCE_PROPERTY, "value": source}] \
+                    or len(props) != 2 \
+                    or props[1].get("name") != VENDORED_PROPERTY:
+                violations.append(
+                    f"RC-023: {where} must carry exactly the source and "
+                    f"{VENDORED_PROPERTY} properties in that order")
+            else:
+                vendored = props[1]["value"]
+                if VENDORED_VALUE_RE.match(vendored) is None \
+                        or vendored.split("/", 1)[1] not in state["vendored_dirs"]:
+                    violations.append(
+                        f"RC-023: {where} names vendored locator "
+                        f"{vendored!r}, which does not resolve under "
+                        "vendor/")
+
+    if pairs != sorted(pairs):
+        violations.append(
+            "RC-022: components must be ordered by name then version — "
+            "the canonical order the generator emits")
+    if len(set(pairs)) != len(pairs):
+        violations.append("RC-021: a component is listed twice")
+    documented, locked = Counter(pairs), Counter(
+        (p["name"], p["version"]) for p in state["lock_packages"])
+    if documented != locked:
+        missing = sorted(locked - documented)
+        extra = sorted(documented - locked)
+        violations.append(
+            f"RC-021: components must be exactly the Cargo.lock package "
+            f"set ({sum(locked.values())} packages) — "
+            f"missing {missing[:3]}, extra {extra[:3]}")
     return violations
 
 
@@ -600,7 +886,8 @@ def validate_tags(tags: list[tuple[str, str | None]]) -> list[str]:
 
 
 def validate_tree(state: dict) -> list[str]:
-    return validate_version_record(state) + validate_dockerfile(state)
+    return (validate_version_record(state) + validate_dockerfile(state)
+            + validate_sbom(state))
 
 
 # -------------------------------------------------------------- loading
@@ -675,6 +962,27 @@ def load_state() -> tuple[dict, list[str]]:
     else:
         errors.append(f"RC-001: {DOCKERFILE_REL} is missing")
 
+    # The SBOM's absence is validate_sbom's own RC-021 violation, so no
+    # load error here — one report per failure, not two.
+    sbom_path = ROOT / SBOM_REL
+    state["sbom_text"] = sbom_path.read_text() if sbom_path.is_file() else None
+
+    try:
+        lock = tomllib.loads((ROOT / "Cargo.lock").read_text())
+        state["lock_packages"] = [
+            {"name": p["name"], "version": p["version"],
+             "source": p.get("source"), "checksum": p.get("checksum")}
+            for p in lock.get("package", [])
+        ]
+    except (OSError, tomllib.TOMLDecodeError, KeyError, TypeError):
+        errors.append("RC-021: Cargo.lock has no readable [[package]] table")
+        state["lock_packages"] = []
+
+    vendor = ROOT / "vendor"
+    state["vendored_dirs"] = (
+        {p.name for p in vendor.iterdir() if p.is_dir()}
+        if vendor.is_dir() else set())
+
     state["history"] = []
     state["tags"] = []
     if run_git(["rev-parse", "--verify", "HEAD"]) is None:
@@ -707,6 +1015,33 @@ def mutate(state: dict, **changes: object) -> dict:
 
 def with_dockerfile(state: dict, old: str, new: str) -> dict:
     return mutate(state, dockerfile=replace_once(state["dockerfile"], old, new))
+
+
+def with_sbom(state: dict, change) -> dict:
+    """Re-render the committed SBOM with `change` applied to its parsed
+    document, canonically — so a case isolates exactly one violation and
+    cannot fail merely by reformatting."""
+    document = json.loads(state["sbom_text"])
+    change(document)
+    return mutate(state,
+                  sbom_text=json.dumps(document, indent=2, sort_keys=True)
+                  + "\n")
+
+
+def sbom_first_workspace(document: dict) -> dict:
+    """The first workspace-marked component of a parsed SBOM document."""
+    return next(c for c in document["components"]
+                if any(p["name"] == SOURCE_PROPERTY
+                       and p["value"] == WORKSPACE_SOURCE
+                       for p in c["properties"]))
+
+
+def sbom_first_registry(document: dict) -> dict:
+    """The first registry-marked component of a parsed SBOM document."""
+    return next(c for c in document["components"]
+                if any(p["name"] == SOURCE_PROPERTY
+                       and p["value"] != WORKSPACE_SOURCE
+                       for p in c["properties"]))
 
 
 TREE_CASES: list[tuple[str, bool, dict]] = []
@@ -878,6 +1213,74 @@ def build_cases(state: dict) -> None:
         ("the stages were renamed",
          True, with_dockerfile(state, " AS builder", " AS build")),
     ]
+
+    # SBOM cases (RC-021 through RC-023): the committed document accepted,
+    # then every hand-edit shape a deterministic artifact must reject.
+    fake_digest = "0" * 64
+    cases += [
+        ("the SBOM re-rendered canonically", False,
+         with_sbom(state, lambda d: None)),
+        ("the SBOM is missing", True, mutate(state, sbom_text=None)),
+        ("the SBOM is not JSON", True,
+         mutate(state, sbom_text='{"bomFormat": ')),
+        ("the SBOM carries a random serial number", True,
+         with_sbom(state, lambda d: d.update(
+             serialNumber="urn:uuid:0b8b2e5a-9732-4c5e-8f4e-2f4b3d2a1c9b"))),
+        ("the SBOM claims the SPDX format", True,
+         with_sbom(state, lambda d: d.update(bomFormat="SPDX"))),
+        ("the SBOM downgrades the spec version", True,
+         with_sbom(state, lambda d: d.update(specVersion="1.4"))),
+        ("the SBOM subject version moved without VERSION", True,
+         with_sbom(state,
+                   lambda d: d["metadata"]["component"].update(
+                       version="0.2.0"))),
+        ("the SBOM subject is renamed", True,
+         with_sbom(state,
+                   lambda d: d["metadata"]["component"].update(
+                       name="other-project"))),
+        ("the SBOM timestamp is wall-clock prose", True,
+         with_sbom(state,
+                   lambda d: d["metadata"].update(
+                       timestamp="2026-09-26 19:47:50"))),
+        ("the SBOM names a foreign generator", True,
+         with_sbom(state,
+                   lambda d: d["metadata"]["tools"]["components"][0].update(
+                       name="sbom-tool"))),
+        ("a component is dropped", True,
+         with_sbom(state, lambda d: d["components"].pop())),
+        ("the components list is emptied", True,
+         with_sbom(state, lambda d: d.update(components=[]))),
+        ("a component is renamed out of the lock", True,
+         with_sbom(state,
+                   lambda d: d["components"][0].update(name="ghost-crate"))),
+        ("a duplicate component is appended", True,
+         with_sbom(state,
+                   lambda d: d["components"].append(
+                       json.loads(json.dumps(d["components"][0]))))),
+        ("the components are unsorted", True,
+         with_sbom(state,
+                   lambda d: d["components"].reverse())),
+        ("a registry component loses its checksum", True,
+         with_sbom(state,
+                   lambda d: sbom_first_registry(d).pop("hashes"))),
+        ("a registry component's checksum is altered", True,
+         with_sbom(state,
+                   lambda d: sbom_first_registry(d)["hashes"][0].update(
+                       content=fake_digest))),
+        ("a registry component loses its vendored locator", True,
+         with_sbom(state,
+                   lambda d: sbom_first_registry(d).update(
+                       properties=[p for p in sbom_first_registry(d)["properties"]
+                                   if p["name"] != VENDORED_PROPERTY]))),
+        ("a workspace component carries a crate checksum", True,
+         with_sbom(state,
+                   lambda d: sbom_first_workspace(d).update(
+                       hashes=[{"alg": "SHA-256", "content": fake_digest}]))),
+        ("a component's purl drifts from its identity", True,
+         with_sbom(state,
+                   lambda d: d["components"][0].update(
+                       purl="pkg:cargo/wrong@0.0.1"))),
+    ]
     TREE_CASES.extend(cases)
 
     HISTORY_CASES.extend([
@@ -1015,6 +1418,18 @@ def main(argv: list[str]) -> int:
           f"records since introduction {history[introduced][0][:12]}; "
           f"no divergence")
     print(f"release tags checked: {len(state['tags'])}")
+    if state["sbom_text"]:
+        document = json.loads(state["sbom_text"])
+        workspace_count = sum(
+            1 for c in document["components"]
+            if any(p["name"] == SOURCE_PROPERTY
+                   and p["value"] == WORKSPACE_SOURCE
+                   for p in c["properties"]))
+        digest = hashlib.sha256(state["sbom_text"].encode()).hexdigest()
+        print(f"sbom: {SBOM_REL} {len(document['components'])} components "
+              f"({workspace_count} workspace, "
+              f"{len(document['components']) - workspace_count} registry) "
+              f"sha256:{digest[:16]}…")
     print("OK: baseline satisfies docs/notes/release-container.md")
     return 0
 
