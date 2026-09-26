@@ -91,6 +91,25 @@
 //! the network, and so the missing-state smoke's readiness answer is
 //! true — its 74 comes from the state refusal, not from an unreachable
 //! server.
+//!
+//! Every document the matrix emits is also run through the redaction
+//! audit: a byte-level scan asserting that no output document — the
+//! healthy result documents and the registered refusals alike — carries
+//! an absolute path, an identifier, a secret, `SQL` text, or an
+//! operating-system error string, the contract
+//! `archivist_client_core::doctor` states: findings are closed enum
+//! values, evidence is limited to modes, counters, timestamps, and lock
+//! state, and every condition maps to a registered error code. Exactly
+//! two by-design contents are excused by value — the emitted namespaces
+//! themselves and the error envelope's freshly minted correlation
+//! identifier, derived from the wall clock and host randomness and
+//! never from anything the examination read. Everything else is
+//! scanned: the fixture path, every fixture identifier the harness has
+//! minted, absolute-path shapes, identifier- and `UUID`-grammar tokens,
+//! the read-only queries' own `SQL` vocabulary, and the classic
+//! operating-system error texts. The audit's own rows at the foot of
+//! this target plant each forbidden class to prove the scan still
+//! detects what it forbids.
 
 use std::ffi::OsStr;
 use std::fs::Permissions;
@@ -99,6 +118,7 @@ use std::net::{Shutdown, TcpListener};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
@@ -141,28 +161,55 @@ impl Drop for TempDir {
     }
 }
 
+/// Every fixture identifier, digest, and secret the harness has minted
+/// so far, registered at mint time and audited against every emitted
+/// document. The registry accumulates across rows — a superset of any
+/// one row's own values, which is safe: no document may carry any of
+/// them, whichever row minted it.
+static NEEDLES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Register one fixture value the audit must never see in an emitted
+/// document.
+fn register_needle(value: &str) {
+    NEEDLES
+        .lock()
+        .expect("the needle registry locks")
+        .push(value.to_owned());
+}
+
+/// The needles registered so far, as the audit reads them.
+fn registered_needles() -> Vec<String> {
+    NEEDLES.lock().expect("the needle registry locks").clone()
+}
+
 /// A distinct 36-character `UUIDv7`-grammar identifier for whichever
 /// table needs one. The grammar is the protocol's own (`uuid_grammar`:
 /// lowercase hex, version nibble 7, variant `8..=b`), the same fixture
-/// shape the operator surface's in-process tests enroll.
+/// shape the operator surface's in-process tests enroll. Every value is
+/// registered as an audit needle at mint time.
 // The casts are the point: a fixture identity is the hash's own low
 // bits sliced into the grammar's field widths, never a conversion.
 #[allow(clippy::cast_possible_truncation)]
 fn uid(tag: &str) -> String {
     let n = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let seed = seed_of(tag);
-    format!(
+    let identifier = format!(
         "{:08x}-{:04x}-7{:03x}-9{:03x}-{n:012x}",
         seed as u32,
         (seed >> 32) as u16,
         (seed >> 48) as u16 & 0x0fff,
         (seed as u16) & 0x0fff,
-    )
+    );
+    register_needle(&identifier);
+    identifier
 }
 
-/// A 64-character digest-shape filler.
+/// A 64-character digest-shape filler, registered as an audit needle at
+/// mint time.
 fn digest(seed: u64) -> String {
-    format!("{seed:064x}")
+    let digest = format!("{seed:064x}");
+    register_needle(&digest);
+    digest
 }
 
 /// A distinct 64-bit seed derived from arbitrary text, so fixture rows
@@ -187,6 +234,12 @@ fn seeded_store(dir: &TempDir) -> StateStore {
 /// fixture restores it.
 fn linked_receipt(store: &StateStore, commit_time: &str) {
     let request_id = uid("req");
+    // The receipt row's own secret material and key identifier are
+    // fixture content: registered so the audit would reject any
+    // document that echoed them back.
+    register_needle("rk-2026-36");
+    let signature = "ab".repeat(64);
+    register_needle(&signature);
     store
         .connection()
         .execute(
@@ -216,7 +269,7 @@ fn linked_receipt(store: &StateStore, commit_time: &str) {
                  request_id, receipt_key_id, signature, receipt_digest,
                  commit_ordinal, commit_time, signature_verified, received_at)
              VALUES (?1, 'rk-2026-36', ?2, ?3, 1, ?4, 1, ?4)",
-            params![request_id, "ab".repeat(64), digest(92), commit_time],
+            params![request_id, signature, digest(92), commit_time],
         )
         .expect("insert receipt");
     std::fs::set_permissions(
@@ -447,6 +500,204 @@ fn stream_document(bytes: &[u8]) -> Value {
         .expect("the stream carries one JSON document")
 }
 
+// The redaction audit. `archivist_client_core::doctor`'s contract is that
+// nothing an examination returns can carry a path, an identifier, a
+// secret, `SQL` text, or an operating-system error string: findings are
+// closed enum values, evidence is limited to modes, counters, timestamps,
+// and lock state, and every condition maps to a registered error code.
+// The audit pins that contract over the emitted bytes themselves, so a
+// future member of either document shape that starts carrying any of the
+// forbidden classes trips it before a consumer ever sees the document.
+
+/// The namespaces an emitted document names. They are excused from the
+/// path scan by value — their tokens are the by-design slash carriers —
+/// so the path scan sees every other slash in the document.
+const EMITTED_NAMESPACES: [&str; 3] = [
+    "archivist.cli-output/v1",
+    "archivist.cli-result/v1",
+    "archivist.error/v1",
+];
+
+/// The identifier threshold: an alphanumeric token of this length or
+/// longer is identifier-shaped. Legitimate members stay below it — check
+/// names, evidence keys, registry message words, and the counters' and
+/// mode literals' numeral runs — while every fixture identifier, digest,
+/// and secret sits far above it.
+const IDENTIFIER_TOKEN_LENGTH: usize = 20;
+
+/// The `SQL` text the examination's own read-only queries and the state
+/// schema's integrity probes use, matched case-folded: statement verbs,
+/// the driver's probe names, and the queried tables' underscored names.
+/// The collision-prone table names are excluded — the evidence keys and
+/// message words legitimately containing them (`receipt_count`,
+/// `enrolled_sources`) would trip a looser scan.
+const SQL_FRAGMENTS: [&str; 12] = [
+    "select",
+    "insert",
+    "pragma",
+    "delete from",
+    "union",
+    "count(",
+    "foreign_key",
+    "sqlite_master",
+    "schema_migrations",
+    "frozen_requests",
+    "adapter_health",
+    "create table",
+];
+
+/// The operating-system error strings a leaked `std::io` or `SQLite`
+/// diagnostic would carry, matched case-folded: the classic strerror
+/// texts and Rust's own `(os error N)` suffix.
+const OS_ERROR_PHRASES: [&str; 10] = [
+    "no such file",
+    "permission denied",
+    "os error",
+    "connection refused",
+    "broken pipe",
+    "address already in use",
+    "text file busy",
+    "operation not permitted",
+    "is a directory",
+    "not a directory",
+];
+
+/// The URL schemes a leaked endpoint or file reference would carry. No
+/// legitimate document member names a location, so any scheme is a leak.
+const URL_SCHEMES: [&str; 3] = ["http://", "https://", "file://"];
+
+/// The audit's view of a document: the canonical bytes with the error
+/// envelope's minted correlation identifier values removed — the one
+/// member whose value is identifier-shaped by design, derived from the
+/// wall clock and host randomness and never from anything the
+/// examination read — so the identifier scans see every other byte. A
+/// value that never closes leaves its tail in the audited text.
+fn without_correlation_ids(text: &str) -> String {
+    const KEY: &str = "\"correlation_id\"";
+    let mut kept = String::with_capacity(text.len());
+    let mut cursor = 0;
+    while let Some(relative) = text[cursor..].find(KEY) {
+        let at = cursor + relative;
+        kept.push_str(&text[cursor..at]);
+        // The canonical form is `"correlation_id":"<value>"`: the value
+        // opens at the first quote after the key and closes at the next.
+        let after_key = at + KEY.len();
+        let Some(open) = text[after_key..].find('"') else {
+            cursor = after_key;
+            break;
+        };
+        let value = after_key + open + 1;
+        if let Some(close) = text[value..].find('"') {
+            cursor = value + close + 1;
+        } else {
+            cursor = value;
+            break;
+        }
+    }
+    kept.push_str(&text[cursor..]);
+    kept
+}
+
+/// The longest alphanumeric token in the text: the identifier-shape
+/// scan's measure. Tokens are `ASCII`, so byte length is character
+/// length.
+fn longest_alphanumeric_run(text: &str) -> usize {
+    text.split(|character: char| !character.is_ascii_alphanumeric())
+        .map(str::len)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Whether the text carries a `UUID`-grammar token — five hex groups in
+/// the 8-4-4-4-12 dash layout. Timestamps and registry prose never fit
+/// the grammar; a fixture identifier or an unexcused minted correlation
+/// value always does.
+fn carries_uuid_grammar_token(text: &str) -> bool {
+    text.split(|character: char| !matches!(character, '0'..='9' | 'a'..='f' | 'A'..='F' | '-'))
+        .any(|token| {
+            let groups: Vec<usize> = token.split('-').map(str::len).collect();
+            groups == [8, 4, 4, 4, 12]
+        })
+}
+
+/// Whether the text carries an absolute-path shape: a slash whose next
+/// character is a name character and whose preceding character is not —
+/// the shape a leaked `/tmp/...` or `/home/...` path has and that prose
+/// slash compounds (`I/O`, `input/output`) never do. The fixture path
+/// itself and the URL schemes are covered by their own scans.
+fn carries_absolute_path_token(text: &str) -> bool {
+    text.match_indices('/').any(|(at, _)| {
+        let preceded_by_name = at > 0
+            && text[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|character: char| {
+                    character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-' | '/')
+                });
+        let followed_by_name = text[at + 1..]
+            .chars()
+            .next()
+            .is_some_and(|character: char| character.is_ascii_alphanumeric());
+        !preceded_by_name && followed_by_name
+    })
+}
+
+/// The redaction audit over one emitted document: no fixture path, no
+/// registered fixture identifier, no absolute-path shape, no identifier-
+/// or secret-shaped token, no `SQL` text, no operating-system error
+/// string. Each failure names the class and carries the document so the
+/// leak is diagnosable from the test output alone.
+fn assert_content_free(label: &str, document: &[u8], fixture: &Path) {
+    let text =
+        std::str::from_utf8(document).unwrap_or_else(|error| panic!("{label} is utf-8: {error}"));
+    let fixture = fixture.to_string_lossy();
+    assert!(
+        !text.contains(fixture.as_ref()),
+        "{label} leaked the fixture path: {text}"
+    );
+    for needle in registered_needles() {
+        assert!(
+            !text.contains(needle.as_str()),
+            "{label} leaked a registered fixture identifier: {text}"
+        );
+    }
+    let mut audited = without_correlation_ids(text);
+    for namespace in EMITTED_NAMESPACES {
+        audited = audited.replace(namespace, "");
+    }
+    assert!(
+        !carries_absolute_path_token(&audited),
+        "{label} leaked an absolute path: {audited}"
+    );
+    for scheme in URL_SCHEMES {
+        assert!(
+            !audited.contains(scheme),
+            "{label} leaked a location ({scheme}): {audited}"
+        );
+    }
+    assert!(
+        longest_alphanumeric_run(&audited) < IDENTIFIER_TOKEN_LENGTH,
+        "{label} leaked an identifier or secret: {audited}"
+    );
+    assert!(
+        !carries_uuid_grammar_token(&audited),
+        "{label} leaked an identifier-shaped token: {audited}"
+    );
+    let folded = audited.to_ascii_lowercase();
+    for fragment in SQL_FRAGMENTS {
+        assert!(
+            !folded.contains(fragment),
+            "{label} leaked SQL text ({fragment}): {audited}"
+        );
+    }
+    for phrase in OS_ERROR_PHRASES {
+        assert!(
+            !folded.contains(phrase),
+            "{label} leaked an operating-system error ({phrase}): {audited}"
+        );
+    }
+}
+
 /// A refused examination's complete observable contract: the exit status
 /// the registered class allocates, no result document on stdout
 /// (CLI-019), and exactly one `archivist.error/v1` refusal on stderr
@@ -472,6 +723,10 @@ fn assert_registered_refusal(output: &Output, code: &str, exit: i32, dir: &TempD
     let document = stream_document(&output.stderr);
     assert_eq!(text_member(&document, "schema"), "archivist.error/v1");
     assert_eq!(text_member(&document, "code"), code);
+    // The redaction audit over the whole emitted document: no fixture
+    // path, identifier, secret, SQL text, or operating-system error
+    // anywhere in the bytes.
+    assert_content_free("the refusal document", &output.stderr, dir.path());
 }
 
 /// The state directory's complete recursive shape — every path, every
@@ -540,6 +795,10 @@ fn the_healthy_fixture_exits_zero_emitting_a_document_with_no_findings() {
         }
         other => panic!("the checks are an object, found {other:?}"),
     }
+    // The redaction audit over the emitted envelope: the healthy
+    // document's bytes carry no path, identifier, secret, SQL text, or
+    // operating-system error either.
+    assert_content_free("the healthy result document", &output.stdout, dir.path());
 }
 
 #[test]
@@ -579,6 +838,10 @@ fn the_missing_state_smoke_exits_seventy_four_with_only_the_state_io_finding() {
             "only the state_io finding appears, found {other}"
         );
     }
+    // The redaction audit over the exit-74 document: no path,
+    // identifier, secret, SQL text, or operating-system error anywhere
+    // in the bytes the refusal emitted.
+    assert_content_free("the missing-state refusal", stderr.as_bytes(), dir.path());
 }
 
 #[test]
@@ -645,6 +908,11 @@ fn a_foreign_held_lock_is_reported_with_zero_state_creation() {
         before,
         "the examination created and modified no state whatsoever"
     );
+    assert_content_free(
+        "the foreign-lock result document",
+        &output.stdout,
+        dir.path(),
+    );
 }
 
 #[test]
@@ -671,6 +939,13 @@ fn the_examination_leaves_the_state_database_byte_identical() {
             params![digest(81), digest(82)],
         )
         .expect("insert source");
+    // The enrolled source's own identifiers are fixture content:
+    // registered so the audit would reject any document that echoed
+    // them back. The harness, kind, and lane words are shared
+    // vocabulary, not identifiers, and stay unregistered.
+    register_needle("01900000-0000-7000-8000-000000000001");
+    register_needle("upstream-session");
+    register_needle("adapter-1");
     linked_receipt(&store, "2026-09-13T12:00:00Z");
     let database = dir.path().join(STATE_DB_NAME);
     let before = std::fs::read(&database).expect("the fixture database reads");
@@ -734,6 +1009,7 @@ fn the_examination_leaves_the_state_database_byte_identical() {
         before_tree,
         "the examination left the state exactly as the writer had it"
     );
+    assert_content_free("the read-only result document", &output.stdout, dir.path());
 }
 
 // The induced local-state failure matrix. Every fixture below is
@@ -944,6 +1220,9 @@ fn a_degraded_adapter_health_record_refuses_with_the_source_unreadable_class() {
             [],
         )
         .expect("degrade the adapter");
+    // The degraded row's adapter identifier is fixture content the
+    // examination reads: registered as an audit needle.
+    register_needle("probe");
     let before = state_tree(dir.path());
     let server = ReadinessEndpoint::start();
     let output = run_doctor(&dir, server.endpoint());
@@ -1072,4 +1351,103 @@ fn an_unlinked_state_refuses_with_the_authorization_class() {
         before,
         "the examination mutated no state"
     );
+}
+
+// The audit's own rows. Every leak class the audit forbids is planted
+// in a synthetic refusal envelope — the exact shape the router writes,
+// with the message member a leak would reach — and the audit must
+// reject it; the envelope's two by-design identifier-shaped contents,
+// the namespace and the minted correlation identifier, must pass. A
+// scan that silently stopped matching anything fails here first.
+
+/// A synthetic `archivist.error/v1` refusal carrying `message` over the
+/// exact canonical shape the router writes, minted correlation
+/// identifier included.
+fn synthetic_refusal(message: &str) -> String {
+    format!(
+        "{{\"code\":\"client.state_io\",\"correlation_id\":\
+         \"01900000-0000-7000-8000-000000000009\",\"message\":\"{message}\",\
+         \"request_id\":null,\"retryable\":false,\
+         \"schema\":\"archivist.error/v1\"}}"
+    )
+}
+
+/// Audit one planted document through the same entry point the matrix
+/// rows use.
+fn audit_planted(document: &str) {
+    assert_content_free(
+        "the synthetic refusal",
+        document.as_bytes(),
+        Path::new("/nonexistent"),
+    );
+}
+
+#[test]
+fn the_audit_accepts_the_registered_envelope_and_its_minted_identifier() {
+    // The real `client.state_io` template — its `I/O` the one slash a
+    // legitimate message carries — over the envelope with its minted
+    // correlation identifier: both by-design contents pass, so the
+    // exemptions are the audit's own and not scans that never fire.
+    audit_planted(&synthetic_refusal(
+        "A local state or spool I/O operation failed; run doctor to diagnose.",
+    ));
+}
+
+#[test]
+#[should_panic(expected = "leaked an absolute path")]
+fn the_audit_rejects_a_planted_absolute_path() {
+    audit_planted(&synthetic_refusal(
+        "state at /tmp/archivist-leaked/state.db is unreadable",
+    ));
+}
+
+#[test]
+#[should_panic(expected = "leaked a location (https://)")]
+fn the_audit_rejects_a_planted_endpoint_url() {
+    audit_planted(&synthetic_refusal(
+        "the ingest endpoint https://127.0.0.1:9 answered nothing",
+    ));
+}
+
+#[test]
+#[should_panic(expected = "leaked an identifier or secret")]
+fn the_audit_rejects_a_planted_digest() {
+    audit_planted(&synthetic_refusal(&format!(
+        "the receipt's digest is {}",
+        "a".repeat(64)
+    )));
+}
+
+#[test]
+#[should_panic(expected = "leaked an identifier-shaped token")]
+fn the_audit_rejects_a_planted_uuid_grammar_identifier() {
+    audit_planted(&synthetic_refusal(
+        "row deadbeef-dead-dead-dead-deaddeaddead is orphaned",
+    ));
+}
+
+#[test]
+#[should_panic(expected = "leaked a registered fixture identifier")]
+fn the_audit_rejects_a_registered_fixture_needle() {
+    let registered = format!("01900000-0000-7000-8000-{:012x}", 1);
+    register_needle(&registered);
+    audit_planted(&synthetic_refusal(&format!(
+        "the enrolled source {registered} is unreadable"
+    )));
+}
+
+#[test]
+#[should_panic(expected = "leaked SQL text")]
+fn the_audit_rejects_planted_sql_text() {
+    audit_planted(&synthetic_refusal(
+        "the query select count(*) from receipts failed",
+    ));
+}
+
+#[test]
+#[should_panic(expected = "leaked an operating-system error")]
+fn the_audit_rejects_a_planted_operating_system_error() {
+    audit_planted(&synthetic_refusal(
+        "open failed: No such file or directory (os error 2)",
+    ));
 }
