@@ -670,6 +670,44 @@ impl DerivedWriterConfigBuilder {
 /// prefix, never a bare bucket request. The mock in this module's tests
 /// mirrors that denial so the store's requests are proven to stay
 /// inside it.
+///
+/// The verbs the provisioning withholds are pinned the same way the
+/// control-read seam pins its own — `compile_fail` doc tests that
+/// type-check only if this seam has grown an authority the catalog
+/// writer was never granted:
+///
+/// ```compile_fail
+/// // No destroy verb: the writer appends and enumerates; removal is
+/// // not a primitive this identity holds.
+/// use archivist_storage::scoped_write::CatalogCheckpointKey;
+/// use archivist_storage_s3::scoped_write::CatalogWriteBackend;
+///
+/// fn prove<B: CatalogWriteBackend>(backend: &B, key: &CatalogCheckpointKey) {
+///     backend.delete_catalog_object(key);
+/// }
+/// ```
+///
+/// ```compile_fail
+/// // No read verb: object bodies come back only through the
+/// // backup/restore identity, never through a writer.
+/// use archivist_storage::scoped_write::CatalogCheckpointKey;
+/// use archivist_storage_s3::scoped_write::CatalogWriteBackend;
+///
+/// fn prove<B: CatalogWriteBackend>(backend: &B, key: &CatalogCheckpointKey) {
+///     backend.get_catalog_object(key);
+/// }
+/// ```
+///
+/// ```compile_fail
+/// // No multipart session: a checkpoint lands as one PutObject, so
+/// // there is no upload to initiate, part, or complete.
+/// use archivist_storage::scoped_write::CatalogCheckpointKey;
+/// use archivist_storage_s3::scoped_write::CatalogWriteBackend;
+///
+/// fn prove<B: CatalogWriteBackend>(backend: &B, key: &CatalogCheckpointKey) {
+///     backend.create_multipart_upload(key);
+/// }
+/// ```
 pub trait CatalogWriteBackend {
     /// Write `bytes` at one derived checkpoint key.
     ///
@@ -707,6 +745,40 @@ pub trait CatalogWriteBackend {
 /// enforces the same prefix scope the deployment's backend policy
 /// states. The mock in this module's tests mirrors that denial so the
 /// store's requests are proven to stay inside it.
+///
+/// The withheld verbs are pinned exactly as on the catalog seam:
+///
+/// ```compile_fail
+/// // No destroy verb: a projection is superseded by the next version's
+/// // object, never removed by the writer that produced it.
+/// use archivist_storage::scoped_write::DerivedObjectKey;
+/// use archivist_storage_s3::scoped_write::DerivedWriteBackend;
+///
+/// fn prove<B: DerivedWriteBackend>(backend: &B, key: &DerivedObjectKey) {
+///     backend.delete_derived_object(key);
+/// }
+/// ```
+///
+/// ```compile_fail
+/// // No read verb: the producer's own bytes are the input, and object
+/// // bodies come back only through the backup/restore identity.
+/// use archivist_storage::scoped_write::DerivedObjectKey;
+/// use archivist_storage_s3::scoped_write::DerivedWriteBackend;
+///
+/// fn prove<B: DerivedWriteBackend>(backend: &B, key: &DerivedObjectKey) {
+///     backend.get_derived_object(key);
+/// }
+/// ```
+///
+/// ```compile_fail
+/// // No multipart session: a projection lands as one PutObject.
+/// use archivist_storage::scoped_write::DerivedObjectKey;
+/// use archivist_storage_s3::scoped_write::DerivedWriteBackend;
+///
+/// fn prove<B: DerivedWriteBackend>(backend: &B, key: &DerivedObjectKey) {
+///     backend.create_multipart_upload(key);
+/// }
+/// ```
 pub trait DerivedWriteBackend {
     /// Write `bytes` at one derived object key.
     ///
@@ -742,6 +814,52 @@ pub trait DerivedWriteBackend {
 /// credentials:
 /// [`CatalogWriterConfig::reject_shared_credential`] refuses a
 /// deployment that tries either reuse.
+///
+/// The authorities this store must never grow are pinned at compile
+/// time, so an erosion fails a build instead of a review:
+///
+/// ```compile_fail
+/// // A writer is not an administrator: the offline control
+/// // administration stays on the ControlAdminStore boundary.
+/// use archivist_storage::control::ControlAdminStore;
+/// use archivist_storage_s3::scoped_write::S3CatalogWriteStore;
+///
+/// struct ProbeBackend;
+///
+/// fn prove(store: &S3CatalogWriteStore<ProbeBackend>) {
+///     fn admin_authority<T: ControlAdminStore>(_: &T) {}
+///     admin_authority(store);
+/// }
+/// ```
+///
+/// ```compile_fail
+/// // A writer is not the raw writer: the raw namespaces stay with
+/// // archivist-storage's RawWriteStore boundary.
+/// use archivist_storage::raw_write::RawWriteStore;
+/// use archivist_storage_s3::scoped_write::S3CatalogWriteStore;
+///
+/// struct ProbeBackend;
+///
+/// fn prove(store: &S3CatalogWriteStore<ProbeBackend>) {
+///     fn raw_write_authority<T: RawWriteStore>(_: &T) {}
+///     raw_write_authority(store);
+/// }
+/// ```
+///
+/// ```compile_fail
+/// // The catalog writer is not the derived writer: one namespace per
+/// // identity, and the sibling's authority is the other identity's
+/// // configuration and store.
+/// use archivist_storage::scoped_write::DerivedWriteStore;
+/// use archivist_storage_s3::scoped_write::S3CatalogWriteStore;
+///
+/// struct ProbeBackend;
+///
+/// fn prove(store: &S3CatalogWriteStore<ProbeBackend>) {
+///     fn derived_authority<T: DerivedWriteStore>(_: &T) {}
+///     derived_authority(store);
+/// }
+/// ```
 pub struct S3CatalogWriteStore<B> {
     config: CatalogWriterConfig,
     backend: B,
@@ -806,6 +924,48 @@ impl<B: CatalogWriteBackend + Sync> CatalogWriteStore for S3CatalogWriteStore<B>
 /// Composed by the derived-content pipelines (the usage-summary
 /// producer, a redacted-episode pipeline) — the Phase 10 workflows the
 /// provisioning pins this identity for — never by an ingest replica.
+///
+/// The same compile-time pins one namespace over:
+///
+/// ```compile_fail
+/// // A writer is not an administrator.
+/// use archivist_storage::control::ControlAdminStore;
+/// use archivist_storage_s3::scoped_write::S3DerivedWriteStore;
+///
+/// struct ProbeBackend;
+///
+/// fn prove(store: &S3DerivedWriteStore<ProbeBackend>) {
+///     fn admin_authority<T: ControlAdminStore>(_: &T) {}
+///     admin_authority(store);
+/// }
+/// ```
+///
+/// ```compile_fail
+/// // A writer is not the raw writer.
+/// use archivist_storage::raw_write::RawWriteStore;
+/// use archivist_storage_s3::scoped_write::S3DerivedWriteStore;
+///
+/// struct ProbeBackend;
+///
+/// fn prove(store: &S3DerivedWriteStore<ProbeBackend>) {
+///     fn raw_write_authority<T: RawWriteStore>(_: &T) {}
+///     raw_write_authority(store);
+/// }
+/// ```
+///
+/// ```compile_fail
+/// // The derived writer is not the catalog writer: the checkpoint
+/// // namespace is the sibling identity's authority.
+/// use archivist_storage::scoped_write::CatalogWriteStore;
+/// use archivist_storage_s3::scoped_write::S3DerivedWriteStore;
+///
+/// struct ProbeBackend;
+///
+/// fn prove(store: &S3DerivedWriteStore<ProbeBackend>) {
+///     fn catalog_authority<T: CatalogWriteStore>(_: &T) {}
+///     catalog_authority(store);
+/// }
+/// ```
 pub struct S3DerivedWriteStore<B> {
     config: DerivedWriterConfig,
     backend: B,

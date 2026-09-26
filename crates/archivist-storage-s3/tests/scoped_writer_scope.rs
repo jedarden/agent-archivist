@@ -52,7 +52,7 @@ use archivist_storage::scoped_write::{
 };
 use archivist_storage_s3::config::{
     ControlAdminConfig, ControlAdminConfigBuilder, EncryptionPolicy, S3ConfigErrorKind,
-    S3StorageConfigBuilder,
+    S3StorageConfigBuilder, ScopedWritersConfig,
 };
 use archivist_storage_s3::scoped_write::{
     CatalogWriteBackend, CatalogWriterConfig, CatalogWriterConfigBuilder, DerivedWriteBackend,
@@ -140,6 +140,22 @@ fn admin_config() -> ControlAdminConfig {
         .control_bucket(CONTROL_BUCKET)
         .tenant(TENANT)
         .control_admin_credentials(ADMIN_REF)
+        .build()
+        .unwrap()
+}
+
+/// The configuration path a deployment actually walks: both writer
+/// identities validated once by the pair surface
+/// ([`ScopedWritersConfig`]), which delegates to each standalone gate
+/// and then hands the validated halves back for the stores below.
+fn scoped_writers() -> ScopedWritersConfig {
+    ScopedWritersConfig::builder()
+        .endpoint_url(ENDPOINT)
+        .region(REGION)
+        .tenant_bucket(TENANT_BUCKET)
+        .tenant(TENANT)
+        .catalog_write_credentials(CATALOG_REF)
+        .derived_write_credentials(DERIVED_REF)
         .build()
         .unwrap()
 }
@@ -610,4 +626,245 @@ fn writer_configuration_validates_fail_closed() {
         .build()
         .unwrap_err();
     assert_eq!(error.kind(), S3ConfigErrorKind::MalformedSetting);
+}
+
+/// The configuration path a deployment really walks, positive half:
+/// both writer identities validated once by the pair surface, both
+/// stores composed from those halves. Put succeeds below each writer's
+/// own namespace, and each writer's enumeration returns only its own
+/// prefix's objects — never the sibling's, though both stores share one
+/// bucket.
+#[test]
+fn pair_configured_writers_append_and_enumerate_only_their_own_namespaces() {
+    let pair = scoped_writers();
+    let backend = MapBackend::new();
+    let catalog = S3CatalogWriteStore::new(pair.catalog().clone(), backend.clone());
+    let derived = S3DerivedWriteStore::new(pair.derived().clone(), backend.clone());
+
+    // The stores carry the configured halves themselves, not a rebuild:
+    // the credential references and the pinned tenant are the pair's.
+    assert_eq!(
+        catalog.config().catalog_write_credentials(),
+        pair.catalog().catalog_write_credentials()
+    );
+    assert_eq!(catalog.config().tenant(), pair.catalog().tenant());
+    assert_eq!(
+        derived.config().derived_write_credentials(),
+        pair.derived().derived_write_credentials()
+    );
+
+    let checkpoint = checkpoint_key(&checkpoint_bytes(9));
+    block_on(catalog.put_checkpoint(&checkpoint, &checkpoint_bytes(9))).unwrap();
+    let summary = usage_summary();
+    let projection = DerivedObjectKey::parse(&summary.object_key()).unwrap();
+    block_on(derived.put_object(&projection, &summary.serialized())).unwrap();
+
+    // Each enumeration comes back through the writer's own grant and
+    // lists only its own prefix's objects: the checkpoint is invisible
+    // to the derived writer, the projection to the catalog writer.
+    let listed = block_on(catalog.list_checkpoints(&CatalogListPrefix::root(&tenant()))).unwrap();
+    assert_eq!(listed, vec![checkpoint.as_str().to_owned()]);
+    let listed = block_on(derived.list_objects(&DerivedListPrefix::root(&tenant()))).unwrap();
+    assert_eq!(listed, vec![projection.as_str().to_owned()]);
+
+    // Two puts, two lists — exactly the verbs the provisioning grants,
+    // nothing refused.
+    assert_eq!(
+        backend.counters(),
+        Counters {
+            puts: 2,
+            lists: 2,
+            refused_puts: 0,
+            refused_lists: 0,
+        }
+    );
+}
+
+/// The rejection matrix, through the pair-configured stores: every
+/// out-of-scope prefix — raw blobs, occurrence manifests, attestations,
+/// control records, each writer's sibling namespace, the bare tenant
+/// tree, the bucket root — refused for both actions at every layer that
+/// can see it, and the foreign-tenant shapes that do parse refused by
+/// the stores themselves before any request exists. Each row is
+/// asserted as one auditable cell: the key and list-prefix grammars
+/// refuse to shape it, the pair-configured scope model denies put and
+/// list, and the edge grant denies put and list. The action boundary
+/// beyond `put+list` is the seams' own shape — no delete, read,
+/// multipart, or administration method exists to call, pinned by the
+/// `compile_fail` doc tests on the two backend traits and the two
+/// stores.
+#[allow(clippy::too_many_lines)] // one rejection matrix, read row by row
+#[test]
+fn configured_writers_reject_every_out_of_scope_prefix_and_action() {
+    let pair = scoped_writers();
+    let backend = MapBackend::new();
+    let catalog = S3CatalogWriteStore::new(pair.catalog().clone(), backend.clone());
+    let derived = S3DerivedWriteStore::new(pair.derived().clone(), backend.clone());
+    let tenant = tenant();
+    let other = other_tenant();
+
+    let raw_blob = format!(
+        "tenants/{tenant}/v1/raw/blobs/01/{}.zst",
+        encode_hex(&digest(b"blob"))
+    );
+    let occurrence = format!(
+        "tenants/{tenant}/v1/raw/occurrences/{}.json",
+        encode_hex(&digest(b"occurrence"))
+    );
+    let attestation = format!(
+        "tenants/{tenant}/v1/raw/attestations/{}.json",
+        encode_hex(&digest(b"attestation"))
+    );
+    let control_record = format!("tenants/{tenant}/v1/control/clients/{CLIENT}.json");
+    let raw_root = format!("tenants/{tenant}/v1/raw/");
+    let control_root = format!("tenants/{tenant}/v1/control/");
+    let derived_root = DerivedObjectKey::prefix(&tenant);
+    let catalog_root = CatalogCheckpointKey::prefix(&tenant);
+    let checkpoint_text = checkpoint_key(&checkpoint_bytes(1)).as_str().to_owned();
+    let usage_text = usage_summary().object_key();
+    let tenant_root = format!("tenants/{tenant}/v1/");
+
+    // Foreign to both writers at every layer: the ingest namespaces
+    // (raw blobs, occurrence manifests, attestations), the control
+    // namespace, the bare tenant tree, and the bucket root.
+    for (label, text) in [
+        ("raw blob key", raw_blob.as_str()),
+        ("occurrence manifest key", occurrence.as_str()),
+        ("attestation key", attestation.as_str()),
+        ("control record key", control_record.as_str()),
+        ("raw namespace root", raw_root.as_str()),
+        ("control namespace root", control_root.as_str()),
+        ("tenant tree root", tenant_root.as_str()),
+        ("bucket root", ""),
+    ] {
+        // The grammars refuse to shape it — no store method can be
+        // handed it as a put key or a list prefix at all.
+        assert!(
+            CatalogCheckpointKey::parse(text).is_err(),
+            "{label}: must not parse as a checkpoint key"
+        );
+        assert!(
+            DerivedObjectKey::parse(text).is_err(),
+            "{label}: must not parse as a derived object key"
+        );
+        assert!(
+            CatalogListPrefix::parse(&tenant, text).is_err(),
+            "{label}: must not parse as a catalog list prefix"
+        );
+        assert!(
+            DerivedListPrefix::parse(&tenant, text).is_err(),
+            "{label}: must not parse as a derived list prefix"
+        );
+        // The pair-configured scope model denies both actions.
+        assert!(
+            !catalog.config().permits_key(text),
+            "{label}: catalog put must be out of scope"
+        );
+        assert!(
+            !catalog.config().permits_list_prefix(text),
+            "{label}: catalog list must be out of scope"
+        );
+        assert!(
+            !derived.config().permits_key(text),
+            "{label}: derived put must be out of scope"
+        );
+        assert!(
+            !derived.config().permits_list_prefix(text),
+            "{label}: derived list must be out of scope"
+        );
+        // And the edge grant denies both actions for both credentials.
+        assert!(
+            !backend.catalog_policy_permits(text),
+            "{label}: catalog grant must refuse"
+        );
+        assert!(
+            !backend.derived_policy_permits(text),
+            "{label}: derived grant must refuse"
+        );
+    }
+
+    // Each writer's sibling namespace is the one prefix that sits
+    // inside the other identity's grant — denied here for the identity
+    // that does not hold it, key shape and list shape both.
+    for (label, text) in [
+        ("usage-summary key", usage_text.as_str()),
+        ("derived namespace root", derived_root.as_str()),
+    ] {
+        assert!(
+            CatalogCheckpointKey::parse(text).is_err(),
+            "{label}: must not parse as a checkpoint key"
+        );
+        assert!(
+            CatalogListPrefix::parse(&tenant, text).is_err(),
+            "{label}: must not parse as a catalog list prefix"
+        );
+        assert!(
+            !catalog.config().permits_key(text),
+            "{label}: catalog put must be out of scope"
+        );
+        assert!(
+            !catalog.config().permits_list_prefix(text),
+            "{label}: catalog list must be out of scope"
+        );
+        assert!(
+            !backend.catalog_policy_permits(text),
+            "{label}: catalog grant must refuse"
+        );
+    }
+    for (label, text) in [
+        ("catalog checkpoint key", checkpoint_text.as_str()),
+        ("catalog namespace root", catalog_root.as_str()),
+    ] {
+        assert!(
+            DerivedObjectKey::parse(text).is_err(),
+            "{label}: must not parse as a derived object key"
+        );
+        assert!(
+            DerivedListPrefix::parse(&tenant, text).is_err(),
+            "{label}: must not parse as a derived list prefix"
+        );
+        assert!(
+            !derived.config().permits_key(text),
+            "{label}: derived put must be out of scope"
+        );
+        assert!(
+            !derived.config().permits_list_prefix(text),
+            "{label}: derived list must be out of scope"
+        );
+        assert!(
+            !backend.derived_policy_permits(text),
+            "{label}: derived grant must refuse"
+        );
+    }
+
+    // The shapes that do parse — valid keys of each grammar, one tenant
+    // over, and outside both writers' grants. These are the pairs the
+    // stores themselves must refuse, before any request exists.
+    let foreign_checkpoint = CatalogCheckpointKey::new(
+        &other,
+        &checkpoint_key(&checkpoint_bytes(2)).checkpoint().clone(),
+    );
+    let foreign_projection =
+        DerivedObjectKey::new(&other, "usage", "1", "usage-summaries/ab/abcd.json").unwrap();
+    assert!(
+        !backend.catalog_policy_permits(&CatalogCheckpointKey::prefix(&other)),
+        "another tenant's catalog root: catalog grant must refuse"
+    );
+    assert!(
+        !backend.derived_policy_permits(&DerivedObjectKey::prefix(&other)),
+        "another tenant's derived root: derived grant must refuse"
+    );
+
+    let error = block_on(catalog.put_checkpoint(&foreign_checkpoint, b"bytes")).unwrap_err();
+    assert_eq!(error.kind(), StorageErrorKind::ScopeViolation);
+    let error = block_on(catalog.list_checkpoints(&CatalogListPrefix::root(&other))).unwrap_err();
+    assert_eq!(error.kind(), StorageErrorKind::ScopeViolation);
+    let error = block_on(derived.put_object(&foreign_projection, b"bytes")).unwrap_err();
+    assert_eq!(error.kind(), StorageErrorKind::ScopeViolation);
+    let error = block_on(derived.list_objects(&DerivedListPrefix::root(&other))).unwrap_err();
+    assert_eq!(error.kind(), StorageErrorKind::ScopeViolation);
+
+    // Not one of the refused pairs ever reached the backend: every
+    // rejection happened before a request existed.
+    assert_eq!(backend.counters(), Counters::default());
 }
