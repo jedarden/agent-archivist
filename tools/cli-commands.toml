@@ -278,7 +278,15 @@ state_lock = "none"
 stdout = "document"
 operand = "none"
 stdin = "none"
-keys = []
+# The two scoped-writer references the rebuild's production binding
+# resolves (CLI-010): the catalog checkpoints and the usage-summary
+# projection the deterministic fold emits (plan Phase 10). Optional
+# credential roles (CFG-019) — a host running none of the Phase 10
+# pipelines never carries them.
+keys = [
+  "storage.catalog_write_credentials_ref",
+  "storage.derived_write_credentials_ref",
+]
 
 [commands."catalog rebuild".flags.from-occurrences]
 summary = "Rebuild from raw S3 occurrences, attestations, and blobs; the only v1 rebuild source."

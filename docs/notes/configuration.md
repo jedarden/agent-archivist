@@ -1,6 +1,6 @@
 # Agent Archivist configuration conventions
 
-Status: accepted baseline · Last updated: 2026-09-20
+Status: accepted baseline · Last updated: 2026-09-26
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are
 to be interpreted as described by RFC 2119 and RFC 8174 when they appear in bold.
@@ -152,8 +152,10 @@ and one of the two is wrong and must be fixed in the same commit.
   absent from every tier, and only a capability a deployment may omit may
   declare it. A secret reference declares it because any other type
   expresses optionality as a default while a secret is never defaulted:
-  an omitted credential role — the storage raw-reader (STO-007 preflight)
-  and offline-restore identities, for example — would otherwise be
+  an omitted credential role — the storage raw-reader (STO-007 preflight),
+  offline-restore, and Phase 10 scoped-writer identities (the catalog and
+  derived writers a replica hosts only when it runs the rebuild
+  pipelines), for example — would otherwise be
   inexpressible. The `admin` section (CFG-005) declares it because it is
   a whole surface a deployment omits: an ingest replica never configures
   the offline administration surface, so a plain load demands nothing of

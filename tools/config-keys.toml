@@ -191,6 +191,24 @@ optional = true
 description = "Optional reference to the offline identity backup and restore use; present only when a deployment deliberately grants offline restore."
 example = "file:/etc/archivist/storage/offline-restore-credentials"
 
+[keys."storage.catalog_write_credentials_ref"]
+owner = "archivist-storage-s3"
+type = "reference"
+tiers = ["env", "file"]
+secret = true
+optional = true
+description = "Optional reference to the catalog-writer credential, scoped to put and list below the tenant catalog prefix; present only where the Phase 10 catalog pipeline is hosted."
+example = "file:/etc/archivist/storage/catalog-writer-credentials"
+
+[keys."storage.derived_write_credentials_ref"]
+owner = "archivist-storage-s3"
+type = "reference"
+tiers = ["env", "file"]
+secret = true
+optional = true
+description = "Optional reference to the derived-writer credential, scoped to put and list below the tenant derived prefix; present only where the Phase 10 usage-summary projection is hosted."
+example = "file:/etc/archivist/storage/derived-writer-credentials"
+
 [keys."storage.tenant"]
 owner = "archivist-storage-s3"
 type = "string"
