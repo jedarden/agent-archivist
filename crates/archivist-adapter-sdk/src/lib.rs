@@ -83,6 +83,14 @@
 //!   session states — together with the claimed routes, the known
 //!   bypasses, the schema version, the flush outcome, and the coverage
 //!   evidence digest a verification run records.
+//! - [`completeness_report`]: the archive-level completeness report
+//!   (plan Phase 10, `archivist.completeness-report/v1`): one versioned,
+//!   content-free document joining every source's raw-occurrence,
+//!   attestation, adapter, and semantic states with every instrumented
+//!   route's exact-inference partition, linked by digest to the published
+//!   coverage manifest — every source and route classified, provenance
+//!   digest-traceable, and unobserved exact traffic never inferred
+//!   complete.
 //! - [`file_capture`]: the file-source capture core's complete-JSONL
 //!   boundary selection (CAP-003, plan `EC-01`): the torn tail is
 //!   measured, never captured, and re-measured on the next pass (AC-02).
@@ -130,6 +138,7 @@ pub mod artifact;
 pub mod capability;
 pub mod capture_alignment;
 pub mod compatibility;
+pub mod completeness_report;
 pub mod conformance;
 pub mod coverage_manifest;
 pub mod descriptor;
@@ -170,6 +179,11 @@ pub use capture_alignment::{AlignmentError, CaptureAlignment, InferenceAlignment
 pub use compatibility::{
     CompatibilityMatrix, FIRST_PARTY_OPENAI_HTTP1, FIRST_PARTY_OPENAI_PROXY, MatrixError,
     QualifiedRoute,
+};
+pub use completeness_report::{
+    AttestationCounts, AttestationEvidence, AttestationState, COMPLETENESS_REPORT_SCHEMA,
+    COMPLETENESS_REPORT_SCHEMA_VERSION, CompletenessReport, OccurrenceCounts, OccurrenceEvidence,
+    OccurrenceState, ReportError, SourceCompleteness,
 };
 pub use conformance::{
     CORPUS_RELATIVE, ConformanceAdapter, ConformanceSuite, CorpusError, GenerationContinuity,
