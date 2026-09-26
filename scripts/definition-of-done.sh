@@ -195,6 +195,14 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # enum/version metadata, reserved-name blocks, the construction registry,
   # and the error-message charset; `--self-test` proves the rejection paths.
   run_check "wire schema coherence"  python3 tools/check-wire-schemas.py --self-test
+  # Schema-derived bindings (plan Section 8, Phase 1 exit gate): the Rust
+  # bindings module (crates/archivist-protocol/src/bindings.rs) is
+  # regenerated from the checked-in schemas/v1 family and byte-compared with
+  # the committed source, so a hand edit or a schema change without
+  # regeneration fails the fast lane; `--self-test` proves the rejection
+  # paths (nondeterminism, schema-insensitive output, undetected drift).
+  run_check "protocol bindings"         python3 tools/bindingsgen.py --verify
+  run_check "protocol bindings policy"  python3 tools/bindingsgen.py --self-test
   # Release container baseline (docs/notes/release-container.md): the
   # VERSION grammar and its equality with the workspace version, the
   # digest-pinned two-stage Dockerfile matching the pinned toolchain, and
