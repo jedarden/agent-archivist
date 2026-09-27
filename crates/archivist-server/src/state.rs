@@ -29,7 +29,11 @@
 //! no caller, and there is no such thing here. The producer of the
 //! evidence is [`ServerState::record_verified_control_read`]: it accepts
 //! only bytes returned by the control-read boundary after the
-//! tenant-authority signature has been verified. Until that happens a
+//! tenant-authority signature has been verified — through the bounded
+//! 60-second trust cache composed at the resolution seam (EC-09), so a
+//! registry outage serves cached trust for at most the lease and then
+//! fails closed with the retryable unavailable class while the ledger's
+//! own window lets the evidence lapse. Until anything is verified a
 //! replica starts not-ready and fails closed, which is the honest state
 //! for a replica that has proven nothing yet.
 //!
@@ -47,11 +51,17 @@
 //! registered `archivist.server.ingest.inflight` gauge — both
 //! content-free (SEC-004).
 
+use std::cell::Cell;
 use std::fmt;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use archivist_auth::authority::{AuthorityChainError, PinnedAuthorityRoot, verify_control_record};
+use archivist_auth::authority::{
+    AuthorityChainError, PinnedAuthorityRoot, resolve_authority, verify_control_record_resolved,
+};
+#[cfg(test)]
+use archivist_auth::trust_cache::TrustCacheClock;
+use archivist_auth::trust_cache::{BoundedTrustCache, SystemClock};
 use archivist_protocol::vocabulary::{Ed25519PublicKey, KeyId, TenantId};
 use archivist_storage::control::{ControlReadStore, ControlRecord};
 use archivist_storage::ingest::IngestStorage;
@@ -252,6 +262,13 @@ pub struct ServerState<W, C> {
     /// (`OpenUploads` is an `Arc` — writers clone the handle, the state
     /// owns the original).
     uploads: Arc<OpenUploads>,
+    /// The bounded 60-second trust cache (EC-09): the reader-side cache
+    /// every refresh's chain walk composes at the resolution seam, shared
+    /// across refreshes so a trust-registry outage degrades to at most
+    /// sixty seconds of cached trust before the walk re-runs and the
+    /// registry's failure surfaces. It holds public material only and is
+    /// never consulted by any other surface.
+    trust_cache: BoundedTrustCache,
     readiness: ReadinessTracker,
     gate: AdmissionGate,
     metrics: Arc<ServerMetrics>,
@@ -273,6 +290,52 @@ impl<W, C> ServerState<W, C> {
         W: RawWriteStore + Sync,
         C: ControlReadStore,
     {
+        Self::compose_state(
+            config,
+            trust,
+            storage,
+            receipts,
+            BoundedTrustCache::new(SystemClock),
+        )
+    }
+
+    /// The test composition: identical to [`ServerState::new`], with the
+    /// trust cache's clock injected so the 60-second TTL boundaries are
+    /// deterministic on the test path — the cache never reads the wall
+    /// clock itself, `TrustCacheClock` is the seam.
+    #[cfg(test)]
+    pub(crate) fn with_trust_cache_clock(
+        config: ServerConfig,
+        trust: TrustConfig,
+        storage: IngestStorage<W, C>,
+        receipts: crate::receipts::ReceiptSigners,
+        clock: impl TrustCacheClock + 'static,
+    ) -> Self
+    where
+        W: RawWriteStore + Sync,
+        C: ControlReadStore,
+    {
+        Self::compose_state(
+            config,
+            trust,
+            storage,
+            receipts,
+            BoundedTrustCache::new(clock),
+        )
+    }
+
+    /// The one composition body behind both constructors.
+    fn compose_state(
+        config: ServerConfig,
+        trust: TrustConfig,
+        storage: IngestStorage<W, C>,
+        receipts: crate::receipts::ReceiptSigners,
+        trust_cache: BoundedTrustCache,
+    ) -> Self
+    where
+        W: RawWriteStore + Sync,
+        C: ControlReadStore,
+    {
         let metrics = Arc::new(ServerMetrics::new());
         let telemetry = Arc::new(StorageTelemetry::new());
         let (raw, control) = storage.into_parts();
@@ -284,6 +347,7 @@ impl<W, C> ServerState<W, C> {
             uploads: Arc::new(OpenUploads::new()),
             config,
             trust,
+            trust_cache,
             storage: IngestStorage::compose(MeasuredRawStore::new(raw, telemetry), control),
             receipts,
         }
@@ -338,6 +402,14 @@ impl<W, C> ServerState<W, C> {
         self.readiness.evaluate(Instant::now())
     }
 
+    /// Evaluate readiness at an explicit instant — the test surface for
+    /// the withdrawal half of EC-09: expiry is evaluated on demand, so a
+    /// test pins the instant instead of waiting out the window.
+    #[cfg(test)]
+    pub(crate) fn readiness_at(&self, now: Instant) -> ReadinessSnapshot {
+        self.readiness.evaluate(now)
+    }
+
     /// The replica's admission gate: the resource guards every ingest
     /// request meets before anything request-derived happens.
     #[must_use]
@@ -358,11 +430,18 @@ impl<W, C> ServerState<W, C> {
     ///
     /// The record must be the byte-exact value returned by the control-read
     /// store. Its tenant-authority signature is checked against this
-    /// replica's pinned root before the freshness lease is updated. The
-    /// optional fetch resolves authority-rotation links by their derived
-    /// key, allowing the same verifier to accept a successor authority
-    /// during its valid chain window. A failed verification never changes
-    /// readiness.
+    /// replica's pinned root before the freshness lease is updated — the
+    /// resolution running through the replica's [`BoundedTrustCache`] at
+    /// the [`verify_control_record_resolved`] seam (EC-09): a cached
+    /// resolution inside its 60-second lease answers without touching the
+    /// registry, an expired lease re-walks, and a walk that fails is never
+    /// cached. The optional fetch resolves authority-rotation links by
+    /// their derived key, allowing the same verifier to accept a successor
+    /// authority during its valid chain window. A failed verification
+    /// never changes readiness: the evidence simply ages out of the ledger
+    /// at its own window, and a replica whose registry stays unreachable
+    /// past both the cache lease and that window answers not-ready — the
+    /// retryable 503 of EC-09 — until a verification succeeds again.
     ///
     /// The fetch closure is deliberately synchronous and storage-agnostic:
     /// callers perform any asynchronous control reads before passing the
@@ -379,17 +458,26 @@ impl<W, C> ServerState<W, C> {
         record: &ControlRecord,
         fetch_authority_rotation: impl FnMut(&KeyId) -> Option<Vec<u8>>,
     ) -> Result<(), AuthorityChainError> {
-        let outcome =
-            self.record_verified_control_read_inner(tenant, record, fetch_authority_rotation);
-        // The refresh family counts the attempt: a read that verified and
-        // refreshed the freshness lease is `refreshed`, and every refusal
-        // — unconfigured tenant, malformed record, broken chain, or a
-        // verification the pinned root rejects — is `unavailable`. There
-        // is no cache-hit producer on this surface: the lease is the
-        // cache, and reading under it is what expiry evaluates, not a
-        // refresh attempt (EC-09).
+        // Whether the walk ran at all is the refreshed/cache-hit line: a
+        // resolution the cache served inside its lease never reaches the
+        // registry, and the metrics family reports exactly that.
+        let walked = Cell::new(false);
+        let outcome = self.record_verified_control_read_inner(
+            tenant,
+            record,
+            fetch_authority_rotation,
+            &walked,
+        );
+        // The refresh family counts the attempt: a walk that reached the
+        // signer and refreshed the freshness lease is `refreshed`; a
+        // resolution the bounded cache served inside its lease is
+        // `cache_hit`; and every refusal — unconfigured tenant, malformed
+        // record, broken chain, a registry unreachable past the lease, or
+        // a verification the pinned root rejects — is `unavailable`, the
+        // class the error registry renders as the retryable 503 (EC-09).
         self.metrics.record_trust_refresh(match &outcome {
-            Ok(()) => TrustRefreshOutcome::Refreshed,
+            Ok(()) if walked.get() => TrustRefreshOutcome::Refreshed,
+            Ok(()) => TrustRefreshOutcome::CacheHit,
             Err(_) => TrustRefreshOutcome::Unavailable,
         });
         outcome
@@ -399,7 +487,8 @@ impl<W, C> ServerState<W, C> {
         &self,
         tenant: &TenantId,
         record: &ControlRecord,
-        fetch_authority_rotation: impl FnMut(&KeyId) -> Option<Vec<u8>>,
+        mut fetch_authority_rotation: impl FnMut(&KeyId) -> Option<Vec<u8>>,
+        walked: &Cell<bool>,
     ) -> Result<(), AuthorityChainError> {
         let root = self
             .trust
@@ -408,7 +497,22 @@ impl<W, C> ServerState<W, C> {
         let public_key = Ed25519PublicKey::parse(root.authority().as_str())
             .map_err(|_| AuthorityChainError::MalformedRecord)?;
         let pinned = PinnedAuthorityRoot::new(tenant.clone(), public_key);
-        verify_control_record(&pinned, record.envelope(), fetch_authority_rotation)?;
+        verify_control_record_resolved(record.envelope(), |record_tenant, signer, signed_at| {
+            // The chain has no force outside the configured tenant — the
+            // same closed refusal `verify_control_record` renders before
+            // its walk.
+            if *record_tenant != *tenant {
+                return Err(AuthorityChainError::RecordDisagreement);
+            }
+            // The bounded trust cache in front of the walk: a hit skips
+            // the registry entirely, an expired entry re-walks, and only
+            // a resolution the walk actually reached is cached (EC-09).
+            self.trust_cache
+                .resolve(record_tenant, signer, signed_at, |_, signer| {
+                    walked.set(true);
+                    resolve_authority(&pinned, signer, &mut fetch_authority_rotation)
+                })
+        })?;
         if self.readiness.record_evidence(tenant) {
             Ok(())
         } else {
@@ -472,9 +576,32 @@ pub(crate) fn signed_test_control_record(tenant: &TenantId, seed: &[u8; 32]) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::{NotReadyReason, ReadinessTracker, TRUST_EVIDENCE_WINDOW};
+    use super::{
+        NotReadyReason, ReadinessTracker, ServerState, TRUST_EVIDENCE_WINDOW,
+        signed_test_control_record,
+    };
+    use crate::config::ServerConfig;
+    use crate::receipts::ReceiptSigners;
     use crate::trust::{TenantTrustRoot, TrustConfig};
-    use archivist_protocol::vocabulary::TenantId;
+    use archivist_auth::authority::{AuthorityChainError, AuthorityRotationLink};
+    use archivist_auth::ed25519;
+    use archivist_auth::trust_cache::{TRUST_CACHE_TTL_SECONDS, TrustCacheClock};
+    use archivist_protocol::json::{Object, Value};
+    use archivist_protocol::object_key::BlobObjectKey;
+    use archivist_protocol::vocabulary::{
+        ClientId, Ed25519PublicKey, Ed25519Signature, KeyId, StorageOutcome, TenantId,
+    };
+    use archivist_storage::capability::StoreCapabilities;
+    use archivist_storage::commit::ConditionalCreateStore;
+    use archivist_storage::control::{AuthorizationEpoch, ControlReadStore, ControlRecord};
+    use archivist_storage::error::{StorageError, StorageErrorKind};
+    use archivist_storage::ingest::IngestStorage;
+    use archivist_storage::raw_write::{
+        ManifestKey, MultipartUploadId, PartCommitment, PartNumber, RawWriteStore,
+    };
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
     const TENANT_A: &str = "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b";
@@ -611,5 +738,404 @@ mod tests {
                     .all(|b| b.is_ascii_lowercase() || b == b'_')
             );
         }
+    }
+
+    // ------------------------------------------------------------------
+    // The refresh path end to end: verification through the bounded
+    // trust cache at the resolution seam, evidence in the ledger,
+    // readiness derived from it — the EC-09 integration, driven with
+    // keys the archivist-auth ed25519 module generates.
+    // ------------------------------------------------------------------
+
+    /// The pinned tenant authority's seed, and the successor its first
+    /// rotation link establishes: two halves of one chain, both derived
+    /// by the ed25519 module, never asserted.
+    const ROOT_SEED: [u8; 32] = [0x2A; 32];
+    const SUCCESSOR_SEED: [u8; 32] = [0x2B; 32];
+    /// The rotation link's instant: before every record below, so the
+    /// successor is established material at each record's own `signed_at`.
+    const LINK_SIGNED_AT: &str = "2026-09-10T00:00:00Z";
+
+    /// A fixed cache clock: the only time source the refresh path's trust
+    /// cache reads here, advanced by hand so the 60-second TTL boundary
+    /// is deterministic.
+    #[derive(Clone)]
+    struct FixedCacheClock {
+        now: Arc<AtomicU64>,
+    }
+
+    impl FixedCacheClock {
+        fn at(seconds: u64) -> Self {
+            Self {
+                now: Arc::new(AtomicU64::new(seconds)),
+            }
+        }
+
+        fn advance_by(&self, seconds: u64) {
+            self.now.fetch_add(seconds, Ordering::SeqCst);
+        }
+    }
+
+    impl TrustCacheClock for FixedCacheClock {
+        fn now_seconds(&self) -> u64 {
+            self.now.load(Ordering::SeqCst)
+        }
+    }
+
+    /// A raw writer that only counts: the refresh path owns no raw-write
+    /// capability, so the counter standing at zero after every refresh
+    /// exchange is the no-storage-writes half of EC-09, observed rather
+    /// than asserted in prose.
+    #[derive(Clone, Debug)]
+    struct CountingRawStore {
+        writes: Arc<AtomicUsize>,
+    }
+
+    impl CountingRawStore {
+        fn new() -> Self {
+            Self {
+                writes: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+    }
+
+    fn unavailable<T>() -> Result<T, StorageError> {
+        Err(StorageError::of_kind(StorageErrorKind::Unavailable))
+    }
+
+    impl RawWriteStore for CountingRawStore {
+        fn capabilities(&self) -> StoreCapabilities {
+            StoreCapabilities::unprobed()
+        }
+
+        async fn write_manifest(
+            &self,
+            _key: &ManifestKey,
+            _bytes: &[u8],
+        ) -> Result<StorageOutcome, StorageError> {
+            self.writes.fetch_add(1, Ordering::SeqCst);
+            unavailable()
+        }
+
+        async fn begin_multipart(
+            &self,
+            _blob: &BlobObjectKey,
+        ) -> Result<MultipartUploadId, StorageError> {
+            self.writes.fetch_add(1, Ordering::SeqCst);
+            unavailable()
+        }
+
+        async fn write_part(
+            &self,
+            _upload: &MultipartUploadId,
+            _part: PartNumber,
+            _bytes: &[u8],
+        ) -> Result<PartCommitment, StorageError> {
+            self.writes.fetch_add(1, Ordering::SeqCst);
+            unavailable()
+        }
+
+        async fn commit_multipart(
+            &self,
+            _upload: &MultipartUploadId,
+            _parts: &[PartCommitment],
+        ) -> Result<StorageOutcome, StorageError> {
+            self.writes.fetch_add(1, Ordering::SeqCst);
+            unavailable()
+        }
+
+        async fn abort_multipart(&self, _upload: &MultipartUploadId) -> Result<(), StorageError> {
+            unavailable()
+        }
+    }
+
+    // The writer-only adoption: the trait's default answers every atomic
+    // primitive request with capability-unavailable, matching the mock's
+    // unprobed report.
+    impl ConditionalCreateStore for CountingRawStore {}
+
+    /// A control store that never answers: the refresh path reads no
+    /// control records itself — the caller's fetch closure is the
+    /// registry — so nothing here is ever consulted.
+    #[derive(Clone, Copy, Debug)]
+    struct UnavailableControlStore;
+
+    impl ControlReadStore for UnavailableControlStore {
+        async fn read_linked_client(
+            &self,
+            _tenant: &TenantId,
+            _client: &ClientId,
+        ) -> Result<Option<ControlRecord>, StorageError> {
+            unavailable()
+        }
+
+        async fn read_delegation(
+            &self,
+            _tenant: &TenantId,
+            _relay: &ClientId,
+            _origin: &ClientId,
+        ) -> Result<Option<ControlRecord>, StorageError> {
+            unavailable()
+        }
+
+        async fn read_revocation(
+            &self,
+            _tenant: &TenantId,
+            _client: &ClientId,
+            _epoch: AuthorizationEpoch,
+        ) -> Result<Option<ControlRecord>, StorageError> {
+            unavailable()
+        }
+
+        async fn read_rotation(
+            &self,
+            _tenant: &TenantId,
+            _client: &ClientId,
+            _epoch: AuthorizationEpoch,
+        ) -> Result<Option<ControlRecord>, StorageError> {
+            unavailable()
+        }
+
+        async fn read_receipt_key(
+            &self,
+            _tenant: &TenantId,
+            _key: &KeyId,
+        ) -> Result<Option<ControlRecord>, StorageError> {
+            unavailable()
+        }
+    }
+
+    /// A replica composed for the refresh path: one tenant whose pinned
+    /// authority half derives from [`ROOT_SEED`], the trust cache reading
+    /// the fixed clock, every durable write counted.
+    fn verified_read_state(
+        clock: FixedCacheClock,
+        raw: CountingRawStore,
+    ) -> ServerState<CountingRawStore, UnavailableControlStore> {
+        let authority = Ed25519PublicKey::from_raw(ed25519::public_key_from_seed(&ROOT_SEED));
+        let config = ServerConfig::builder()
+            .listen_address("127.0.0.1:0")
+            .shutdown_drain_seconds(5)
+            .build()
+            .expect("the test configuration validates");
+        let trust = TrustConfig::from_roots(vec![
+            TenantTrustRoot::new(TENANT_A, &authority.to_hex())
+                .expect("the generated authority half parses"),
+        ])
+        .expect("the one-tenant anchor set validates");
+        ServerState::with_trust_cache_clock(
+            config,
+            trust,
+            IngestStorage::compose(raw, UnavailableControlStore),
+            ReceiptSigners::new(),
+            clock,
+        )
+    }
+
+    /// The signed link retiring `predecessor_seed` and establishing
+    /// `successor_seed` — the rotation record a registry serves at the
+    /// predecessor's address.
+    fn signed_rotation_link(signed_at: &str, tenant: &TenantId) -> Vec<u8> {
+        let previous_public = Ed25519PublicKey::from_raw(ed25519::public_key_from_seed(&ROOT_SEED));
+        let public = Ed25519PublicKey::from_raw(ed25519::public_key_from_seed(&SUCCESSOR_SEED));
+        let previous_key_id = KeyId::from_public_key(&previous_public);
+        let mut members = Object::new();
+        members.set("schema", Value::Text("archivist.control/v1".to_owned()));
+        members.set("record_type", Value::Text("authority-rotation".to_owned()));
+        members.set("record_kind", Value::Text("immutable".to_owned()));
+        members.set("tenant_id", Value::Text(tenant.as_str().to_owned()));
+        members.set("previous_public_key", Value::Text(previous_public.to_hex()));
+        members.set("previous_key_id", Value::Text(previous_key_id.to_hex()));
+        members.set("key_algorithm", Value::Text("ed25519".to_owned()));
+        members.set("public_key", Value::Text(public.to_hex()));
+        members.set(
+            "key_id",
+            Value::Text(KeyId::from_public_key(&public).to_hex()),
+        );
+        members.set("signed_at", Value::Text(signed_at.to_owned()));
+        members.set("authority_key_id", Value::Text(previous_key_id.to_hex()));
+        let signature = ed25519::sign(
+            &ROOT_SEED,
+            &Value::Object(members.clone()).canonical_bytes(),
+        );
+        members.set(
+            "authority_signature",
+            Value::Text(Ed25519Signature::from_raw(*signature.as_bytes()).to_hex()),
+        );
+        Value::Object(members).canonical_bytes()
+    }
+
+    /// The registry fetch: a link-free tenant registry — every rotation
+    /// address answers nothing — that counts how often the walks touch it.
+    fn link_free_registry(
+        counter: &Arc<AtomicUsize>,
+    ) -> impl FnMut(&KeyId) -> Option<Vec<u8>> + '_ {
+        |_: &KeyId| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            None
+        }
+    }
+
+    /// EC-09's two bounds are one bound: the freshness window readiness
+    /// evaluates against is exactly the lease the trust cache serves
+    /// under — readiness expires with the cache, never before or after.
+    #[test]
+    fn the_evidence_window_is_the_trust_cache_ttl() {
+        assert_eq!(TRUST_EVIDENCE_WINDOW.as_secs(), TRUST_CACHE_TTL_SECONDS);
+    }
+
+    /// The ready side, end to end: a signed control record verifies
+    /// through the cached seam — first refresh walks the link-free
+    /// registry once, second refresh inside the lease is served by the
+    /// cache with the registry untouched — and both land evidence the
+    /// readiness ledger answers with. Nothing is written to storage.
+    #[test]
+    fn a_signed_control_read_verifies_through_the_cached_seam_and_records_evidence() {
+        let raw = CountingRawStore::new();
+        let state = verified_read_state(FixedCacheClock::at(1_000), raw.clone());
+        let tenant: TenantId = TENANT_A.parse().expect("test tenant parses");
+        let record = signed_test_control_record(&tenant, &ROOT_SEED);
+
+        // First refresh: the cache is empty, so the resolution walks once
+        // (the signer is the pinned root; one retirement probe), the
+        // signature verifies under the resolved half, and the evidence
+        // lands — the tenant is ready.
+        let walks = Arc::new(AtomicUsize::new(0));
+        state
+            .record_verified_control_read(&tenant, &record, link_free_registry(&walks))
+            .expect("the signed control read verifies against the generated root");
+        assert_eq!(walks.load(Ordering::SeqCst), 1, "an empty cache walks once");
+        let recorded = Instant::now();
+        assert!(state.readiness_at(recorded).ready);
+
+        // Second refresh inside the lease: the cached resolution answers,
+        // the registry is never touched, and the evidence is refreshed —
+        // the availability half of EC-09.
+        state
+            .record_verified_control_read(&tenant, &record, link_free_registry(&walks))
+            .expect("a fresh cache entry serves the resolution without the walk");
+        assert_eq!(
+            walks.load(Ordering::SeqCst),
+            1,
+            "a cache hit skips the walk"
+        );
+        assert!(
+            state.readiness_at(recorded).ready,
+            "a served hit keeps the evidence fresh"
+        );
+
+        // The refresh family tells the two producers apart.
+        let text = state.metrics().exposition(state.newest_trust_age_seconds());
+        assert!(
+            text.contains(
+                "archivist_server_trust_refresh_attempts_total\
+                 {archivist_trust_outcome=\"refreshed\"} 1\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "archivist_server_trust_refresh_attempts_total\
+                 {archivist_trust_outcome=\"cache_hit\"} 1\n"
+            ),
+            "{text}"
+        );
+        // And the whole exchange wrote nothing to storage.
+        assert_eq!(
+            raw.writes.load(Ordering::SeqCst),
+            0,
+            "the refresh path never writes"
+        );
+    }
+
+    /// The failure side, end to end: a rotated signer's verified read
+    /// makes the tenant ready; with the registry then unreachable and the
+    /// cache lease exhausted, the next refresh re-walks, finds the chain
+    /// unresolvable, and fails closed the retryable unavailable class —
+    /// while readiness lapses at the evidence window, evaluated on
+    /// demand, never revoked and never awaited. Nothing is written to
+    /// storage.
+    #[test]
+    fn a_registry_unreachable_past_the_lease_fails_closed_and_readiness_lapses() {
+        let clock = FixedCacheClock::at(1_000);
+        let raw = CountingRawStore::new();
+        let state = verified_read_state(clock.clone(), raw.clone());
+        let tenant: TenantId = TENANT_A.parse().expect("test tenant parses");
+
+        // The successor-signed record verifies through the rotation link
+        // the registry serves at the root's address: the walk adopts the
+        // successor, the signature verifies under the successor half, and
+        // the evidence lands.
+        let successor_record = signed_test_control_record(&tenant, &SUCCESSOR_SEED);
+        let link = signed_rotation_link(LINK_SIGNED_AT, &tenant);
+        let mut registry = HashMap::new();
+        let parsed = AuthorityRotationLink::parse(&link).expect("the test link is well-formed");
+        registry.insert(*parsed.previous_key_id(), link);
+        let walks = Arc::new(AtomicUsize::new(0));
+        let before = Instant::now();
+        state
+            .record_verified_control_read(&tenant, &successor_record, |key: &KeyId| {
+                walks.fetch_add(1, Ordering::SeqCst);
+                registry.get(key).cloned()
+            })
+            .expect("the successor-signed read verifies through the chain");
+        let after = Instant::now();
+        assert!(state.readiness_at(before).ready);
+        assert_eq!(
+            walks.load(Ordering::SeqCst),
+            2,
+            "the chain walk reads two addresses"
+        );
+
+        // The registry goes unreachable and the lease runs out: the next
+        // refresh re-walks, the registry answers nothing at the root's
+        // address, and the read fails the closed unreachable class — the
+        // retryable unavailability of EC-09 — instead of serving stale
+        // trust.
+        clock.advance_by(TRUST_CACHE_TTL_SECONDS);
+        let failure = state
+            .record_verified_control_read(&tenant, &successor_record, link_free_registry(&walks))
+            .expect_err("an unreachable registry past the lease fails closed");
+        assert_eq!(failure, AuthorityChainError::Unreachable);
+        assert_eq!(
+            walks.load(Ordering::SeqCst),
+            3,
+            "the exhausted lease re-walked"
+        );
+        let text = state.metrics().exposition(state.newest_trust_age_seconds());
+        assert!(
+            text.contains(
+                "archivist_server_trust_refresh_attempts_total\
+                 {archivist_trust_outcome=\"unavailable\"} 1\n"
+            ),
+            "{text}"
+        );
+
+        // Readiness is never revoked by the failed read — it lapses at
+        // the evidence window, evaluated on demand: provably fresh one
+        // nanosecond inside the window, provably withdrawn one nanosecond
+        // past it, with the stale class naming the reason the 503 body
+        // carries.
+        assert!(
+            state
+                .readiness_at(
+                    before
+                        + TRUST_EVIDENCE_WINDOW
+                            .checked_sub(Duration::from_nanos(1))
+                            .expect("the window exceeds a nanosecond"),
+                )
+                .ready
+        );
+        let withdrawn = state.readiness_at(after + TRUST_EVIDENCE_WINDOW + Duration::from_nanos(1));
+        assert!(!withdrawn.ready);
+        assert_eq!(withdrawn.reason, Some(NotReadyReason::TrustEvidenceStale));
+        assert_eq!(withdrawn.tenants_ready, 0);
+        // And the whole exchange — verified, cache-served, and failed —
+        // wrote nothing to storage.
+        assert_eq!(
+            raw.writes.load(Ordering::SeqCst),
+            0,
+            "the refresh path never writes"
+        );
     }
 }
