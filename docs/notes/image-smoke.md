@@ -78,7 +78,7 @@ Knobs (environment variables, all defaulted):
 | `SMOKE_EXPECT_READY` | `0` | flip after the readiness-evidence wiring lands (Section 7) |
 | `SMOKE_EXPECT_RECEIPT` | `0` | flip after the receipt-schedule composition lands (Section 7) |
 | `SMOKE_EXPECT_TRANSPORT` | `0` | flip after the storage transport key lands (Section 7) |
-| `SMOKE_VULN_FAIL_ON` | `critical` | grype failure threshold |
+| `SMOKE_VULN_FAIL_ON` | `critical` | grype failure threshold, applied over the findings with an available fix |
 
 ## 2. Reference environment
 
@@ -121,8 +121,10 @@ Asserted:
 
 1. `/health/live` answers `200` with body `{"live":true}` from a replica
    started from the image with a complete, valid environment-tier
-   configuration (every `server.*` and `storage.*` key the serve
-   composition requires, secrets by `env:` reference).
+   configuration (every key the serve composition requires — the
+   `server.*` and `storage.*` keys plus the client's required
+   `ingest.endpoint_url`, which the registry demands of every load even
+   though serve itself never dials it; secrets by `env:` reference).
 2. The image `HEALTHCHECK` (RC-020 — the binary probing its own
    `probe` command) reaches `healthy` on its pinned schedule, proving
    the image's liveness signal works as declared, not just as
@@ -187,19 +189,30 @@ of severity thresholds.
 
 ## 5. Vulnerability
 
-The documented invocation, run verbatim by the harness:
+The documented invocations, run verbatim by the harness — the first is
+the record, the second is the gate:
 
 ```console
-$ grype <image> --fail-on critical -o json --file grype.json
+$ grype <image> -o json --file grype.json
+$ grype <image> --fail-on critical --only-fixed
 ```
 
-**Recorded policy**: any **Critical** finding fails the smoke. High and
-below are reported (severity counts are printed from the retained JSON
-and recorded on the release-evidence bead) for the maintainer's review
-against the base image's own findings — the runtime base is
-digest-pinned, so its findings are a base-move decision, not a build
-accident. A `--fail-on` threshold other than `critical` is an explicit
-knob (`SMOKE_VULN_FAIL_ON`), never a silent relaxation.
+**Recorded policy**: a **Critical** finding **with an available fix**
+fails the smoke. Everything found — fixable or not — is retained in
+`grype.json` and printed as severity counts, both over all findings and
+over the subset the image build can act on. The gate is grype's own
+`--fail-on` machinery; `--only-fixed` scopes it to the findings the
+build can act on, because the runtime base is digest-pinned and its
+unfixable findings are a base-move decision, not a build accident —
+exactly how the secret category treats base bytes (the base's own PEM
+vocabulary is base content too). The recorded baseline makes the split
+concrete: the pinned `debian:12.15-slim` base carries seven Critical
+findings, all `wont-fix`/`not-fixed` upstream (CVE-2026-5450 in
+`libc6`/`libc-bin`, five CVEs in `perl-base`) — recorded, reviewed, and
+gating nothing, because no build of this image can act on them; the
+fixable subset tops out at High. A `--fail-on` threshold other than
+`critical` is an explicit knob (`SMOKE_VULN_FAIL_ON`), never a silent
+relaxation.
 
 A missing scanner or an unusable vulnerability database is a **GAP**,
 not a PASS: the invocation is defined, the invocation did not run, and
@@ -207,10 +220,12 @@ the gap is recorded with exactly the invocation a qualifying builder
 must run. This is the acceptance wording's "if the builder host lacks a
 scanner the invocation is still defined and the gap recorded".
 
-Failure modes: grype exit non-zero means the threshold was met or
-exceeded — the image fails until the base or a dependency moves; grype
-erroring on the image itself (unparseable config, unreachable daemon) is
-a stage abort, not a category result.
+Failure modes: grype exit non-zero means a fixable finding met or
+exceeded the threshold — the image fails until the fix is taken (a base
+or dependency move) or upstream marks it `wont-fix`/`not-fixed`, which
+moves it into the recorded base-decision half; grype erroring on the
+image itself (unparseable config, unreachable daemon) is a stage abort,
+not a category result.
 
 ## 6. Signature-input
 

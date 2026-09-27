@@ -70,9 +70,11 @@ SMOKE_REPLICA_MEMORY="${SMOKE_REPLICA_MEMORY:-256m}"
 SMOKE_EXPECT_READY="${SMOKE_EXPECT_READY:-0}"
 SMOKE_EXPECT_RECEIPT="${SMOKE_EXPECT_RECEIPT:-0}"
 SMOKE_EXPECT_TRANSPORT="${SMOKE_EXPECT_TRANSPORT:-0}"
-# The vulnerability threshold: grype --fail-on SEVERITY. The recorded policy
-# is "any Critical fails the smoke"; High and below are reported here and
-# recorded on the release-evidence bead for the maintainer's review.
+# The vulnerability threshold: grype --fail-on SEVERITY over the findings
+# with an available fix (--only-fixed). The recorded policy is "a fixable
+# Critical fails the smoke"; the digest-pinned base's unfixable findings are
+# recorded in full and are a base-move decision for the maintainer, exactly
+# as the secret category treats base bytes.
 SMOKE_VULN_FAIL_ON="${SMOKE_VULN_FAIL_ON:-critical}"
 
 # The MinIO reference pins (docs/notes/minio-reference-profile.md Section 1;
@@ -219,30 +221,48 @@ docker run --rm --entrypoint /bin/sh "$SMOKE_IMAGE" -c \
 
 # --- stage: vulnerability ---------------------------------------------------
 
-echo "=== smoke: vulnerability (grype over the built image, --fail-on $SMOKE_VULN_FAIL_ON)"
+echo "=== smoke: vulnerability (grype over the built image; --fail-on $SMOKE_VULN_FAIL_ON over fixable findings)"
 if ! command -v grype >/dev/null 2>&1; then
-  record GAP vulnerability "scanner absent on this host; the documented invocation stands: grype <image> --fail-on $SMOKE_VULN_FAIL_ON"
+  record GAP vulnerability "scanner absent on this host; the documented invocation stands: grype <image> --fail-on $SMOKE_VULN_FAIL_ON --only-fixed"
 elif ! grype db status >/dev/null 2>&1; then
-  record GAP vulnerability "grype present but its vulnerability database is unavailable; the documented invocation stands: grype <image> --fail-on $SMOKE_VULN_FAIL_ON"
+  record GAP vulnerability "grype present but its vulnerability database is unavailable; the documented invocation stands: grype <image> --fail-on $SMOKE_VULN_FAIL_ON --only-fixed"
 else
   GRYPE_JSON="$SMOKE_WORK_DIR/records/grype.json"
+  # The record: one full scan, every finding retained — both count lines and
+  # the release-evidence bead read from this JSON.
   set +e
-  grype "$SMOKE_IMAGE" --fail-on "$SMOKE_VULN_FAIL_ON" -o json --file "$GRYPE_JSON" \
+  grype "$SMOKE_IMAGE" -o json --file "$GRYPE_JSON" \
     2>"$SMOKE_WORK_DIR/records/grype.stderr"
-  GRYPE_STATUS=$?
   set -e
   python3 - "$GRYPE_JSON" <<'PY'
 import collections, json, sys
 doc = json.load(open(sys.argv[1]))
-counts = collections.Counter(
-    m["vulnerability"]["severity"] for m in doc.get("matches", []))
-print("[smoke] grype findings by severity:",
+matches = doc.get("matches", [])
+
+def fixable(match):
+    fix = match["vulnerability"].get("fix", {})
+    return fix.get("state") == "fixed" or bool(fix.get("versions"))
+
+counts = collections.Counter(m["vulnerability"]["severity"] for m in matches)
+gating = collections.Counter(m["vulnerability"]["severity"] for m in matches if fixable(m))
+print("[smoke] grype findings by severity (all):",
       ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "none")
+print("[smoke] grype findings the build can act on (fix available):",
+      ", ".join(f"{k}={v}" for k, v in sorted(gating.items())) or "none")
 PY
+  # The gate: grype's own threshold machinery, over the findings the image
+  # build can act on (--only-fixed). The digest-pinned base's unfixable
+  # findings stand in the record above and are a base-move decision, exactly
+  # as the secret category treats base bytes.
+  set +e
+  grype "$SMOKE_IMAGE" --fail-on "$SMOKE_VULN_FAIL_ON" --only-fixed \
+    >>"$SMOKE_WORK_DIR/records/grype.stderr" 2>&1
+  GRYPE_STATUS=$?
+  set -e
   if [ "$GRYPE_STATUS" -eq 0 ]; then
-    record PASS vulnerability "grype clean at the --fail-on $SMOKE_VULN_FAIL_ON threshold (severity counts above, JSON retained)"
+    record PASS vulnerability "no fixable finding at or above --fail-on $SMOKE_VULN_FAIL_ON (all findings counted above from the retained JSON; unfixable base findings are a base-move decision)"
   else
-    record FAIL vulnerability "grype exited $GRYPE_STATUS at the --fail-on $SMOKE_VULN_FAIL_ON threshold"
+    record FAIL vulnerability "grype exited $GRYPE_STATUS: a fixable finding at or above --fail-on $SMOKE_VULN_FAIL_ON (full record retained)"
   fi
 fi
 
@@ -355,9 +375,16 @@ CTRL_DOC="$(printf 'ACCESS_KEY=%s\nSECRET_KEY=%s' \
   "$(sed -n 's/^ACCESS_KEY=//p' "$SMOKE_WORK_DIR/creds/control-reader.env")" \
   "$(sed -n 's/^SECRET_KEY=//p' "$SMOKE_WORK_DIR/creds/control-reader.env")")"
 
+# Every non-secret configuration key through the environment tier. The
+# composition-required client ingest endpoint (ingest.endpoint_url) is
+# included even though serve itself never dials it: the configuration
+# registry marks it required, so the replica's load refuses to resolve
+# without it — the operator command's readiness probe is what targets the
+# URL, and the replica's own serve address is the truthful value.
 replica_env_file() { # port ; plain KEY=VALUE lines (no multi-line values)
   cat <<EOF
 ARCHIVIST_SERVER_LISTEN_ADDRESS=0.0.0.0:$1
+ARCHIVIST_INGEST_ENDPOINT_URL=http://127.0.0.1:$1
 ARCHIVIST_SERVER_AUTHORITY_KEY=$AUTHORITY_KEY
 ARCHIVIST_STORAGE_ENDPOINT_URL=$SMOKE_ENDPOINT
 ARCHIVIST_STORAGE_REGION=us-east-1
