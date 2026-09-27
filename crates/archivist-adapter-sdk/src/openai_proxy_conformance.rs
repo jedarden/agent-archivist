@@ -43,6 +43,7 @@ use std::time::{Duration, Instant};
 
 use archivist_protocol::derivation::blob_digest;
 use archivist_protocol::inference_artifact::BoundaryEvent;
+use archivist_protocol::inference_artifact::INFERENCE_ARTIFACT_VERSION;
 #[cfg(test)]
 use archivist_protocol::inference_artifact::Metadata;
 use archivist_protocol::sha256::{digest, encode_hex};
@@ -50,7 +51,9 @@ use archivist_protocol::vocabulary::{
     InferenceArtifactKind as ArtifactKind, RetryReason, TransportErrorClass, UsageSource,
 };
 
-use crate::compatibility::{FIRST_PARTY_OPENAI_PROXY, QualifiedRoute};
+use crate::compatibility::{
+    FIRST_PARTY_OPENAI_PROXY, QualifiedRoute, ROUTE_FINGERPRINT_OPENAI_PROXY,
+};
 use crate::inference_observer::{
     CanonicalArtifact, FlushState, INFERENCE_OBSERVER_VERSION, LogicalInferenceOutcome,
 };
@@ -313,6 +316,8 @@ impl ProxyConformance {
             }
             QualifiedRoute::new_proxy(
                 FIRST_PARTY_OPENAI_PROXY,
+                ROUTE_FINGERPRINT_OPENAI_PROXY,
+                INFERENCE_ARTIFACT_VERSION,
                 INFERENCE_OBSERVER_VERSION,
                 encode_hex(&digest(evidence.as_bytes())),
             )

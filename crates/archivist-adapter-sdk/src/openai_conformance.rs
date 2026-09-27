@@ -42,7 +42,7 @@ use std::fmt::Write as _;
 
 use archivist_protocol::correlation::OrchestratorOperation;
 use archivist_protocol::derivation::blob_digest;
-use archivist_protocol::inference_artifact::BoundaryEvent;
+use archivist_protocol::inference_artifact::{BoundaryEvent, INFERENCE_ARTIFACT_VERSION};
 use archivist_protocol::sha256::{digest, encode_hex};
 use archivist_protocol::vocabulary::{
     ClientId, InferenceArtifactKind as ArtifactKind, OpaqueId, RetryReason, TenantId, Timestamp,
@@ -50,7 +50,9 @@ use archivist_protocol::vocabulary::{
 };
 
 use crate::capture_alignment::align_attempts;
-use crate::compatibility::{FIRST_PARTY_OPENAI_HTTP1, QualifiedRoute};
+use crate::compatibility::{
+    FIRST_PARTY_OPENAI_HTTP1, QualifiedRoute, ROUTE_FINGERPRINT_OPENAI_HTTP1,
+};
 use crate::expected_inference::{
     ExactOutcome, ExpectedInferenceLedger, ExpectedInferenceRecord,
     InferenceArtifactKind as LedgerKind, InferenceIdentity, ObservedArtifact, RoutePolicy,
@@ -408,6 +410,8 @@ impl TransportConformance {
             }
             QualifiedRoute::new_sdk_hook(
                 FIRST_PARTY_OPENAI_HTTP1,
+                ROUTE_FINGERPRINT_OPENAI_HTTP1,
+                INFERENCE_ARTIFACT_VERSION,
                 INFERENCE_OBSERVER_VERSION,
                 encode_hex(&digest(evidence.as_bytes())),
             )

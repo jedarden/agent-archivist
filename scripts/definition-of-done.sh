@@ -244,6 +244,16 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # make, and the three records cannot drift apart silently.
   # `--self-test` proves the rejection paths.
   run_check "compatibility matrix"  python3 tools/check-compatibility-matrix.py --self-test
+  # Provider-capture route registry (docs/notes/compatibility-matrix.md,
+  # "The published provider-capture route registry"): the published half
+  # of the compatibility matrix — one row per exact-capture route the
+  # project claims, naming its route fingerprint, artifact schema version
+  # and kinds, support state, qualifying conformance suite, and known
+  # gap — checked field for field against the PUBLISHED_REGISTRY const,
+  # the note table, and the conformance mint sites, so a support claim
+  # cannot drift from the evidence that earned it (plan Phase 9; threat
+  # EC-04). --self-test proves the rejection paths.
+  run_check "provider-capture registry"  python3 tools/check-provider-capture-registry.py --self-test
   # Rotation-drill probe (docs/notes/armor-storage-provisioning.md,
   # "Rotation procedure" steps 1/5/6): the live instrument takes credential
   # pairs via environment only and prints only HTTP status and S3 error

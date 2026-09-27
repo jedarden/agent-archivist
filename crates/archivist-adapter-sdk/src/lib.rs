@@ -75,7 +75,13 @@
 //!   producer of a compatibility claim.
 //! - [`compatibility`]: the compatibility matrix — the registry of
 //!   routes whose exact-capture claim conformance evidence backs. A
-//!   route earns a row or the project does not claim it.
+//!   route earns a row or the project does not claim it. The published
+//!   half ([`compatibility::PUBLISHED_REGISTRY`]) is the
+//!   provider-capture route registry: one row per claimed route naming
+//!   its route fingerprint, artifact schema version and kinds, support
+//!   state, qualifying suite, and known gap, with the release check
+//!   ([`compatibility::CompatibilityMatrix::matches_published_registry`])
+//!   that fails a publication whose evidence has not kept up.
 //! - [`coverage_manifest`]: the published inference-coverage manifest
 //!   (plan Phase 9 exit gate): one bounded, content-free document naming,
 //!   per instrumented client, the content-free observed, partial, failed,
@@ -178,7 +184,9 @@ pub use capability::{AdapterCapability, CapabilitySet, MAX_CAPABILITIES};
 pub use capture_alignment::{AlignmentError, CaptureAlignment, InferenceAlignment, align_attempts};
 pub use compatibility::{
     CompatibilityMatrix, FIRST_PARTY_OPENAI_HTTP1, FIRST_PARTY_OPENAI_PROXY, MatrixError,
-    QualifiedRoute,
+    PROVIDER_CAPTURE_ARTIFACT_KINDS, PUBLISHED_REGISTRY, ProviderCaptureRoute, QualifiedRoute,
+    ROUTE_FINGERPRINT_OPENAI_HTTP1, ROUTE_FINGERPRINT_OPENAI_PROXY, RegistryMismatch,
+    RouteStateError, RouteSupportState, published_registry,
 };
 pub use completeness_report::{
     AttestationCounts, AttestationEvidence, AttestationState, COMPLETENESS_REPORT_SCHEMA,

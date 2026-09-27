@@ -47,6 +47,35 @@ unknown-shape tokens (`claude-jsonl-unknown`, `claude-unknown-format`,
 `pi-unknown-format`): the fail-closed reports for shapes outside this table.
 They are classifications of non-support, never rows in it.
 
+## The published provider-capture route registry
+
+The provider-capture half, published (plan Phase 9; threat `EC-04` —
+"SDK-hook misuse or false compatibility claim"). The registry itself is
+`const` data in `archivist-adapter-sdk::compatibility`
+(`PUBLISHED_REGISTRY`); this table is its published face, and the two are
+checked field for field by `tools/check-provider-capture-registry.py` in
+the fast lane.
+A route fingerprint absent from this registry is a claim the project does not make.
+
+| Route | Integration | Route fingerprint | Schema | Lifecycle | State | Evidence suite | Known gap |
+|---|---|---|---|---|---|---|---|
+| `sdk_hook` | `archivist-openai-http1` | `openai-compat-observer-hook-v1` | `1` | `1` | supported | `crate::openai_conformance::TransportConformance` | Claims the OpenAI-compatible chat boundary of the first-party HTTP/1.1 transport driven through the versioned observer lifecycle. No ambient instrumentation of a third-party client, no other wire protocol, no non-OpenAI provider API. Evidence: the transport conformance suite's full scene set over real loopback connections. |
+| `proxy` | `archivist-openai-proxy` | `openai-compat-capture-proxy-v1` | `1` | `1` | supported | `crate::openai_proxy_conformance::ProxyConformance` | Claims only traffic explicitly routed through the first-party capture proxy: faithful forwarding, ordered relay and retries, usage, and credential exclusion at the proxy boundary. Traffic bypassing the proxy is unobserved, never claimed; no transparent or intercepting deployment is claimed. Evidence: the proxy conformance suite's full scene set over real loopback connections. |
+
+Every row captures the full closed provider-boundary kind set, in schema order — `provider-request`, `provider-response`, `streaming-event`, `retry`, `usage`, `transport-error`.
+
+A subset would leave provider attempts the coverage ledger counts as
+`partial`, which no supported route may do. `Schema` is the exact-capture artifact schema major (`archivist_protocol::inference_artifact::INFERENCE_ARTIFACT_VERSION`) and `Lifecycle` the observer lifecycle major (`archivist_adapter_sdk::inference_observer::INFERENCE_OBSERVER_VERSION`); the gate pins both to their constants. The three-state support vocabulary (`supported`, `unsupported`, `unobserved`) is the registry's `RouteSupportState` — the same three verdicts the observed-fingerprint reconciliation above uses, neither folded into the others.
+
+The release check is two-sided and both halves are machine-checked:
+`tools/check-provider-capture-registry.py` fails the fast lane when the
+registry, this table, and the conformance mint sites disagree, and
+`CompatibilityMatrix::matches_published_registry` fails a publication
+whose matrix — built from live conformance runs — does not back every
+published row. Route fingerprints share the source-fingerprint grammar:
+publishable, coordinate-free, safe to carry in a denial, and never
+naming a release, a package version, or a host.
+
 ## Observed-fingerprint reconciliation
 
 Every fingerprint the fleet inventory observed, mapped to supported or
@@ -101,3 +130,10 @@ own verdicts enter status as `unsupported` (classification
 4. Every fingerprint a new fleet inventory observes is reconciled here in
    the same commit it is recorded, each to `supported`, `unsupported`, or
    `unobserved`.
+5. A route enters or leaves the published provider-capture route registry
+   only in the same commit as the conformance evidence that qualifies it
+   and this note's row — `tools/check-provider-capture-registry.py` fails
+   the fast lane otherwise, and
+   `CompatibilityMatrix::matches_published_registry` fails a publication
+   whose live matrix does not back every published row (plan Phase 9;
+   threat `EC-04`).
