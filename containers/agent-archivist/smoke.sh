@@ -454,53 +454,70 @@ fi
 echo "=== smoke: signature-input (signed submission round trip over the wire)"
 python3 "$DRIVER" mint --out "$SMOKE_WORK_DIR/attempts" \
   --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null
-post_attempt() { # port body-file content-type-file outfile -> http status
-  curl -s --max-time 30 -o "$4" -w '%{http_code}' \
+post_attempt() { # port body-file content-type-file attempt-json-file outfile -> http status
+  curl -s --max-time 30 -o "$5" -w '%{http_code}' \
     -H "Content-Type: $(cat "$3")" \
+    -H "x-archivist-attempt: $(cat "$4")" \
     --data-binary "@$2" \
     "http://127.0.0.1:${1}/v1/ingest"
 }
 raw_listing() { mc --quiet ls --recursive --json "local/$RAW_BUCKET" 2>/dev/null || true; }
 raw_key_count() { raw_listing | grep -c '"key"' || true; }
 
-# The fail-closed lane: a stale-signed and an altered attempt must both land
-# in the one closed wire class and write nothing (the live half of the
-# acceptance property: altered, replay-expired, and unauthorized requests
-# make no storage writes). The rejection happens in the authorization layer,
-# before any storage conversation, so this lane proves the trust boundary
-# over the wire today.
+# The fail-closed lane (the live half of the acceptance property: altered,
+# replay-expired, and unauthorized requests make no storage writes). The two
+# probes answer in different places, and both places are asserted: the
+# stale-signed proof dies at the replica's freshness gate — the one
+# authorization decision that needs no control evidence — and answers the
+# one closed wire class; the altered body carries a proof whose digests no
+# longer describe it, but the replica verifies nothing it cannot check
+# against readable control evidence, so today it stops at the registry
+# boundary instead — and writes nothing either way.
 STALE_STATUS="$(post_attempt "$SMOKE_PORT_R1" \
   "$SMOKE_WORK_DIR/attempts/stale/request.body" \
   "$SMOKE_WORK_DIR/attempts/stale/content-type.txt" \
+  "$SMOKE_WORK_DIR/attempts/stale/attempt.json" \
   "$SMOKE_WORK_DIR/records/stale-response.json")"
 ALTERED="$SMOKE_WORK_DIR/attempts/altered.body"
 cp "$SMOKE_WORK_DIR/attempts/request.body" "$ALTERED"
 printf 'X' | dd of="$ALTERED" bs=1 seek=200 conv=notrunc status=none
 ALTERED_STATUS="$(post_attempt "$SMOKE_PORT_R1" "$ALTERED" \
   "$SMOKE_WORK_DIR/attempts/content-type.txt" \
+  "$SMOKE_WORK_DIR/attempts/attempt.json" \
   "$SMOKE_WORK_DIR/records/altered-response.json")"
 REJECT_OK=1
 grep -q '"code":"auth.authorization_rejected"' \
   "$SMOKE_WORK_DIR/records/stale-response.json" || REJECT_OK=0
-grep -q '"code":"auth.authorization_rejected"' \
-  "$SMOKE_WORK_DIR/records/altered-response.json" || REJECT_OK=0
+if [ "$SMOKE_EXPECT_TRANSPORT" = 1 ]; then
+  grep -q '"code":"auth.authorization_rejected"' \
+    "$SMOKE_WORK_DIR/records/altered-response.json" || REJECT_OK=0
+else
+  grep -q '"code":"server.unavailable"' \
+    "$SMOKE_WORK_DIR/records/altered-response.json" || REJECT_OK=0
+fi
 [ "$(raw_key_count)" -eq 0 ] || REJECT_OK=0
 if [ "$REJECT_OK" -eq 1 ]; then
-  record PASS signature-input "stale-signed and altered attempts answer the one closed class auth.authorization_rejected and write no object"
+  record PASS signature-input "stale-signed attempt answers the closed class auth.authorization_rejected (the freshness gate, live) and the altered attempt is refused with nothing durable standing; the raw bucket holds zero objects"
 else
   record FAIL signature-input "fail-closed lane broken (stale=$STALE_STATUS altered=$ALTERED_STATUS raw keys after rejects=$(raw_key_count))"
+  cat "$SMOKE_WORK_DIR/records/stale-response.json" \
+    "$SMOKE_WORK_DIR/records/altered-response.json" >&2 || true
 fi
 
-# The admitted lane: the fresh attempt is authorized over the wire — the
-# answer is not the rejection class. What happens at the storage boundary is
-# today's documented gap (the registry transport key, image-smoke.md Section
-# 7): the commit stops there, the answer is a named failure class, and
-# nothing durable stands. SMOKE_EXPECT_TRANSPORT=1 asserts the round trip
-# instead: the commit answers the composition result and the three derived
-# object keys stand (the receipt knob on top asserts the signed receipt).
+# The admitted lane: the fresh attempt presents a proof that survives every
+# check the replica can apply without readable control evidence (header
+# parse, content-type coverage, freshness). Where it stops is the transport
+# gap's position (image-smoke.md Section 7): today the control plane is
+# unreachable over the registry's TLS-only grammar, so the replica answers
+# the fail-closed registry class with nothing durable standing, and
+# SMOKE_EXPECT_TRANSPORT=1 — after the transport key lands — asserts the
+# round trip instead: the commit answers the composition result and the
+# three derived object keys stand (the receipt knob on top asserts the
+# signed receipt).
 FRESH_STATUS="$(post_attempt "$SMOKE_PORT_R1" \
   "$SMOKE_WORK_DIR/attempts/request.body" \
   "$SMOKE_WORK_DIR/attempts/content-type.txt" \
+  "$SMOKE_WORK_DIR/attempts/attempt.json" \
   "$SMOKE_WORK_DIR/records/fresh-response.json")"
 ADMIT_CLASS="$(response_class "$SMOKE_WORK_DIR/records/fresh-response.json")"
 if [ "$SMOKE_EXPECT_TRANSPORT" = 1 ]; then
@@ -530,12 +547,11 @@ PY
     cat "$SMOKE_WORK_DIR/records/fresh-response.json" >&2 || true
   fi
 else
-  if [ -n "$ADMIT_CLASS" ] \
-      && [ "$ADMIT_CLASS" != "auth.authorization_rejected" ] \
+  if [ "$ADMIT_CLASS" = "server.unavailable" ] \
       && [ "$(raw_key_count)" -eq 0 ]; then
-    record PASS signature-input "fresh attempt authorized over the wire (commit-path class ${ADMIT_CLASS}); the storage boundary fails closed with nothing durable standing (the transport gap, image-smoke.md Section 7)"
+    record PASS signature-input "fresh attempt answers the fail-closed registry boundary (503 server.unavailable) with nothing durable standing — its proof is behind every check the replica can apply without readable control evidence (the transport gap, image-smoke.md Section 7)"
   else
-    record FAIL signature-input "fresh attempt not authorized or wrote through the closed boundary (status=$FRESH_STATUS class=${ADMIT_CLASS:-none} keys=$(raw_key_count))"
+    record FAIL signature-input "fresh attempt neither stopped at the registry boundary nor committed (status=$FRESH_STATUS class=${ADMIT_CLASS:-none} keys=$(raw_key_count))"
     cat "$SMOKE_WORK_DIR/records/fresh-response.json" >&2 || true
   fi
 fi
@@ -555,6 +571,7 @@ fi
 R2_STATUS="$(post_attempt "$SMOKE_PORT_R2" \
   "$SMOKE_WORK_DIR/attempts/request.body" \
   "$SMOKE_WORK_DIR/attempts/content-type.txt" \
+  "$SMOKE_WORK_DIR/attempts/attempt.json" \
   "$SMOKE_WORK_DIR/records/fresh-r2-response.json")"
 R2_CLASS="$(response_class "$SMOKE_WORK_DIR/records/fresh-r2-response.json")"
 if [ "$SMOKE_EXPECT_TRANSPORT" = 1 ]; then
@@ -576,13 +593,19 @@ fi
 # Concurrent retry: four identical attempts at once across both replicas —
 # the plan's concurrent-retry test — converge on one answer, and nothing
 # partial stands afterward.
+RETRY_PIDS=()
 for i in 1 2 3 4; do
   port="$SMOKE_PORT_R1"; [ $((i % 2)) -eq 0 ] && port="$SMOKE_PORT_R2"
   post_attempt "$port" "$SMOKE_WORK_DIR/attempts/request.body" \
     "$SMOKE_WORK_DIR/attempts/content-type.txt" \
+    "$SMOKE_WORK_DIR/attempts/attempt.json" \
     "$SMOKE_WORK_DIR/records/retry-$i.json" &
+  RETRY_PIDS+=("$!")
 done
-wait
+# Wait only on the four probes. A bare `wait` would also hold for the
+# MinIO backend — a background child of this shell since the live stage —
+# and the run would never reach its summary.
+wait "${RETRY_PIDS[@]}"
 RETRY_OK=1
 for i in 1 2 3 4; do
   if [ "$SMOKE_EXPECT_TRANSPORT" = 1 ]; then

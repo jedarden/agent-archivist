@@ -241,7 +241,10 @@ implementation is proven by `self-test`: RFC 8032 test vector 1,
 bit-for-bit reproduction of the conformance corpus's golden baseline
 signature (the same signing input, signed with the derived uploader
 seed), agreement with `keys.json` publics, and mint determinism at a
-fixed instant.
+fixed instant. The wire form is the server's own grammar: every attempt
+travels with the `x-archivist-attempt` header carrying the compact JSON
+signature-parameter record the driver emits (`attempt.json` — epoch,
+timestamp, covered content type and digests, route, signature, key id).
 
 *The fresh attempt.* The golden `valid-direct-baseline` envelope
 re-anchored to the control corpus's identities (tenant, linked client)
@@ -254,24 +257,31 @@ before handing the body to the harness.
 
 Asserted:
 
-1. **Fail-closed lane** — two rejected attempts, the live half of the
-   parent property ("altered, replay-expired, and unauthorized requests
-   make no storage writes"):
+1. **Fail-closed lane** — two probes, the live half of the parent
+   property ("altered, replay-expired, and unauthorized requests make
+   no storage writes"), answering in deliberately different places:
    - the golden `invalid-stale-authorization` attempt (authorization
-     pinned years outside the freshness window), and
+     pinned outside the freshness window) dies at the replica's
+     freshness gate — the one authorization decision that needs no
+     control evidence — and answers the single closed wire class
+     `auth.authorization_rejected`; and
    - a byte-altered fresh body (one flipped byte at a fixed offset,
-     breaking the request digest and the envelope transport together);
-   each must answer the single closed wire class
-   `auth.authorization_rejected`, and the raw bucket must hold **zero
-   objects** afterward. The rejection happens in the authorization
-   layer, before any storage conversation, so this lane proves the
-   trust boundary over the wire today.
-2. **Admit lane** — the fresh attempt is authorized over the wire: the
-   answer is a commit-path class, not the rejection class. What the
-   commit path can answer is gated by the transport gap (Section 7):
-   today the attempt stops at the storage boundary, the answer is a
-   named failure class, and the raw bucket still holds zero objects —
-   the boundary fails closed, nothing partial stands. With
+     breaking the request digest and the envelope transport together)
+     carries a proof whose digests no longer describe it — but a
+     replica verifies nothing it cannot check against readable control
+     evidence, so today it stops at the registry boundary instead
+     (503 `server.unavailable`, Section 7's gap three); post-landing
+     (`SMOKE_EXPECT_TRANSPORT=1`) the proof verifies, the digest
+     agreement fails, and the answer is the rejection class.
+   The raw bucket must hold **zero objects** after both — that is the
+   property, whichever boundary each probe reaches.
+2. **Admit lane** — the fresh attempt presents a proof that survives
+   every check the replica can apply without readable control evidence
+   (header parse, content-type coverage, freshness). Where it stops is
+   the transport gap's position (Section 7): today the control plane is
+   unreachable over the registry's TLS-only grammar, so the replica
+   answers the fail-closed registry class `server.unavailable` and the
+   raw bucket still holds zero objects — nothing partial stands. With
    `SMOKE_EXPECT_TRANSPORT=1` the round trip is asserted instead: the
    commit answers `server.partial_commit` and the raw bucket holds
    **exactly** the three derived object keys — blob, occurrence,
@@ -289,9 +299,12 @@ Failure modes: a reject lane hit means authorization admitted material
 it must not (freshness, linkage, digest agreement, or scope checks
 regressed) — the highest-severity outcome this category can produce,
 because it is the trust boundary itself; a reject with a stray object
-written means rejection is not atomic; an admit lane that answers the
-rejection class means the minted authorization is wrong; a admit lane
-that answers success with objects standing while
+written means rejection is not atomic; a stale probe that answers
+anything but the closed class means the freshness gate regressed; an
+admit lane that answers the rejection class means the minted proof
+failed a gate it should survive (parse, coverage, or freshness — a
+driver defect, since the pointer material it stands on is the corpus's
+own); an admit lane that answers success with objects standing while
 `SMOKE_EXPECT_TRANSPORT=0` means the transport gap has closed and the
 knobs must move with it.
 
@@ -326,12 +339,18 @@ direction** and carries a knob for the post-landing assertion:
    roots, so no local backend — plaintext or self-signed — is
    reachable from a configured replica. The reference round trip
    (authorization → commit → durable objects in the reference MinIO)
-   therefore cannot complete on current `main`: an admitted attempt
-   stops at the storage boundary, which fails closed with a named
-   failure class and nothing durable standing — the assertable
-   fail-closed answer, and the one the harness pins. The landing that
-   closes the gap is a registry transport key (after which the scheme
-   claim in Section 2 becomes a plaintext endpoint and
+   therefore cannot complete on current `main`, and it stops *earliest*
+   at the authorization evidence: uploader linkage is control-bucket
+   state, so an attempt that survives the replica's evidence-free gates
+   (header parse, content-type coverage, freshness) is answered with
+   the retryable registry class `server.unavailable` — the composition
+   fails closed before any digest or signature is verified, and
+   nothing durable stands. That is the assertable fail-closed answer,
+   and the one the harness pins for every live probe except the
+   deliberately stale one (whose rejection happens before the boundary
+   and proves the freshness gate live). The landing that closes the
+   gap is a registry transport key (after which the scheme claim in
+   Section 2 becomes a plaintext endpoint and
    `SMOKE_EXPECT_TRANSPORT=1` asserts the full round trip).
 
 A run with any knob flipped on current `main` is *expected* to fail; a
