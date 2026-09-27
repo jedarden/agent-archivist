@@ -45,8 +45,12 @@ These are the targets fixed by the plan, not yet-shipped guarantees:
 - **Harness adapters:** Claude Code, Codex, OpenCode, and Pi. Each released
   adapter names the exact source fingerprints it supports.
 - **Storage profiles:** the local reference S3 implementation (MinIO), Backblaze
-  B2, and the ARMOR S3 path, with optional community profiles for AWS S3,
-  Garage, and other compatible implementations.
+  B2, and the ARMOR S3 path are the plan's reference and target profiles. AWS
+  S3 and Garage are unqualified and deferred for `0.1.0`; they are not
+  supported storage profiles and carry no deployment profile and no capability
+  claim.
+  Other S3-compatible implementations are outside the support matrix until a
+  complete community qualification run is recorded.
 
 The published compatibility matrix lands with version 1.0 (plan Phase 11) and
 becomes the authoritative statement of supported adapters, storage profiles,

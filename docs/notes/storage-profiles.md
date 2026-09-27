@@ -1,6 +1,6 @@
 # Storage profiles
 
-Status: accepted baseline · Last updated: 2026-09-15
+Status: accepted baseline · Last updated: 2026-09-27
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and
 **MAY** are to be interpreted as described in RFC 2119 and RFC 8174 when
@@ -105,6 +105,7 @@ makes "no record" impossible for community profiles. Fields:
 | --- | --- | --- |
 | `profile` | always | registry key of the profile the run targeted |
 | `date` | always | ISO 8601 calendar date of the run; per-profile dates never decrease |
+| `release` | `unqualified` only | SemVer release whose negative support disposition this record governs |
 | `outcome` | always | `qualified` or `unqualified` — a closed set |
 | `submitted_by` | always | public contributor handle, or `maintainer` |
 | `reason` | `unqualified` only | why no capability claim exists (a failed run, or no run possible) |
@@ -129,6 +130,12 @@ makes "no record" impossible for community profiles. Fields:
   expectation that compatible implementations are usable through the same
   contract — is the exact shape of claim this registry replaced; the gate
   rejects its return.
+- **SP-009** — Release and support documentation **MUST** name a community
+  profile as supported only when its latest record is `qualified`. An
+  `unqualified` record is a versioned deferral: the profile may be named
+  only to state that it is unqualified and deferred for that release, with
+  no deployment profile, capability claim, or support claim. A later release
+  keeps that disposition until a complete kit run appends a new record.
 
 ## 4. What qualification creates — and what it does not
 
@@ -162,15 +169,23 @@ maintained by hand.
 | `minio` | reference | qualified by the suite on every full verification run | plan Section 7.7 |
 | `backblaze-b2` | target | qualified before each compatible release | plan Section 10 |
 | `armor` | target | qualified before deployment on the ARMOR path | plan Section 10 |
-| `aws-s3` | community | unqualified | record 2026-09-15 |
-| `garage` | community | unqualified | record 2026-09-15 |
+| `aws-s3` | community | unqualified | record 2026-09-15 (release 0.1.0) |
+| `garage` | community | unqualified | record 2026-09-15 (release 0.1.0) |
 
 Both community records state the same fact from the same cause: no suite
 run has been executed against either implementation, because the suite is
 itself a planned Phase 2 deliverable and no community operator run has
-been submitted. Where the README previously carried an expectation, this
-table carries the record — and `unqualified` here means "no evidence",
-not "known broken".
+been submitted. For release `0.1.0`, each record is therefore an explicit
+unqualified/deferred disposition: neither AWS S3 nor Garage is a supported
+storage profile, deployment profile, or capability claim. Where the README
+previously carried an expectation, this table carries the record — and
+`unqualified` here means "no evidence", not "known broken".
+
+For a later release, a contributor either runs the complete kit and appends
+a `qualified` record with its suite revision and capability matrix, or
+appends a new `unqualified` record with that release's SemVer and the reason
+the run was unavailable or failed. Release and support text changes only as
+the paired disposition changes; it never infers support from S3 compatibility.
 
 ## 6. Ownership and neighbors
 

@@ -229,9 +229,10 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # profile classes with MinIO pinned as the one reference profile,
   # append-only per-profile records whose shape follows the outcome, the
   # five-axis capability matrix with closed tokens and multipart
-  # commit/abort verified, and registry/note/README coherence including
-  # the retirement of the unevidenced usability claim; `--self-test`
-  # proves the rejection paths.
+  # commit/abort verified, the release-scoped negative record, and
+  # registry/note/README/release/support coherence including the retirement
+  # of the unevidenced usability claim; `--self-test` proves the rejection
+  # paths.
   run_check "storage profiles"  python3 tools/check-storage-profiles.py --self-test
   # Adapter compatibility matrix (docs/notes/compatibility-matrix.md): the
   # published per-adapter fingerprint allowlists, projection versions,

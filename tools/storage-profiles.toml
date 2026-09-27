@@ -51,19 +51,22 @@ description = "Garage, the Deuxfleurs self-hosted S3-compatible object store, a 
 # ---------------------------------------------------------------------------
 # Qualification records. The two below close the gap the README used to paper
 # over with "expected to be usable": neither community profile has evidence,
-# so both stand explicitly unqualified until a run exists.
+# so both stand explicitly unqualified and deferred for the versioned release
+# disposition below until a complete community run exists.
 # ---------------------------------------------------------------------------
 
 [[records]]
 profile = "aws-s3"
 date = "2026-09-15"
+release = "0.1.0"
 outcome = "unqualified"
 submitted_by = "maintainer"
-reason = "No qualification run executed. The storage compatibility suite is itself a planned Phase 2 deliverable (register verification T-OPS-006, status planned), so no suite harness exists to run; and the project's verification baseline uses no external credentials or services, so project automation holds no AWS S3 instance or credential to run it against. Qualification awaits a community operator run under docs/notes/storage-profiles.md Section 2."
+reason = "Deferred for release 0.1.0: no qualification run executed. The storage compatibility suite is itself a planned Phase 2 deliverable (register verification T-OPS-006, status planned), so no suite harness exists to run; and the project's verification baseline uses no external credentials or services, so project automation holds no AWS S3 instance or credential to run it against. Qualification awaits a complete community operator run under docs/notes/storage-profiles.md Section 2."
 
 [[records]]
 profile = "garage"
 date = "2026-09-15"
+release = "0.1.0"
 outcome = "unqualified"
 submitted_by = "maintainer"
-reason = "No qualification run executed. The storage compatibility suite is itself a planned Phase 2 deliverable (register verification T-OPS-006, status planned), so no suite harness exists to run against any Garage instance, and no community run has been submitted. Qualification awaits a community operator run under docs/notes/storage-profiles.md Section 2."
+reason = "Deferred for release 0.1.0: no qualification run executed. The storage compatibility suite is itself a planned Phase 2 deliverable (register verification T-OPS-006, status planned), so no suite harness exists to run against any Garage instance, and no community run has been submitted. Qualification awaits a complete community operator run under docs/notes/storage-profiles.md Section 2."

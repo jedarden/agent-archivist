@@ -17,10 +17,11 @@ on every full verification run, and Backblaze B2 plus ARMOR's S3 path are the
 target deployment profiles. AWS S3 and Garage, like any other compatible
 implementation, are community profiles: each carries a qualification record in
 [the storage-profile registry note](docs/notes/storage-profiles.md), and both
-stand unqualified as of 2026-09-15 — no run of the storage compatibility suite
-has been executed against either. Until a recorded run says otherwise, neither
-carries a deployment profile or a capability claim; the note defines what a
-community qualification run requires and what qualifying one would create,
+stand unqualified and deferred for release `0.1.0` in the records dated
+2026-09-15 — no run of the storage compatibility suite has been executed
+against either. Until a later recorded run says otherwise, neither is
+supported or carries a deployment profile or a capability claim; the note
+defines what a community qualification run requires and what qualifying one would create,
 and the [community qualification run kit](docs/notes/community-qualification-kit.md)
 is the self-service half a contributor executes to produce one.
 

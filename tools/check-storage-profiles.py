@@ -22,11 +22,11 @@ Policy, one rule per check below:
    is ever silently claimable (an absent record is not a soft "probably
    works"; it is a gate failure);
 3. a record's outcome is ``qualified`` or ``unqualified`` and its shape is
-   the outcome's: ``unqualified`` states a non-empty reason and offers no
-   capability fields, ``qualified`` states the suite revision, the
-   operator, and the full five-axis capability matrix with closed tokens
-   and ``multipart_commit_abort`` verified — the one primitive a backend
-   cannot lack and still be a profile at all;
+   the outcome's: ``unqualified`` states a non-empty reason, a SemVer
+   release, and offers no capability fields, ``qualified`` states the suite
+   revision, the operator, and the full five-axis capability matrix with
+   closed tokens and ``multipart_commit_abort`` verified — the one primitive
+   a backend cannot lack and still be a profile at all;
 4. records are append-only per profile: dates never decrease, so a
    profile's standing is always its latest record and history cannot be
    reordered after the fact;
@@ -39,9 +39,12 @@ Policy, one rule per check below:
    profile and its unqualified standing when any profile stands
    unqualified, and the retired unevidenced claim ("expected to be
    usable") appears nowhere it can creep back from.
+7. release and support policy explicitly scope AWS S3 and Garage's current
+   unqualified/deferred disposition and deny support, deployment, and
+   capability claims for them.
 
 ``--self-test`` runs the same validators against the committed registry
-with embedded mutations (plus README and note edits in memory) and
+with embedded mutations (plus README, note, release, and support edits in memory) and
 requires every rejection path to fire and every well-formed variant to
 pass. On success the plain run prints the computed standing per profile
 and exits 0; any failure prints a report on stderr and exits 2.
@@ -66,6 +69,8 @@ ROOT = Path(__file__).resolve().parent.parent
 REGISTRY_PATH = Path("tools/storage-profiles.toml")
 NOTE_PATH = Path("docs/notes/storage-profiles.md")
 README_PATH = Path("README.md")
+RELEASE_PATH = Path("RELEASE.md")
+SUPPORT_PATH = Path("SUPPORT.md")
 
 REGISTRY_SCHEMA = "archivist.storage-profiles/v1"
 
@@ -77,7 +82,7 @@ REFERENCE_PROFILE = "minio"
 # docs/notes/storage-profiles.md Section 3: the closed field sets per record.
 RECORD_OUTCOMES = ("qualified", "unqualified")
 RECORD_KEYS_COMMON = frozenset({"profile", "date", "outcome", "submitted_by", "note"})
-RECORD_KEYS_UNQUALIFIED = RECORD_KEYS_COMMON | {"reason"}
+RECORD_KEYS_UNQUALIFIED = RECORD_KEYS_COMMON | {"reason", "release"}
 RECORD_KEYS_QUALIFIED = RECORD_KEYS_COMMON | {"suite_revision", "operator", "capability"}
 
 # The capability model of plan Section 7.7 / crates' `capability` module.
@@ -110,6 +115,9 @@ IDENTIFIER_PATTERNS = (
 )
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+RELEASE_RE = re.compile(
+    r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
+)
 
 # The standing table in docs/notes/storage-profiles.md Section 5. Community
 # rows are machine-checked; reference and target rows are prose the gate only
@@ -294,6 +302,12 @@ def validate_registry(registry: dict) -> list[str]:
                     f"{where}: an unqualified record must state why no "
                     "capability claim exists"
                 )
+            release = record.get("release")
+            if not isinstance(release, str) or not RELEASE_RE.match(release):
+                violations.append(
+                    f"{where}.release is required on an unqualified record "
+                    "and must be a SemVer release"
+                )
         elif outcome == "qualified":
             for field in ("suite_revision", "operator"):
                 value = record.get(field)
@@ -402,10 +416,25 @@ def validate_coherence(registry: dict, readme: str, note: str) -> list[str]:
                     f"{row['standing'].strip()!r}; the registry's latest "
                     f"record says {outcome!r}"
                 )
-            if row["evidence"].strip() != f"record {date}":
+            expected_evidence = f"record {date}"
+            if outcome == "unqualified":
+                latest_record = max(
+                    (
+                        record for record in registry.get("records", [])
+                        if isinstance(record, dict)
+                        and record.get("profile") == key
+                        and parse_date(record.get("date", "")) is not None
+                    ),
+                    key=lambda record: parse_date(record["date"]),
+                )
+                record_release = latest_record.get("release")
+                if isinstance(record_release, str) and RELEASE_RE.match(record_release):
+                    expected_evidence += f" (release {record_release})"
+            if row["evidence"].strip() != expected_evidence:
                 violations.append(
                     f"{NOTE_PATH}: evidence for {key!r} must cite the latest "
-                    f"record as 'record {date}', found {row['evidence'].strip()!r}"
+                    f"record as {expected_evidence!r}, found "
+                    f"{row['evidence'].strip()!r}"
                 )
 
     if str(NOTE_PATH).rsplit("/", 1)[-1] not in readme and "docs/notes/storage-profiles.md" not in readme:
@@ -438,6 +467,28 @@ def validate_coherence(registry: dict, readme: str, note: str) -> list[str]:
 
 def validate_all(registry: dict, readme: str, note: str) -> list[str]:
     return validate_registry(registry) + validate_coherence(registry, readme, note)
+
+
+def validate_release_support(release: str, support: str) -> list[str]:
+    """Require explicit negative claims for community profiles in policy docs."""
+    violations: list[str] = []
+    required = ("AWS S3", "Garage", "0.1.0", "unqualified", "deferred")
+    for label, text in ((str(RELEASE_PATH), release), (str(SUPPORT_PATH), support)):
+        normalized = " ".join(text.split())
+        for term in required:
+            if term not in normalized:
+                violations.append(
+                    f"{label} must explicitly name AWS S3 and Garage as "
+                    f"unqualified/deferred for release 0.1.0 (missing {term!r})"
+                )
+        if "not supported" not in normalized:
+            violations.append(f"{label} must not imply support for AWS S3 or Garage")
+        if "no deployment" not in normalized or "no capability claim" not in normalized:
+            violations.append(
+                f"{label} must deny deployment and capability claims for "
+                "unqualified community profiles"
+            )
+    return violations
 
 
 # --- self-test ----------------------------------------------------------------
@@ -494,6 +545,8 @@ SELF_TEST_REGISTRY_CASES = [
      lambda r: r["records"][0].update({"outcome": "expected-usable"})),
     ("an unqualified record without a reason", True,
      lambda r: r["records"][0].pop("reason")),
+    ("an unqualified record without a release", True,
+     lambda r: r["records"][0].pop("release")),
     ("an unqualified record carrying capabilities", True,
      lambda r: r["records"][0].update(
          {"capability": {"conditional_create": "supported"}})),
@@ -535,7 +588,7 @@ SELF_TEST_COMBINED_CASES = [
     ("a well-formed qualified community record", False,
      add_qualified_garage_record,
      lambda note: note.replace(
-         "| `garage` | community | unqualified | record 2026-09-15 |",
+         "| `garage` | community | unqualified | record 2026-09-15 (release 0.1.0) |",
          "| `garage` | community | qualified | record 2026-10-01 |", 1)),
     ("a qualified record the note's table still calls unqualified", True,
      add_qualified_garage_record,
@@ -554,7 +607,8 @@ SELF_TEST_TEXT_CASES = [
     ("the note evidence citing a stale record date", True,
      lambda readme, note: (
          readme,
-         note.replace("record 2026-09-15 |", "record 2026-08-01 |", 1))),
+         note.replace("record 2026-09-15 (release 0.1.0) |",
+                      "record 2026-08-01 |", 1))),
     ("the README dropping the note link", True,
      lambda readme, note: (
          readme.replace("storage-profiles.md", "verification.md"),
@@ -563,8 +617,18 @@ SELF_TEST_TEXT_CASES = [
      lambda readme, note: (readme.replace("unqualified", "untested"), note)),
 ]
 
+SELF_TEST_POLICY_CASES = [
+    ("the committed release and support policy", False,
+     lambda release, support: (release, support)),
+    ("release policy omits the negative disposition", True,
+     lambda release, support: (release.replace("not supported", "supported", 1), support)),
+    ("support policy omits the no-support claim", True,
+     lambda release, support: (release, support.replace("unqualified", "qualified", 1))),
+]
 
-def run_self_test(base_registry: dict, base_readme: str, base_note: str) -> int:
+
+def run_self_test(base_registry: dict, base_readme: str, base_note: str,
+                  base_release: str, base_support: str) -> int:
     passed = 0
     failed = 0
 
@@ -611,6 +675,20 @@ def run_self_test(base_registry: dict, base_readme: str, base_note: str) -> int:
             for violation in violations:
                 print(f"       violation: {violation}")
 
+    for label, must_reject, mutation in SELF_TEST_POLICY_CASES:
+        release, support = mutation(base_release, base_support)
+        violations = validate_release_support(release, support)
+        rejected = bool(violations)
+        if rejected == must_reject:
+            passed += 1
+            print(f"  ok  {'rejects' if rejected else 'accepts'}: {label}")
+        else:
+            failed += 1
+            print(f"  FAIL {'should reject' if must_reject else 'should accept'}: "
+                  f"{label}")
+            for violation in violations:
+                print(f"       violation: {violation}")
+
     print(f"self-test: {passed} passed, {failed} failed")
     return 0 if failed == 0 else 2
 
@@ -620,12 +698,16 @@ def main(argv: list[str]) -> int:
         registry = load_registry(ROOT / REGISTRY_PATH)
         readme = load_text(ROOT / README_PATH)
         note = load_text(ROOT / NOTE_PATH)
-        if registry is None or readme is None or note is None:
+        release = load_text(ROOT / RELEASE_PATH)
+        support = load_text(ROOT / SUPPORT_PATH)
+        if (registry is None or readme is None or note is None
+                or release is None or support is None):
             return 2
-        if validate_all(registry, readme, note):
+        if (validate_all(registry, readme, note)
+                or validate_release_support(release, support)):
             fail("self-test base: the committed registry itself is invalid")
             return 2
-        return run_self_test(registry, readme, note)
+        return run_self_test(registry, readme, note, release, support)
     if argv[1:]:
         fail(f"unknown arguments: {' '.join(argv[1:])}")
         return 2
@@ -633,10 +715,14 @@ def main(argv: list[str]) -> int:
     registry = load_registry(ROOT / REGISTRY_PATH)
     readme = load_text(ROOT / README_PATH)
     note = load_text(ROOT / NOTE_PATH)
-    if registry is None or readme is None or note is None:
+    release = load_text(ROOT / RELEASE_PATH)
+    support = load_text(ROOT / SUPPORT_PATH)
+    if (registry is None or readme is None or note is None
+            or release is None or support is None):
         return 2
 
-    violations = validate_all(registry, readme, note)
+    violations = (validate_all(registry, readme, note)
+                  + validate_release_support(release, support))
     for violation in violations:
         fail(violation)
     if violations:

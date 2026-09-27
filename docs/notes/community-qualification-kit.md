@@ -281,12 +281,16 @@ and that is an accepted contribution too (SP-005):
 [[records]]
 profile = "<community profile key>"
 date = "<ISO 8601 calendar date of the run>"
+release = "<SemVer release whose negative disposition is recorded>"
 outcome = "unqualified"
 submitted_by = "<public contributor handle>"
 reason = "<why no capability claim exists — no capability fields on this shape>"
 ```
 
-An optional free-text `note` field is allowed on either shape.
+An optional free-text `note` field is allowed on either shape. The
+`release` field is required on an `unqualified` record: it makes a failed or
+unavailable run an explicit release-scoped deferral rather than an
+evergreen support claim.
 
 A qualified record changes standing, so it **MUST** arrive paired with
 the SP-008 edits — the profile's row in the registry note's standing
