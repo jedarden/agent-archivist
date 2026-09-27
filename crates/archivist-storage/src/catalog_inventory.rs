@@ -101,7 +101,7 @@ use crate::catalog_rebuild::{
 };
 use crate::catalog_source::{RawCatalogIndex, RawCatalogSource};
 use crate::error::{StorageError, StorageErrorKind};
-use crate::parquet::{Cell, Column, Table};
+use crate::parquet::{Cell, Column, Table, TableDecodeError};
 use crate::scoped_write::{DerivedObjectKey, DerivedWriteStore};
 
 /// The derived pipeline this module produces (`pipeline_id`): the
@@ -277,6 +277,215 @@ fn row_cells(record: &Object) -> Vec<Cell> {
         Cell::Null,
         Cell::Null,
     ]
+}
+
+/// Why one partition file cannot answer the usage query. Every variant
+/// is a refusal: the query never guesses past a file it cannot vouch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UsageQueryError {
+    /// The bytes are not a readable partition file of this module's
+    /// Parquet subset.
+    Partition(TableDecodeError),
+    /// The file's columns are not the pinned inventory schema — a
+    /// partition this query's column list does not vouch.
+    Schema,
+    /// A row violated the harness family's own contract: a count beside
+    /// an `unknown` state, a missing count beside `measured`, or a
+    /// state token outside the closed v1 set.
+    RowInvariant,
+}
+
+/// One group of the usage query's answer: the summed harness-reported
+/// counts of every `measured` row sharing one (tenant, model, service
+/// tier) identity. No provider-observed count exists here — the two
+/// denominators are never summed, and v1 partitions carry no provider
+/// counts to sum.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UsageTotal {
+    /// The tenant every summed row names.
+    pub tenant_id: String,
+    /// The model identity the rows reported, or `None` when the source
+    /// named none the record could carry.
+    pub model_id: Option<String>,
+    /// The service tier the rows reported, or `None`.
+    pub service_tier: Option<String>,
+    /// `measured` rows in the group.
+    pub rows: u64,
+    /// Summed assistant messages behind the counts.
+    pub assistant_message_count: i64,
+    /// Summed harness-reported input tokens.
+    pub input_tokens: i64,
+    /// Summed harness-reported output tokens.
+    pub output_tokens: i64,
+    /// Summed harness-reported cache-read tokens.
+    pub cache_read_tokens: i64,
+    /// Summed harness-reported 5-minute ephemeral cache-creation tokens.
+    pub cache_creation_5m_tokens: i64,
+    /// Summed harness-reported 1-hour ephemeral cache-creation tokens.
+    pub cache_creation_1h_tokens: i64,
+    /// Summed harness-reported reasoning tokens.
+    pub reasoning_tokens: i64,
+}
+
+/// The usage query's answer over one partition file.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UsageTotals {
+    /// One group per distinct (tenant, model, tier), in ascending key
+    /// order — a pure function of the partition's rows.
+    pub groups: Vec<UsageTotal>,
+    /// Rows excluded because their source reported no usage — the
+    /// disclosure that the totals cover `measured` rows only, never a
+    /// claim that the excluded rows consumed nothing.
+    pub excluded_unknown_rows: u64,
+}
+
+/// The usage query over one partition file's bytes: decode it, vouch its
+/// schema against the pinned column list, and total the harness-reported
+/// counts by tenant, model, and service tier.
+///
+/// Rows whose harness state is not `measured` are **excluded** from
+/// every total and counted in
+/// [`UsageTotals::excluded_unknown_rows`] — never folded in as zeros, so
+/// a source that reported no usage cannot read as free. A row that
+/// violates the family's own contract (counts beside `unknown`, or a
+/// missing count beside `measured`) is refused, not skipped: a query
+/// that tolerates a lying row would total a lie. The provider-observed
+/// columns are never read here — no single column, and no single query,
+/// can sum the two denominators.
+///
+/// # Errors
+/// [`UsageQueryError::Partition`] when the bytes do not decode,
+/// [`UsageQueryError::Schema`] when the decoded columns are not the
+/// pinned v1 list, and [`UsageQueryError::RowInvariant`] when any row
+/// violates the harness family's contract.
+pub fn usage_totals(partition: &[u8]) -> Result<UsageTotals, UsageQueryError> {
+    let file = Table::decode(partition).map_err(UsageQueryError::Partition)?;
+    if file.table().columns() != columns().as_slice() {
+        return Err(UsageQueryError::Schema);
+    }
+
+    let mut order: Vec<GroupKey> = Vec::new();
+    let mut groups: Vec<UsageTotal> = Vec::new();
+    let mut excluded: u64 = 0;
+
+    for row in file.table().rows() {
+        match cell_text(row, COLUMN_STATE).unwrap_or_default() {
+            "measured" => fold_measured(row, &mut order, &mut groups)?,
+            // No count may sit beside an unknown denominator.
+            "unknown" => {
+                if (COLUMN_FIRST_COUNT..=COLUMN_LAST_COUNT).any(|i| cell_count(row, i).is_some()) {
+                    return Err(UsageQueryError::RowInvariant);
+                }
+                excluded = excluded.saturating_add(1);
+            }
+            _ => return Err(UsageQueryError::RowInvariant),
+        }
+    }
+
+    // Ascending key order, a pure function of the rows.
+    let mut keyed: Vec<(GroupKey, UsageTotal)> = order.into_iter().zip(groups).collect();
+    keyed.sort_by(|(left, _), (right, _)| left.cmp(right));
+    Ok(UsageTotals {
+        groups: keyed.into_iter().map(|(_, total)| total).collect(),
+        excluded_unknown_rows: excluded,
+    })
+}
+
+/// The pinned schema's own column positions: the list [`columns`]
+/// returns is the single source of truth, and the query vouches a file's
+/// columns against it before reading any row by position.
+const COLUMN_TENANT: usize = 0;
+const COLUMN_STATE: usize = 5;
+const COLUMN_REASON: usize = 6;
+const COLUMN_MODEL: usize = 7;
+const COLUMN_TIER: usize = 8;
+const COLUMN_MESSAGE_COUNT: usize = 9;
+const COLUMN_FIRST_COUNT: usize = 10;
+const COLUMN_LAST_COUNT: usize = 15;
+
+/// The identity one usage total is grouped by: tenant, model, service
+/// tier.
+type GroupKey = (String, Option<String>, Option<String>);
+
+/// One row cell's optional text value.
+fn cell_text(row: &[Cell], index: usize) -> Option<&str> {
+    match &row[index] {
+        Cell::Text(value) => Some(value.as_str()),
+        _ => None,
+    }
+}
+
+/// One row cell's optional integer value.
+fn cell_count(row: &[Cell], index: usize) -> Option<i64> {
+    match &row[index] {
+        Cell::Int(value) => Some(*value),
+        _ => None,
+    }
+}
+
+/// Fold one `measured` row into its identity's group: every count must
+/// be present, no reason may sit beside a measured denominator, and no
+/// sum may overflow — a violated contract is a refusal, never a skip.
+fn fold_measured(
+    row: &[Cell],
+    order: &mut Vec<GroupKey>,
+    groups: &mut Vec<UsageTotal>,
+) -> Result<(), UsageQueryError> {
+    let values: Vec<i64> = (COLUMN_FIRST_COUNT..=COLUMN_LAST_COUNT)
+        .map(|i| cell_count(row, i))
+        .collect::<Option<Vec<i64>>>()
+        .ok_or(UsageQueryError::RowInvariant)?;
+    if matches!(row[COLUMN_REASON], Cell::Text(_)) {
+        return Err(UsageQueryError::RowInvariant);
+    }
+
+    let key: GroupKey = (
+        cell_text(row, COLUMN_TENANT).unwrap_or_default().to_owned(),
+        cell_text(row, COLUMN_MODEL).map(str::to_owned),
+        cell_text(row, COLUMN_TIER).map(str::to_owned),
+    );
+    let position = if let Some(position) = order.iter().position(|existing| *existing == key) {
+        position
+    } else {
+        order.push(key.clone());
+        groups.push(UsageTotal {
+            tenant_id: key.0,
+            model_id: key.1,
+            service_tier: key.2,
+            rows: 0,
+            assistant_message_count: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_5m_tokens: 0,
+            cache_creation_1h_tokens: 0,
+            reasoning_tokens: 0,
+        });
+        groups.len() - 1
+    };
+
+    let group = &mut groups[position];
+    group.rows = group.rows.saturating_add(1);
+    group.assistant_message_count = group
+        .assistant_message_count
+        .checked_add(cell_count(row, COLUMN_MESSAGE_COUNT).ok_or(UsageQueryError::RowInvariant)?)
+        .ok_or(UsageQueryError::RowInvariant)?;
+    for (summed, value) in [
+        &mut group.input_tokens,
+        &mut group.output_tokens,
+        &mut group.cache_read_tokens,
+        &mut group.cache_creation_5m_tokens,
+        &mut group.cache_creation_1h_tokens,
+        &mut group.reasoning_tokens,
+    ]
+    .into_iter()
+    .zip(values)
+    {
+        *summed = summed
+            .checked_add(value)
+            .ok_or(UsageQueryError::RowInvariant)?;
+    }
+    Ok(())
 }
 
 /// The key of one partition file: the source digest directory, the
@@ -802,5 +1011,194 @@ mod tests {
             manifest.as_str(),
             format!("tenants/{tenant}/v1/derived/inventory/1/{digest}/manifest.json")
         );
+    }
+
+    // ---- The usage query ----
+
+    use super::{UsageQueryError, usage_totals};
+    use crate::parquet::{Cell, Table};
+
+    /// One `measured` row over the pinned schema: the provenance spine,
+    /// the named identity, and the full count family.
+    fn measured_row(tenant: &str, model: &str, tier: &str, input: i64) -> Vec<Cell> {
+        vec![
+            Cell::Text(tenant.to_owned()),
+            Cell::Text("occ".to_owned()),
+            Cell::Text("adapter".to_owned()),
+            Cell::Text("1".to_owned()),
+            Cell::Text("ab99".to_owned()),
+            Cell::Text("measured".to_owned()),
+            Cell::Null,
+            Cell::Text(model.to_owned()),
+            Cell::Text(tier.to_owned()),
+            Cell::Int(1),
+            Cell::Int(input),
+            Cell::Int(2),
+            Cell::Int(0),
+            Cell::Int(0),
+            Cell::Int(0),
+            Cell::Int(0),
+            Cell::Text("unknown".to_owned()),
+            Cell::Null,
+            Cell::Null,
+            Cell::Null,
+        ]
+    }
+
+    /// One `unknown` row: the reason and no count anywhere.
+    fn unknown_row(tenant: &str, reason: &str) -> Vec<Cell> {
+        vec![
+            Cell::Text(tenant.to_owned()),
+            Cell::Text("occ".to_owned()),
+            Cell::Text("adapter".to_owned()),
+            Cell::Text("1".to_owned()),
+            Cell::Text("cd77".to_owned()),
+            Cell::Text("unknown".to_owned()),
+            Cell::Text(reason.to_owned()),
+            Cell::Null,
+            Cell::Null,
+            Cell::Null,
+            Cell::Null,
+            Cell::Null,
+            Cell::Null,
+            Cell::Null,
+            Cell::Null,
+            Cell::Null,
+            Cell::Text("unknown".to_owned()),
+            Cell::Null,
+            Cell::Null,
+            Cell::Null,
+        ]
+    }
+
+    /// Encode rows over the pinned schema into one partition's bytes.
+    fn partition_bytes(rows: Vec<Vec<Cell>>) -> Vec<u8> {
+        let mut table = Table::new(columns());
+        for row in rows {
+            table.push(row).expect("row fits the pinned schema");
+        }
+        table.encode(&[])
+    }
+
+    /// Encode one file over a caller-supplied schema, rows empty.
+    fn partition_bytes_schema(schema: Vec<crate::parquet::Column>) -> Vec<u8> {
+        Table::new(schema).encode(&[])
+    }
+
+    #[test]
+    fn the_query_totals_measured_rows_by_identity() {
+        let bytes = partition_bytes(vec![
+            measured_row("tenant-a", "model-b", "priority", 30),
+            measured_row("tenant-a", "model-a", "standard", 11),
+            unknown_row("tenant-a", "absent"),
+            measured_row("tenant-a", "model-a", "standard", 7),
+            unknown_row("tenant-a", "malformed"),
+        ]);
+
+        let totals = usage_totals(&bytes).expect("the partition answers");
+        assert_eq!(
+            totals.excluded_unknown_rows, 2,
+            "the unknowns are disclosed"
+        );
+        assert_eq!(
+            totals.groups,
+            vec![
+                super::UsageTotal {
+                    tenant_id: "tenant-a".to_owned(),
+                    model_id: Some("model-a".to_owned()),
+                    service_tier: Some("standard".to_owned()),
+                    rows: 2,
+                    assistant_message_count: 2,
+                    input_tokens: 18,
+                    output_tokens: 4,
+                    cache_read_tokens: 0,
+                    cache_creation_5m_tokens: 0,
+                    cache_creation_1h_tokens: 0,
+                    reasoning_tokens: 0,
+                },
+                super::UsageTotal {
+                    tenant_id: "tenant-a".to_owned(),
+                    model_id: Some("model-b".to_owned()),
+                    service_tier: Some("priority".to_owned()),
+                    rows: 1,
+                    assistant_message_count: 1,
+                    input_tokens: 30,
+                    output_tokens: 2,
+                    cache_read_tokens: 0,
+                    cache_creation_5m_tokens: 0,
+                    cache_creation_1h_tokens: 0,
+                    reasoning_tokens: 0,
+                },
+            ],
+            "one group per (tenant, model, tier), in ascending key order"
+        );
+    }
+
+    #[test]
+    fn the_query_refuses_a_count_beside_unknown() {
+        let mut lying = unknown_row("tenant-a", "absent");
+        lying[10] = Cell::Int(5);
+        let bytes = partition_bytes(vec![lying]);
+        assert_eq!(
+            usage_totals(&bytes),
+            Err(UsageQueryError::RowInvariant),
+            "a count beside an unknown denominator is a lie, not a total"
+        );
+    }
+
+    #[test]
+    fn the_query_refuses_a_measured_row_missing_a_count() {
+        let mut partial = measured_row("tenant-a", "model-a", "standard", 11);
+        partial[13] = Cell::Null;
+        let bytes = partition_bytes(vec![partial]);
+        assert_eq!(
+            usage_totals(&bytes),
+            Err(UsageQueryError::RowInvariant),
+            "a partial measured sum would misstate the denominator"
+        );
+    }
+
+    #[test]
+    fn the_query_refuses_a_state_outside_the_closed_set() {
+        let mut strange = measured_row("tenant-a", "model-a", "standard", 11);
+        strange[5] = Cell::Text("measured-v2".to_owned());
+        let bytes = partition_bytes(vec![strange]);
+        assert_eq!(usage_totals(&bytes), Err(UsageQueryError::RowInvariant));
+    }
+
+    #[test]
+    fn the_query_refuses_a_foreign_schema() {
+        let mut renamed = columns();
+        renamed[0] = crate::parquet::Column::required_text("not_tenant_id");
+        let bytes = partition_bytes_schema(renamed);
+        assert_eq!(usage_totals(&bytes), Err(UsageQueryError::Schema));
+    }
+
+    #[test]
+    fn the_query_refuses_bytes_that_do_not_decode() {
+        assert_eq!(
+            usage_totals(b"not a parquet file at all"),
+            Err(UsageQueryError::Partition(
+                crate::parquet::TableDecodeError::Framing
+            ))
+        );
+    }
+
+    #[test]
+    fn the_query_never_reads_the_provider_family() {
+        // Even a row whose provider cells carry numbers — a shape the v1
+        // writer never emits, but the optional schema permits — totals
+        // through the harness columns only. No query over one column can
+        // sum the two denominators, because this one reads only one.
+        let mut row = measured_row("tenant-a", "model-a", "standard", 11);
+        row[17] = Cell::Int(999_999);
+        row[18] = Cell::Int(999_999);
+        row[19] = Cell::Int(1_999_998);
+        let bytes = partition_bytes(vec![row]);
+
+        let totals = usage_totals(&bytes).expect("the partition answers");
+        assert_eq!(totals.groups.len(), 1);
+        assert_eq!(totals.groups[0].input_tokens, 11, "harness only");
+        assert_eq!(totals.groups[0].output_tokens, 2, "harness only");
     }
 }

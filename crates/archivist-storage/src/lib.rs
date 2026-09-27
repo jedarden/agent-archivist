@@ -92,10 +92,11 @@
 //!   writer, carrying the usage-summary-v1 columns with the harness and
 //!   provider denominators separately stated — the query surface token
 //!   questions are answered by.
-//! - [`parquet`] — the deterministic minimal Parquet writer the derived
-//!   catalog's columnar projections encode through: a bounded, verified
-//!   subset of the format whose bytes are a pure function of the table's
-//!   schema and rows.
+//! - [`parquet`] — the deterministic minimal Parquet writer and reader
+//!   the derived catalog's columnar projections encode through: a
+//!   bounded, verified subset of the format whose bytes are a pure
+//!   function of the table's schema and rows, decodable back fail-closed
+//!   so a query can vouch a landed partition before it trusts a row.
 //! - [`export`] — the authorized archive exporter: the offline act that
 //!   binds one verified `export-approval-v1`'s frozen inventory, exact
 //!   occurrence selection, and window before reading the selection's

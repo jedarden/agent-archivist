@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! A deterministic minimal Parquet writer for the derived catalog's
-//! columnar projections (plan Phase 10: versioned Parquet inventories).
+//! A deterministic minimal Parquet writer and reader for the derived
+//! catalog's columnar projections (plan Phase 10: versioned Parquet
+//! inventories).
 //!
 //! The writer emits a strictly bounded subset of the Parquet file format —
 //! the subset the inventory family needs, chosen so every output byte is a
@@ -25,9 +26,11 @@
 //! partitions) hold. The version discipline is the derived family's too:
 //! a changed encoding is a new inventory pipeline version writing a new
 //! prefix, never a silent rewrite of an old partition. The subset is
-//! deliberately small enough to verify end to end — this module's tests
-//! carry a structural reader that walks the emitted bytes the way an
-//! independent implementation would.
+//! deliberately small enough to verify end to end: [`Table::decode`] is
+//! the writer's exact inverse, a fail-closed structural reader that walks
+//! the emitted bytes the way an independent implementation would, so a
+//! query surface can read a landed partition — and verify the file-level
+//! identity in its footer metadata — before it trusts a row.
 //!
 //! Values are bounded: text cells are short provenance tokens (digests,
 //! identifiers, closed enum tokens), integer cells are signed 64-bit
@@ -197,6 +200,54 @@ pub enum TableError {
     },
 }
 
+/// Why a byte sequence is not a readable file of this module's subset.
+/// Every variant is a refusal, never a partial decode: a query surface
+/// gets the whole table or an error naming the layer that refused.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TableDecodeError {
+    /// The envelope is wrong: truncated, or the leading/trailing magic
+    /// strips are missing or misplaced.
+    Framing,
+    /// The footer's thrift did not walk as this writer writes it — a
+    /// field, type, or pinned token outside the emitted shape.
+    Footer,
+    /// A data page did not decode back into the declared cells.
+    Page,
+    /// The decoded rows failed the schema's own shape contract —
+    /// [`Table::push`]'s rules.
+    Shape(TableError),
+}
+
+/// One decoded file: the [`Table`] it carries plus the footer's
+/// caller-supplied key/value metadata and creator token — the file-level
+/// identity a query verifies before it trusts rows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecodedFile {
+    table: Table,
+    metadata: Vec<(String, String)>,
+    created_by: String,
+}
+
+impl DecodedFile {
+    /// The decoded table, schema first and rows in file order.
+    #[must_use]
+    pub fn table(&self) -> &Table {
+        &self.table
+    }
+
+    /// The footer's key/value metadata, in file order.
+    #[must_use]
+    pub fn metadata(&self) -> &[(String, String)] {
+        &self.metadata
+    }
+
+    /// The creator token the footer names.
+    #[must_use]
+    pub fn created_by(&self) -> &str {
+        &self.created_by
+    }
+}
+
 /// A columnar table: the closed schema and the rows to encode, in the
 /// order they occupy the file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -225,6 +276,13 @@ impl Table {
     #[must_use]
     pub fn len(&self) -> usize {
         self.rows.len()
+    }
+
+    /// The table's rows, in file order, one cell vector per row in
+    /// schema order.
+    #[must_use]
+    pub fn rows(&self) -> &[Vec<Cell>] {
+        &self.rows
     }
 
     /// Whether the table carries no rows.
@@ -300,6 +358,23 @@ impl Table {
         file.extend_from_slice(&footer_len.to_le_bytes());
         file.extend_from_slice(MAGIC);
         file
+    }
+
+    /// Decode a file this module encoded back into its table and footer
+    /// identity: the exact inverse of [`Table::encode`], fail-closed on
+    /// every input outside the emitted shape. For any file this writer
+    /// produces, `decode(bytes).table().encode(metadata)` reproduces
+    /// `bytes`; for anything else the error names the layer that refused.
+    ///
+    /// # Errors
+    /// [`TableDecodeError::Framing`] when the envelope is wrong,
+    /// [`TableDecodeError::Footer`] when the footer's thrift, schema, or
+    /// pinned tokens leave the emitted shape, [`TableDecodeError::Page`]
+    /// when a data page does not decode back into its declared cells,
+    /// and [`TableDecodeError::Shape`] when the decoded rows fail
+    /// [`Table::push`]'s contract.
+    pub fn decode(bytes: &[u8]) -> Result<DecodedFile, TableDecodeError> {
+        decode_file(bytes)
     }
 }
 
@@ -637,17 +712,618 @@ pub fn digest_of(bytes: &[u8]) -> String {
     sha256::encode_hex(bytes)
 }
 
+// ---- The reader: the writer's exact inverse, fail-closed ----
+
+/// Lift an `Option` from the thrift walk into a footer refusal.
+fn footer<T>(value: Option<T>) -> Result<T, TableDecodeError> {
+    value.ok_or(TableDecodeError::Footer)
+}
+
+/// Lift an `Option` from a page-body decode into a page refusal.
+fn page<T>(value: Option<T>) -> Result<T, TableDecodeError> {
+    value.ok_or(TableDecodeError::Page)
+}
+
+/// Decode the envelope, walk the footer strictly, decode every chunk, and
+/// reassemble the rows through [`Table::push`]'s own contract.
+fn decode_file(bytes: &[u8]) -> Result<DecodedFile, TableDecodeError> {
+    if bytes.len() < 12 || &bytes[..4] != MAGIC || &bytes[bytes.len() - 4..] != MAGIC {
+        return Err(TableDecodeError::Framing);
+    }
+    let body_end = bytes.len() - 8;
+    let footer_len = usize::try_from(u32::from_le_bytes(
+        bytes[body_end..body_end + 4]
+            .try_into()
+            .map_err(|_| TableDecodeError::Framing)?,
+    ))
+    .map_err(|_| TableDecodeError::Framing)?;
+    let footer_bytes = bytes
+        .get(
+            body_end
+                .checked_sub(footer_len)
+                .ok_or(TableDecodeError::Framing)?..body_end,
+        )
+        .ok_or(TableDecodeError::Framing)?;
+
+    let mut reader = CompactReader::new(footer_bytes);
+    let mut schema: Vec<Column> = Vec::new();
+    let mut num_rows: Option<i64> = None;
+    let mut groups: Vec<GroupCells> = Vec::new();
+    let mut metadata = Vec::new();
+    let mut created_by = String::new();
+
+    while let Some((id, _ty)) = reader.next_field() {
+        match id {
+            1 => {
+                let version = footer(reader.zigzag())?;
+                if version != 1 {
+                    return Err(TableDecodeError::Footer);
+                }
+            }
+            2 => decode_schema(&mut reader, &mut schema)?,
+            3 => {
+                let rows = footer(reader.zigzag())?;
+                if rows < 0 {
+                    return Err(TableDecodeError::Footer);
+                }
+                num_rows = Some(rows);
+            }
+            4 => decode_row_groups(&mut reader, bytes, &schema, &mut groups)?,
+            5 => decode_metadata(&mut reader, &mut metadata)?,
+            6 => {
+                created_by = String::from_utf8(footer(reader.binary())?)
+                    .map_err(|_| TableDecodeError::Footer)?;
+            }
+            _ => return Err(TableDecodeError::Footer),
+        }
+    }
+
+    // The pinned creator token is part of the format: a file whose
+    // creator token differs is not this module's output.
+    if created_by != CREATED_BY {
+        return Err(TableDecodeError::Footer);
+    }
+    let num_rows = num_rows.ok_or(TableDecodeError::Footer)?;
+    let total = groups
+        .iter()
+        .map(|group| group.rows)
+        .try_fold(0_i64, |sum, rows| {
+            sum.checked_add(rows).ok_or(TableDecodeError::Footer)
+        })?;
+    if total != num_rows {
+        return Err(TableDecodeError::Footer);
+    }
+
+    // Transpose the per-column cells back into rows and re-validate each
+    // one through the same contract `push` enforces at write time.
+    let mut table = Table::new(schema);
+    for group in &groups {
+        let local = usize::try_from(group.rows).map_err(|_| TableDecodeError::Footer)?;
+        for row_index in 0..local {
+            let row: Vec<Cell> = group
+                .columns
+                .iter()
+                .map(|cells| cells[row_index].clone())
+                .collect();
+            table.push(row).map_err(TableDecodeError::Shape)?;
+        }
+    }
+    Ok(DecodedFile {
+        table,
+        metadata,
+        created_by,
+    })
+}
+
+/// One decoded row group: the rows it declares and each column's cells.
+struct GroupCells {
+    rows: i64,
+    /// One cell vector per schema column, in schema order.
+    columns: Vec<Vec<Cell>>,
+}
+
+/// Walk the schema list: one root element naming the table and counting
+/// its children, then one leaf element per column.
+fn decode_schema(
+    reader: &mut CompactReader<'_>,
+    schema: &mut Vec<Column>,
+) -> Result<(), TableDecodeError> {
+    let (count, _) = footer(reader.list_header())?;
+    for index in 0..count {
+        reader.enter().ok_or(TableDecodeError::Footer)?;
+        let mut name = String::new();
+        let mut physical = Physical::ByteArray;
+        let mut required = false;
+        let mut utf8 = false;
+        let mut children: i64 = 0;
+        while let Some((field, _)) = reader.next_field() {
+            match field {
+                1 => {
+                    let id = footer(reader.zigzag())?;
+                    physical = match id {
+                        2 => Physical::Int64,
+                        6 => Physical::ByteArray,
+                        _ => return Err(TableDecodeError::Footer),
+                    };
+                }
+                3 => {
+                    required = match footer(reader.zigzag())? {
+                        0 => true,
+                        1 => false,
+                        _ => return Err(TableDecodeError::Footer),
+                    };
+                }
+                4 => {
+                    name = String::from_utf8(footer(reader.binary())?)
+                        .map_err(|_| TableDecodeError::Footer)?;
+                }
+                5 => children = footer(reader.zigzag())?,
+                6 => {
+                    // converted_type: this writer emits only UTF8 (0).
+                    if footer(reader.zigzag())? != 0 {
+                        return Err(TableDecodeError::Footer);
+                    }
+                    utf8 = true;
+                }
+                _ => return Err(TableDecodeError::Footer),
+            }
+        }
+        if index == 0 {
+            // The root names the table and counts its children; it is
+            // not a column.
+            if children < 0 || name != "archivist_inventory" {
+                return Err(TableDecodeError::Footer);
+            }
+        } else {
+            if children != 0 {
+                return Err(TableDecodeError::Footer);
+            }
+            if utf8 && physical != Physical::ByteArray {
+                return Err(TableDecodeError::Footer);
+            }
+            schema.push(Column {
+                name,
+                physical,
+                required,
+                utf8,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Walk one row group's chunk list and decode each chunk's data page
+/// back into per-column cells.
+fn decode_row_groups(
+    reader: &mut CompactReader<'_>,
+    bytes: &[u8],
+    schema: &[Column],
+    groups: &mut Vec<GroupCells>,
+) -> Result<(), TableDecodeError> {
+    let (count, _) = footer(reader.list_header())?;
+    for _ in 0..count {
+        reader.enter().ok_or(TableDecodeError::Footer)?;
+        let mut columns = Vec::with_capacity(schema.len());
+        let mut rows: i64 = 0;
+        while let Some((field, _)) = reader.next_field() {
+            match field {
+                1 => {
+                    let (chunks, _) = footer(reader.list_header())?;
+                    if chunks != schema.len() {
+                        return Err(TableDecodeError::Footer);
+                    }
+                    for column in schema {
+                        columns.push(read_chunk(bytes, reader, column)?);
+                    }
+                }
+                2 => {
+                    let total = footer(reader.zigzag())?;
+                    if total < 0 {
+                        return Err(TableDecodeError::Footer);
+                    }
+                }
+                3 => {
+                    rows = footer(reader.zigzag())?;
+                    if rows < 0 {
+                        return Err(TableDecodeError::Footer);
+                    }
+                }
+                _ => return Err(TableDecodeError::Footer),
+            }
+        }
+        if i64::try_from(columns.first().map_or(0, Vec::len)).unwrap_or(i64::MAX) != rows {
+            return Err(TableDecodeError::Footer);
+        }
+        groups.push(GroupCells { rows, columns });
+    }
+    Ok(())
+}
+
+/// Walk the key/value metadata list.
+fn decode_metadata(
+    reader: &mut CompactReader<'_>,
+    metadata: &mut Vec<(String, String)>,
+) -> Result<(), TableDecodeError> {
+    let (count, _) = footer(reader.list_header())?;
+    for _ in 0..count {
+        reader.enter().ok_or(TableDecodeError::Footer)?;
+        let mut key: Option<String> = None;
+        let mut value: Option<String> = None;
+        while let Some((field, _)) = reader.next_field() {
+            let text = |reader: &mut CompactReader<'_>| {
+                String::from_utf8(reader.binary().ok_or(TableDecodeError::Footer)?)
+                    .map_err(|_| TableDecodeError::Footer)
+            };
+            match field {
+                1 => key = Some(text(reader)?),
+                2 => value = Some(text(reader)?),
+                _ => return Err(TableDecodeError::Footer),
+            }
+        }
+        metadata.push((
+            key.ok_or(TableDecodeError::Footer)?,
+            value.ok_or(TableDecodeError::Footer)?,
+        ));
+    }
+    Ok(())
+}
+
+/// Read one `ColumnChunk` — its metadata struct, then the data page at
+/// the recorded offset — and decode the values back, refusing any field
+/// or encoding this writer does not emit.
+fn read_chunk(
+    bytes: &[u8],
+    reader: &mut CompactReader<'_>,
+    column: &Column,
+) -> Result<Vec<Cell>, TableDecodeError> {
+    // The chunk is a struct-typed *list element*: descend into it,
+    // exactly as the writer's `struct_element_begin` did.
+    reader.enter().ok_or(TableDecodeError::Footer)?;
+    let mut data_page_offset: i64 = -1;
+    let mut file_offset: Option<i64> = None;
+    while let Some((id, _ty)) = reader.next_field() {
+        match id {
+            2 => file_offset = Some(footer(reader.zigzag())?),
+            3 => {
+                reader.enter().ok_or(TableDecodeError::Footer)?;
+                let mut encodings: Option<Vec<i64>> = None;
+                let mut path: Option<String> = None;
+                let mut codec: i64 = -1;
+                let mut physical_id: i64 = -1;
+                let mut num_values: i64 = -1;
+                while let Some((field, _)) = reader.next_field() {
+                    match field {
+                        1 => physical_id = footer(reader.zigzag())?,
+                        2 => {
+                            let (count, _) = footer(reader.list_header())?;
+                            let mut seen = Vec::with_capacity(count);
+                            for _ in 0..count {
+                                seen.push(footer(reader.zigzag())?);
+                            }
+                            encodings = Some(seen);
+                        }
+                        3 => {
+                            let (count, _) = footer(reader.list_header())?;
+                            if count != 1 {
+                                return Err(TableDecodeError::Footer);
+                            }
+                            let named = String::from_utf8(footer(reader.binary())?)
+                                .map_err(|_| TableDecodeError::Footer)?;
+                            path = Some(named);
+                        }
+                        4 => codec = footer(reader.zigzag())?,
+                        5 => num_values = footer(reader.zigzag())?,
+                        6 | 7 => {
+                            let size = footer(reader.zigzag())?;
+                            if size < 0 {
+                                return Err(TableDecodeError::Footer);
+                            }
+                        }
+                        9 => data_page_offset = footer(reader.zigzag())?,
+                        _ => return Err(TableDecodeError::Footer),
+                    }
+                }
+                // The chunk's own metadata must state exactly what the
+                // writer emits: its physical type, PLAIN values with RLE
+                // levels, its own column name, UNCOMPRESSED, and the row
+                // count it declared.
+                if physical_id != i64::from(column.physical.id()) {
+                    return Err(TableDecodeError::Footer);
+                }
+                if encodings.as_deref() != Some(&[0, 3][..]) {
+                    return Err(TableDecodeError::Footer);
+                }
+                if path.as_deref() != Some(column.name()) {
+                    return Err(TableDecodeError::Footer);
+                }
+                if codec != 0 {
+                    return Err(TableDecodeError::Footer);
+                }
+                if num_values < 0 {
+                    return Err(TableDecodeError::Footer);
+                }
+            }
+            _ => return Err(TableDecodeError::Footer),
+        }
+    }
+    // The writer states the same offset twice — the chunk's file offset
+    // and the metadata's data-page offset — and both must agree and be
+    // inside the file body.
+    if file_offset.is_some_and(|offset| offset != data_page_offset) || data_page_offset < 4 {
+        return Err(TableDecodeError::Footer);
+    }
+
+    read_data_page(bytes, data_page_offset, column)
+}
+
+/// Walk one data page's header and decode its body into the column's
+/// cells, one per declared row.
+fn read_data_page(
+    bytes: &[u8],
+    data_page_offset: i64,
+    column: &Column,
+) -> Result<Vec<Cell>, TableDecodeError> {
+    let start = usize::try_from(data_page_offset).map_err(|_| TableDecodeError::Page)?;
+    let mut header = CompactReader {
+        bytes,
+        pos: start,
+        last_field: 0,
+        stack: Vec::new(),
+    };
+    let mut page_type: i64 = -1;
+    let mut uncompressed: i64 = -1;
+    let mut compressed: i64 = -1;
+    let mut declared: i64 = -1;
+    while let Some((field, ty)) = header.next_field() {
+        match field {
+            1 => page_type = footer(header.zigzag())?,
+            2 => uncompressed = footer(header.zigzag())?,
+            3 => compressed = footer(header.zigzag())?,
+            5 if ty == thrift::STRUCT => {
+                header.enter().ok_or(TableDecodeError::Page)?;
+                let mut num_values: i64 = -1;
+                while let Some((inner, _)) = header.next_field() {
+                    match inner {
+                        1 => num_values = footer(header.zigzag())?,
+                        2 => {
+                            if footer(header.zigzag())? != 0 {
+                                return Err(TableDecodeError::Page);
+                            }
+                        }
+                        3 | 4 => {
+                            if footer(header.zigzag())? != 3 {
+                                return Err(TableDecodeError::Page);
+                            }
+                        }
+                        _ => return Err(TableDecodeError::Page),
+                    }
+                }
+                if num_values < 0 {
+                    return Err(TableDecodeError::Page);
+                }
+                declared = num_values;
+            }
+            _ => return Err(TableDecodeError::Page),
+        }
+    }
+    if page_type != 0 || uncompressed != compressed || compressed < 0 || declared < 0 {
+        return Err(TableDecodeError::Page);
+    }
+    let body = page(
+        bytes.get(
+            header.pos
+                ..header
+                    .pos
+                    .checked_add(usize::try_from(compressed).map_err(|_| TableDecodeError::Page)?)
+                    .ok_or(TableDecodeError::Page)?,
+        ),
+    )?;
+
+    // A required column's body is values only; an optional column's body
+    // leads with the u32-prefixed level blob, and the levels say which
+    // rows carry values — the values begin where the levels end.
+    let mut cells = Vec::new();
+    if column.required {
+        let mut cursor = body;
+        for _ in 0..declared {
+            cells.push(page(read_plain(column.physical, &mut cursor))?);
+        }
+        if !cursor.is_empty() {
+            return Err(TableDecodeError::Page);
+        }
+    } else {
+        let (definitions, consumed) = page(split_levels(body))?;
+        if i64::try_from(definitions.len()).unwrap_or(i64::MAX) != declared {
+            return Err(TableDecodeError::Page);
+        }
+        let mut cursor = &body[consumed..];
+        for level in &definitions {
+            if *level == 0 {
+                cells.push(Cell::Null);
+            } else {
+                cells.push(page(read_plain(column.physical, &mut cursor))?);
+            }
+        }
+        if !cursor.is_empty() {
+            return Err(TableDecodeError::Page);
+        }
+    }
+    Ok(cells)
+}
+
+/// Decode the definition-level blob that opens an optional column's page
+/// body: a u32 length prefix, then the hybrid stream — the width is not
+/// stored, the schema derives it — of run headers (bit 0 set: literal
+/// bit-packed run of `count` groups; clear: RLE run of `count` repeats).
+/// Returns the levels and the blob's total consumed byte count, so the
+/// caller finds the plain values exactly where the levels end.
+fn split_levels(body: &[u8]) -> Option<(Vec<u8>, usize)> {
+    let len = usize::try_from(u32::from_le_bytes(body[..4].try_into().ok()?)).ok()?;
+    let run_blob = body.get(4..4 + len)?;
+    let mut levels = Vec::new();
+    let mut pos = 0;
+    while pos < run_blob.len() {
+        let mut value = 0_u64;
+        let mut shift = 0;
+        loop {
+            let byte = *run_blob.get(pos)?;
+            pos += 1;
+            value |= u64::from(byte & 0x7F) << shift;
+            if byte & 0x80 == 0 {
+                break;
+            }
+            shift += 7;
+        }
+        let count = usize::try_from(value >> 1).ok()?;
+        if value & 1 == 0 {
+            let level = *run_blob.get(pos)?;
+            pos += 1;
+            levels.extend(std::iter::repeat_n(level, count));
+        } else {
+            // One byte per group at bit width 1, LSB-first; the final
+            // group may pad past the real levels.
+            for _ in 0..count {
+                let byte = *run_blob.get(pos)?;
+                pos += 1;
+                for bit in 0..8 {
+                    levels.push((byte >> bit) & 1);
+                }
+            }
+        }
+    }
+    Some((levels, 4 + len))
+}
+
+/// Advance a byte cursor by `n`, returning the consumed slice.
+fn take<'a>(cursor: &mut &'a [u8], n: usize) -> Option<&'a [u8]> {
+    if cursor.len() < n {
+        return None;
+    }
+    let (head, tail) = cursor.split_at(n);
+    *cursor = tail;
+    Some(head)
+}
+
+/// Read one plain-encoded value.
+fn read_plain(physical: Physical, cursor: &mut &[u8]) -> Option<Cell> {
+    match physical {
+        Physical::Int64 => {
+            let slice = take(cursor, 8)?;
+            let array: [u8; 8] = slice.try_into().ok()?;
+            Some(Cell::Int(i64::from_le_bytes(array)))
+        }
+        Physical::ByteArray => {
+            let head = take(cursor, 4)?;
+            let array: [u8; 4] = head.try_into().ok()?;
+            let len = usize::try_from(u32::from_le_bytes(array)).ok()?;
+            let text = String::from_utf8(take(cursor, len)?.to_vec()).ok()?;
+            Some(Cell::Text(text))
+        }
+    }
+}
+
+/// The thrift compact protocol reader, the writer's exact inverse.
+struct CompactReader<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+    last_field: i16,
+    stack: Vec<i16>,
+}
+
+impl<'a> CompactReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            bytes,
+            pos: 0,
+            last_field: 0,
+            stack: Vec::new(),
+        }
+    }
+
+    fn varint(&mut self) -> Option<u64> {
+        let mut value = 0_u64;
+        let mut shift = 0;
+        loop {
+            let byte = *self.bytes.get(self.pos)?;
+            self.pos += 1;
+            value |= u64::from(byte & 0x7F) << shift;
+            if byte & 0x80 == 0 {
+                return Some(value);
+            }
+            shift += 7;
+        }
+    }
+
+    fn zigzag(&mut self) -> Option<i64> {
+        let raw = self.varint()?;
+        let magnitude = i64::try_from(raw >> 1).ok()?;
+        Some(magnitude ^ -i64::from(raw & 1 == 1))
+    }
+
+    fn binary(&mut self) -> Option<Vec<u8>> {
+        let len = usize::try_from(self.varint()?).ok()?;
+        let slice = self.bytes.get(self.pos..self.pos + len)?.to_vec();
+        self.pos += len;
+        Some(slice)
+    }
+
+    /// Read the next field header in the current struct. `None` at the
+    /// struct's STOP, which also restores the enclosing field state.
+    fn next_field(&mut self) -> Option<(i16, u8)> {
+        let byte = *self.bytes.get(self.pos)?;
+        if byte == 0 {
+            self.pos += 1;
+            self.last_field = self.stack.pop().unwrap_or(0);
+            return None;
+        }
+        self.pos += 1;
+        let ty = byte & 0x0F;
+        let delta = (byte & 0xF0) >> 4;
+        let id = if delta == 0 {
+            i16::try_from(self.zigzag()?).ok()?
+        } else {
+            self.last_field + i16::from(delta)
+        };
+        self.last_field = id;
+        Some((id, ty))
+    }
+
+    /// Descend into a struct-typed field just consumed. Fails (`None`)
+    /// when the stack is deeper than the writer ever nests.
+    fn enter(&mut self) -> Option<()> {
+        if self.stack.len() >= 8 {
+            return None;
+        }
+        self.stack.push(self.last_field);
+        self.last_field = 0;
+        Some(())
+    }
+
+    /// Read a list header: `(size, element type)`.
+    fn list_header(&mut self) -> Option<(usize, u8)> {
+        let byte = *self.bytes.get(self.pos)?;
+        self.pos += 1;
+        let element_type = byte & 0x0F;
+        let size = usize::from((byte & 0xF0) >> 4);
+        if size == 15 {
+            Some((usize::try_from(self.varint()?).ok()?, element_type))
+        } else {
+            Some((size, element_type))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    //! The writer's own proof: determinism, shape faults refused, and a
-    //! structural reader that walks the emitted bytes the way an
+    //! The writer's own proof: determinism, shape faults refused, and
+    //! [`Table::decode`] walking the emitted bytes the way an
     //! independent implementation would — envelope framing, footer
     //! length, thrift footer, column chunks, definition levels, plain
     //! values — so a regression that still produces *some*
     //! Parquet-shaped file is still caught by its values failing to
-    //! round-trip.
+    //! round-trip, and a query can trust what it reads back.
 
-    use super::{Cell, Column, Physical, Table, TableError, digest_of};
+    use super::{Cell, Column, Table, TableError, digest_of};
 
     /// The three-column table the tests share: one required text, one
     /// optional text, one optional int — every encoding path in one file.
@@ -699,7 +1375,7 @@ mod tests {
         let footer_start = body_end - usize::try_from(footer_len).expect("fits");
         assert!(footer_start >= 4, "the footer sits after the body");
         assert!(
-            FileReader::parse(&bytes).is_some(),
+            Table::decode(&bytes).is_ok(),
             "the framing the reader walks is the framing the writer wrote"
         );
     }
@@ -708,13 +1384,13 @@ mod tests {
     fn empty_table_still_encodes() {
         let table = Table::new(vec![Column::required_int64("n")]);
         let bytes = table.encode(&[]);
-        let read = FileReader::parse(&bytes).expect("the empty file parses");
-        assert_eq!(read.num_rows, 0);
-        assert!(read.row_groups.is_empty());
-        assert_eq!(read.schema.len(), 1);
-        assert_eq!(read.schema[0].0, "n");
-        assert_eq!(read.schema[0].1, Physical::Int64);
-        assert!(read.schema[0].2);
+        let read = Table::decode(&bytes).expect("the empty file parses");
+        assert!(read.table().is_empty());
+        assert_eq!(
+            read.table().columns(),
+            vec![Column::required_int64("n")],
+            "the schema decodes with its physical type and required flag"
+        );
     }
 
     #[test]
@@ -750,55 +1426,71 @@ mod tests {
             table.push(vec![Cell::Int(value)]).expect("shape holds");
         }
         let bytes = table.encode(&[]);
-        let read = FileReader::parse(&bytes).expect("parses");
-        assert_eq!(read.row_groups.len(), 3, "8192 + 8192 + 7");
-        assert_eq!(read.num_rows, i64::try_from(total).expect("fits"));
-        let last = read.row_groups.last().expect("three groups");
-        assert_eq!(last.columns[0].len(), 7);
+        let read = Table::decode(&bytes).expect("parses");
         assert_eq!(
-            last.columns[0][6],
-            Cell::Int(i64::try_from(super::ROW_GROUP_ROWS * 2 + 6).expect("fits"))
+            read.table().len(),
+            total,
+            "every row of all three row groups decodes back"
         );
+        let rows = read.table().rows();
+        assert_eq!(
+            rows[rows.len() - 1][0],
+            Cell::Int(i64::try_from(super::ROW_GROUP_ROWS * 2 + 6).expect("fits")),
+            "the last row of the last group is the last value written"
+        );
+        // Re-encoding the decoded table reproduces the file byte for
+        // byte — the group boundaries were honored, not just survived.
+        assert_eq!(read.table().encode(&[]), bytes);
     }
 
     #[test]
     fn values_round_trip_through_the_structural_reader() {
-        let bytes = table().encode(&[("pipeline_id", "inventory"), ("pipeline_version", "1")]);
-        let read = FileReader::parse(&bytes).expect("the file parses");
-        assert_eq!(read.num_rows, 3);
-        assert_eq!(read.created_by, "agent-archivist parquet writer v1");
+        let source = table();
+        let bytes = source.encode(&[("pipeline_id", "inventory"), ("pipeline_version", "1")]);
+        let read = Table::decode(&bytes).expect("the file parses");
+        assert_eq!(read.created_by(), "agent-archivist parquet writer v1");
         assert_eq!(
-            read.metadata,
-            vec![
+            read.metadata(),
+            &[
                 ("pipeline_id".to_owned(), "inventory".to_owned()),
                 ("pipeline_version".to_owned(), "1".to_owned()),
             ]
         );
-        assert_eq!(read.schema.len(), 3);
-        assert_eq!(read.schema[0].0, "occurrence_id");
-        assert_eq!(read.schema[0].1, Physical::ByteArray);
-        assert!(read.schema[0].2, "required");
-        assert!(!read.schema[1].2, "optional");
-        assert_eq!(read.schema[2].1, Physical::Int64);
-
-        let group = &read.row_groups[0];
-        assert_eq!(group.num_rows, 3);
+        // The decoded table is the table that encoded: schema, rows,
+        // and value-for-value, so a query reads what the writer wrote.
+        assert_eq!(read.table(), &source);
         assert_eq!(
-            group.columns,
+            read.table().columns(),
             vec![
-                vec![
-                    Cell::Text("aa11".to_owned()),
-                    Cell::Text("bb22".to_owned()),
-                    Cell::Text("cc33".to_owned()),
-                ],
-                vec![
-                    Cell::Text("claude-sonnet-4".to_owned()),
-                    Cell::Null,
-                    Cell::Text("claude-haiku-4".to_owned()),
-                ],
-                vec![Cell::Int(37), Cell::Null, Cell::Int(0)],
+                Column::required_text("occurrence_id"),
+                Column::optional_text("model"),
+                Column::optional_int64("tokens"),
             ]
         );
+        assert_eq!(
+            read.table().rows(),
+            &[
+                vec![
+                    Cell::Text("aa11".to_owned()),
+                    Cell::Text("claude-sonnet-4".to_owned()),
+                    Cell::Int(37),
+                ],
+                vec![Cell::Text("bb22".to_owned()), Cell::Null, Cell::Null],
+                vec![
+                    Cell::Text("cc33".to_owned()),
+                    Cell::Text("claude-haiku-4".to_owned()),
+                    Cell::Int(0),
+                ],
+            ]
+        );
+        // And the inverse is exact: decoding then re-encoding with the
+        // same metadata reproduces the file's bytes.
+        let metadata: Vec<(&str, &str)> = read
+            .metadata()
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
+        assert_eq!(read.table().encode(&metadata), bytes);
     }
 
     #[test]
@@ -821,412 +1513,69 @@ mod tests {
                 table.push(vec![cell.clone()]).expect("shape holds");
             }
             let bytes = table.encode(&[]);
-            let read = FileReader::parse(&bytes).expect("parses");
-            assert_eq!(read.row_groups[0].columns[0], pattern);
+            let read = Table::decode(&bytes).expect("parses");
+            let rows: Vec<Vec<Cell>> = pattern.iter().map(|cell| vec![cell.clone()]).collect();
+            assert_eq!(read.table().rows(), &rows[..]);
         }
     }
 
-    // ---- The structural reader ----
-
-    /// One parsed file: schema (name, physical, required), the file row
-    /// count, key/value metadata, creator token, and the decoded groups.
-    struct FileReader {
-        schema: Vec<(String, Physical, bool)>,
-        num_rows: i64,
-        metadata: Vec<(String, String)>,
-        created_by: String,
-        row_groups: Vec<GroupRead>,
-    }
-
-    /// One decoded row group: its row count and one decoded value vector
-    /// per column, in schema order.
-    struct GroupRead {
-        num_rows: i64,
-        columns: Vec<Vec<Cell>>,
-    }
-
-    /// The thrift compact protocol reader, the writer's exact inverse.
-    struct CompactReader<'a> {
-        bytes: &'a [u8],
-        pos: usize,
-        last_field: i16,
-        stack: Vec<i16>,
-    }
-
-    impl<'a> CompactReader<'a> {
-        fn new(bytes: &'a [u8]) -> Self {
-            Self {
-                bytes,
-                pos: 0,
-                last_field: 0,
-                stack: Vec::new(),
-            }
-        }
-
-        fn varint(&mut self) -> Option<u64> {
-            let mut value = 0_u64;
-            let mut shift = 0;
-            loop {
-                let byte = *self.bytes.get(self.pos)?;
-                self.pos += 1;
-                value |= u64::from(byte & 0x7F) << shift;
-                if byte & 0x80 == 0 {
-                    return Some(value);
-                }
-                shift += 7;
-            }
-        }
-
-        fn zigzag(&mut self) -> Option<i64> {
-            let raw = self.varint()?;
-            let magnitude = i64::try_from(raw >> 1).ok()?;
-            Some(magnitude ^ -i64::from(raw & 1 == 1))
-        }
-
-        fn binary(&mut self) -> Option<Vec<u8>> {
-            let len = usize::try_from(self.varint()?).ok()?;
-            let slice = self.bytes.get(self.pos..self.pos + len)?.to_vec();
-            self.pos += len;
-            Some(slice)
-        }
-
-        /// Read the next field header in the current struct. `None` at
-        /// the struct's STOP, which also restores the enclosing field
-        /// state.
-        fn next_field(&mut self) -> Option<(i16, u8)> {
-            let byte = *self.bytes.get(self.pos)?;
-            if byte == 0 {
-                self.pos += 1;
-                self.last_field = self.stack.pop().unwrap_or(0);
-                return None;
-            }
-            self.pos += 1;
-            let ty = byte & 0x0F;
-            let delta = (byte & 0xF0) >> 4;
-            let id = if delta == 0 {
-                i16::try_from(self.zigzag()?).ok()?
-            } else {
-                self.last_field + i16::from(delta)
-            };
-            self.last_field = id;
-            Some((id, ty))
-        }
-
-        /// Descend into a struct-typed field just consumed.
-        fn enter(&mut self) {
-            self.stack.push(self.last_field);
-            self.last_field = 0;
-        }
-
-        /// Read a list header: `(size, element type)`.
-        fn list_header(&mut self) -> Option<(usize, u8)> {
-            let byte = *self.bytes.get(self.pos)?;
-            self.pos += 1;
-            let element_type = byte & 0x0F;
-            let size = usize::from((byte & 0xF0) >> 4);
-            if size == 15 {
-                Some((usize::try_from(self.varint()?).ok()?, element_type))
-            } else {
-                Some((size, element_type))
-            }
-        }
-    }
-
-    impl FileReader {
-        /// Parse the envelope, walk the footer, and decode every row
-        /// group's chunks back into cells.
-        #[allow(clippy::too_many_lines)] // one field of the footer per arm
-        fn parse(bytes: &[u8]) -> Option<Self> {
-            if bytes.len() < 12
-                || &bytes[..4] != super::MAGIC
-                || &bytes[bytes.len() - 4..] != super::MAGIC
-            {
-                return None;
-            }
-            let body_end = bytes.len() - 8;
-            let footer_len = usize::try_from(u32::from_le_bytes(
-                bytes[body_end..body_end + 4].try_into().ok()?,
-            ))
-            .ok()?;
-            let footer = bytes.get(body_end - footer_len..body_end)?;
-
-            let mut reader = CompactReader::new(footer);
-            let mut schema = Vec::new();
-            let mut num_rows = 0_i64;
-            let mut metadata = Vec::new();
-            let mut created_by = String::new();
-            let mut row_groups = Vec::new();
-
-            while let Some((id, _ty)) = reader.next_field() {
-                match id {
-                    1 => {
-                        let _version = reader.zigzag()?;
-                    }
-                    2 => {
-                        let (count, _) = reader.list_header()?;
-                        for _ in 0..count {
-                            reader.enter();
-                            let mut name = String::new();
-                            let mut physical = Physical::ByteArray;
-                            let mut required = false;
-                            let mut children = 0_i64;
-                            while let Some((field, _)) = reader.next_field() {
-                                match field {
-                                    1 => {
-                                        physical = if reader.zigzag()? == 2 {
-                                            Physical::Int64
-                                        } else {
-                                            Physical::ByteArray
-                                        }
-                                    }
-                                    3 => required = reader.zigzag()? == 0,
-                                    4 => {
-                                        name = String::from_utf8(reader.binary()?).ok()?;
-                                    }
-                                    5 => children = reader.zigzag()?,
-                                    _ => {
-                                        let _ = reader.zigzag()?;
-                                    }
-                                }
-                            }
-                            // The root element counts children and names
-                            // the table, not a column; only leaves join
-                            // the schema.
-                            if children == 0 {
-                                schema.push((name, physical, required));
-                            }
-                        }
-                    }
-                    3 => num_rows = reader.zigzag()?,
-                    4 => {
-                        // The schema (field 2) always precedes the row
-                        // groups (field 4) in this writer's footer, so
-                        // the chunk decode has the required flags.
-                        let (count, _) = reader.list_header()?;
-                        for _ in 0..count {
-                            reader.enter();
-                            let mut columns = Vec::new();
-                            let mut group_rows = 0_i64;
-                            while let Some((field, _)) = reader.next_field() {
-                                match field {
-                                    1 => {
-                                        let (chunks, _) = reader.list_header()?;
-                                        for (index, _) in (0..chunks).enumerate() {
-                                            let column = schema.get(index)?;
-                                            columns.push(read_chunk(bytes, &mut reader, column)?);
-                                        }
-                                    }
-                                    2 => {
-                                        let _total = reader.zigzag()?;
-                                    }
-                                    3 => group_rows = reader.zigzag()?,
-                                    _ => return None,
-                                }
-                            }
-                            row_groups.push(GroupRead {
-                                num_rows: group_rows,
-                                columns,
-                            });
-                        }
-                    }
-                    5 => {
-                        let (count, _) = reader.list_header()?;
-                        for _ in 0..count {
-                            reader.enter();
-                            let mut key = String::new();
-                            let mut value = String::new();
-                            while let Some((field, _)) = reader.next_field() {
-                                match field {
-                                    1 => key = String::from_utf8(reader.binary()?).ok()?,
-                                    2 => value = String::from_utf8(reader.binary()?).ok()?,
-                                    _ => return None,
-                                }
-                            }
-                            metadata.push((key, value));
-                        }
-                    }
-                    6 => created_by = String::from_utf8(reader.binary()?).ok()?,
-                    _ => return None,
-                }
-            }
-            Some(Self {
-                schema,
-                num_rows,
-                metadata,
-                created_by,
-                row_groups,
-            })
-        }
-    }
-
-    /// Read one `ColumnChunk` — its metadata struct, then the data page
-    /// at the recorded offset — and decode the values back. The schema's
-    /// entry for this column (its physical type and required flag)
-    /// decides how the body decodes.
-    fn read_chunk(
-        bytes: &[u8],
-        reader: &mut CompactReader,
-        column: &(String, Physical, bool),
-    ) -> Option<Vec<Cell>> {
-        let (_, physical, required) = column;
-        // The chunk is a struct-typed *list element*: descend into it,
-        // exactly as the writer's `struct_element_begin` did.
-        reader.enter();
-        let mut data_page_offset = 0_i64;
-        while let Some((id, _ty)) = reader.next_field() {
-            match id {
-                2 => data_page_offset = reader.zigzag()?,
-                3 => {
-                    reader.enter();
-                    while let Some((field, _)) = reader.next_field() {
-                        match field {
-                            2 => {
-                                // encodings: raw zigzag i32 elements.
-                                let (count, _) = reader.list_header()?;
-                                for _ in 0..count {
-                                    let _ = reader.zigzag()?;
-                                }
-                            }
-                            3 => {
-                                // path_in_schema: list of binary; the
-                                // single element names the column.
-                                let (count, _) = reader.list_header()?;
-                                for _ in 0..count {
-                                    let _name = reader.binary()?;
-                                }
-                            }
-                            // The physical type and every other scalar
-                            // member are single zigzag values this
-                            // reader can skip uniformly.
-                            _ => {
-                                let _ = reader.zigzag()?;
-                            }
-                        }
-                    }
-                }
-                _ => return None,
-            }
-        }
-
-        // Walk the page: PageHeader thrift, then the body.
-        let mut page_header = CompactReader {
-            bytes,
-            pos: usize::try_from(data_page_offset).ok()?,
-            last_field: 0,
-            stack: Vec::new(),
+    #[test]
+    fn decode_refuses_bytes_outside_the_envelope() {
+        let bytes = table().encode(&[]);
+        // Truncations at both ends and a shifted or damaged magic strip.
+        let damaged = {
+            let mut copy = bytes.clone();
+            copy[0] = b'X';
+            copy
         };
-        let mut compressed = 0_i64;
-        while let Some((field, ty)) = page_header.next_field() {
-            match (field, ty) {
-                (1 | 2, _) => {
-                    let _ = page_header.zigzag()?;
-                }
-                (3, _) => compressed = page_header.zigzag()?,
-                (5, super::thrift::STRUCT) => {
-                    page_header.enter();
-                    while page_header.next_field().is_some() {
-                        let _ = page_header.zigzag()?;
-                    }
-                }
-                _ => return None,
-            }
+        for candidate in [
+            &bytes[..bytes.len() - 1],
+            &bytes[..8],
+            &bytes[1..],
+            damaged.as_slice(),
+        ] {
+            assert_eq!(
+                Table::decode(candidate),
+                Err(super::TableDecodeError::Framing),
+                "truncated or magic-damaged bytes are refused at the envelope"
+            );
         }
-        let body =
-            bytes.get(page_header.pos..page_header.pos + usize::try_from(compressed).ok()?)?;
-
-        // Decode: a required column's body is values only; an optional
-        // column's body leads with the u32-prefixed level blob, and the
-        // levels say which rows carry values — the values begin where
-        // the level blob ends.
-        let mut cells = Vec::new();
-        if *required {
-            let mut cursor = body;
-            while !cursor.is_empty() {
-                cells.push(read_plain(*physical, &mut cursor)?);
-            }
-        } else {
-            let (definitions, consumed) = split_levels(body)?;
-            let mut cursor = &body[consumed..];
-            for level in &definitions {
-                if *level == 0 {
-                    cells.push(Cell::Null);
-                } else {
-                    cells.push(read_plain(*physical, &mut cursor)?);
-                }
-            }
-        }
-        Some(cells)
+        assert_eq!(
+            Table::decode(&[]),
+            Err(super::TableDecodeError::Framing),
+            "the empty byte sequence is refused"
+        );
     }
 
-    /// Decode the definition-level blob that opens an optional column's
-    /// page body: a u32 length prefix, then the hybrid stream — the
-    /// width is not stored, the schema derives it — of run headers
-    /// (bit 0 set: literal bit-packed run of `count` groups; clear: RLE
-    /// run of `count` repeats). Returns the levels and the blob's total
-    /// consumed byte count, so the caller finds the plain values
-    /// exactly where the levels end.
-    fn split_levels(body: &[u8]) -> Option<(Vec<u8>, usize)> {
-        let len = usize::try_from(u32::from_le_bytes(body[..4].try_into().ok()?)).ok()?;
-        let run_blob = body.get(4..4 + len)?;
-        let mut levels = Vec::new();
-        let mut pos = 0;
-        while pos < run_blob.len() {
-            let mut value = 0_u64;
-            let mut shift = 0;
-            loop {
-                let byte = *run_blob.get(pos)?;
-                pos += 1;
-                value |= u64::from(byte & 0x7F) << shift;
-                if byte & 0x80 == 0 {
-                    break;
-                }
-                shift += 7;
-            }
-            let count = usize::try_from(value >> 1).ok()?;
-            if value & 1 == 0 {
-                let level = *run_blob.get(pos)?;
-                pos += 1;
-                levels.extend(std::iter::repeat_n(level, count));
-            } else {
-                // One byte per group at bit width 1, LSB-first; the
-                // final group may pad past the real levels.
-                for _ in 0..count {
-                    let byte = *run_blob.get(pos)?;
-                    pos += 1;
-                    for bit in 0..8 {
-                        levels.push((byte >> bit) & 1);
-                    }
-                }
-            }
-        }
-        Some((levels, 4 + len))
+    #[test]
+    fn decode_refuses_an_altered_creator_token() {
+        // The creator token is pinned; a file whose token differs is
+        // not this writer's output, however well-formed its thrift.
+        let mut bytes = table().encode(&[]);
+        let token = b"agent-archivist parquet writer v1";
+        let at = bytes
+            .windows(token.len())
+            .position(|window| window == token)
+            .expect("the token appears in the file");
+        bytes[at] ^= b'x' ^ b'y';
+        assert_eq!(
+            Table::decode(&bytes),
+            Err(super::TableDecodeError::Footer),
+            "an altered creator token is a footer refusal"
+        );
     }
 
-    /// Advance a byte cursor by `n`, returning the consumed slice.
-    fn take<'a>(cursor: &mut &'a [u8], n: usize) -> Option<&'a [u8]> {
-        if cursor.len() < n {
-            return None;
-        }
-        let (head, tail) = cursor.split_at(n);
-        *cursor = tail;
-        Some(head)
-    }
-
-    /// Read one plain-encoded value.
-    fn read_plain(physical: Physical, cursor: &mut &[u8]) -> Option<Cell> {
-        match physical {
-            Physical::Int64 => {
-                let slice = take(cursor, 8)?;
-                let array: [u8; 8] = slice.try_into().ok()?;
-                Some(Cell::Int(i64::from_le_bytes(array)))
-            }
-            Physical::ByteArray => {
-                let head = take(cursor, 4)?;
-                let array: [u8; 4] = head.try_into().ok()?;
-                let len = usize::try_from(u32::from_le_bytes(array)).ok()?;
-                let text = String::from_utf8(take(cursor, len)?.to_vec()).ok()?;
-                Some(Cell::Text(text))
-            }
-        }
+    #[test]
+    fn decode_refuses_a_corrupted_footer_length() {
+        let mut bytes = table().encode(&[]);
+        let body_end = bytes.len() - 8;
+        bytes[body_end..body_end + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(
+            matches!(
+                Table::decode(&bytes),
+                Err(super::TableDecodeError::Framing | super::TableDecodeError::Footer)
+            ),
+            "a footer length that cannot name a region inside the file is refused"
+        );
     }
 }

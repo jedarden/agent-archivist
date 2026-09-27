@@ -31,6 +31,12 @@
 //!   the module's own unit suite);
 //! - **content-free** — no transcript text reaches any emitted byte,
 //!   while the model identity the projection is allowed to carry does;
+//! - **the query** — a landed partition answers token totals by tenant,
+//!   model, and service tier: measured rows sum into their groups,
+//!   rows whose source reported no usage are excluded from every total
+//!   rather than counted as zero, the provider-observed family is never
+//!   read (no single column can sum the two denominators), and every
+//!   decoded row names the building tenant;
 //! - **the manifest is the completeness statement** — an empty prefix
 //!   still emits one, and a build whose manifest put fails leaves an
 //!   incomplete directory behind, never an authoritative partition set.
@@ -58,11 +64,12 @@ use archivist_storage::audit_restore::{
 };
 use archivist_storage::blob::BlobEncoder;
 use archivist_storage::catalog_inventory::{
-    INVENTORY_PIPELINE_ID, INVENTORY_PIPELINE_VERSION, inventory_build,
+    INVENTORY_PIPELINE_ID, INVENTORY_PIPELINE_VERSION, inventory_build, usage_totals,
 };
 use archivist_storage::catalog_rebuild::{RebuildPolicy, UsageProjection, rebuild_pass};
 use archivist_storage::error::{StorageError, StorageErrorKind};
 use archivist_storage::metadata::Observation;
+use archivist_storage::parquet::{Cell, Column, Table};
 use archivist_storage::scoped_write::{
     CatalogCheckpointKey, CatalogListPrefix, CatalogWriteStore, DerivedListPrefix,
     DerivedObjectKey, DerivedWriteStore,
@@ -135,9 +142,23 @@ fn render(document: &Object) -> Vec<u8> {
 /// witness the content-free proof searches for: distinctive text that
 /// exists only in the raw payload, never in any projection column.
 fn payload(note: &str, model: Option<&str>, usage: Option<&str>) -> Vec<u8> {
+    payload_with_tier(note, model, None, usage)
+}
+
+/// The same payload shape, with the service tier the source named —
+/// the second identity member the derivation carries beside the model.
+fn payload_with_tier(
+    note: &str,
+    model: Option<&str>,
+    tier: Option<&str>,
+    usage: Option<&str>,
+) -> Vec<u8> {
     let mut line = format!("{{\"note\":\"{note}\",\"role\":\"assistant\"");
     if let Some(model) = model {
         let _ = write!(line, ",\"model_id\":\"{model}\"");
+    }
+    if let Some(tier) = tier {
+        let _ = write!(line, ",\"service_tier\":\"{tier}\"");
     }
     if let Some(usage) = usage {
         let _ = write!(line, ",\"usage\":{usage}");
@@ -601,9 +622,15 @@ fn read_usage(adapter: &AdapterId, plaintext: &[u8]) -> Vec<MessageUsage> {
                 Some(Value::Text(model)) => Some(model.clone()),
                 _ => None,
             });
+        let tier = fields
+            .as_ref()
+            .and_then(|object| match object.get("service_tier") {
+                Some(Value::Text(tier)) => Some(tier.clone()),
+                _ => None,
+            });
         messages.push(MessageUsage {
             model_id: model,
-            service_tier: None,
+            service_tier: tier,
             region,
         });
     }
@@ -1132,4 +1159,234 @@ fn the_manifest_is_the_completeness_statement() {
         "no manifest landed"
     );
     assert!(!log.is_empty(), "the partitions it did land are recorded");
+}
+
+/// The inventory table's pinned v1 schema, rebuilt through the public
+/// constructors — what every decoded partition must vouch against.
+fn pinned_schema() -> Vec<Column> {
+    vec![
+        Column::required_text("tenant_id"),
+        Column::required_text("occurrence_id"),
+        Column::required_text("adapter_id"),
+        Column::required_text("adapter_projection_version"),
+        Column::required_text("usage_summary_digest"),
+        Column::required_text("harness_state"),
+        Column::optional_text("harness_unknown_reason"),
+        Column::optional_text("harness_model_id"),
+        Column::optional_text("harness_service_tier"),
+        Column::optional_int64("harness_assistant_message_count"),
+        Column::optional_int64("harness_input_tokens"),
+        Column::optional_int64("harness_output_tokens"),
+        Column::optional_int64("harness_cache_read_tokens"),
+        Column::optional_int64("harness_cache_creation_5m_tokens"),
+        Column::optional_int64("harness_cache_creation_1h_tokens"),
+        Column::optional_int64("harness_reasoning_tokens"),
+        Column::required_text("provider_state"),
+        Column::optional_int64("provider_input_tokens"),
+        Column::optional_int64("provider_output_tokens"),
+        Column::optional_int64("provider_total_tokens"),
+    ]
+}
+
+/// The query corpus's second measured usage shape: distinct counts, so
+/// each group's totals can only come from its own rows.
+const MEASURED_TIERED: &str = "{\"input_tokens\":30,\"output_tokens\":20,\
+     \"cache_read_input_tokens\":4,\"cache_creation\":{\"\
+     ephemeral_5m_input_tokens\":6,\"ephemeral_1h_input_tokens\":2},\
+     \"reasoning_tokens\":8}";
+
+/// Distinct transcript witnesses for the query corpus, in build order:
+/// two measured rows over one identity, one measured row over another,
+/// then the two sources that report no honest count.
+const QUERY_NOTES: [&str; 5] = [
+    "transcript-witness-query-a1",
+    "transcript-witness-query-a2",
+    "transcript-witness-query-b1",
+    "transcript-witness-query-absent",
+    "transcript-witness-query-malformed",
+];
+
+/// **The query:** a landed partition answers token totals by tenant,
+/// model, and service tier. The decode vouches the pinned schema, the
+/// file-level identity in the footer metadata, and every row's tenant;
+/// the totals cover exactly the measured rows; the rows whose source
+/// reported no usage are excluded from every total and disclosed —
+/// never counted as zero — and the provider-observed columns are never
+/// read, so no single column can sum the two denominators.
+#[test]
+#[allow(clippy::too_many_lines)] // one acceptance query, read top to bottom
+fn a_partition_answers_token_totals_by_tenant_model_and_tier() {
+    let tenant = tenant_a();
+    let corpus = [
+        fixture_from(
+            &tenant,
+            QUERY_NOTES[0],
+            &payload_with_tier(
+                QUERY_NOTES[0],
+                Some("model-alpha"),
+                Some("standard"),
+                Some(MEASURED),
+            ),
+        ),
+        fixture_from(
+            &tenant,
+            QUERY_NOTES[1],
+            &payload_with_tier(
+                QUERY_NOTES[1],
+                Some("model-alpha"),
+                Some("standard"),
+                Some(MEASURED),
+            ),
+        ),
+        fixture_from(
+            &tenant,
+            QUERY_NOTES[2],
+            &payload_with_tier(
+                QUERY_NOTES[2],
+                Some("model-beta"),
+                Some("priority"),
+                Some(MEASURED_TIERED),
+            ),
+        ),
+        fixture_from(
+            &tenant,
+            QUERY_NOTES[3],
+            &payload_with_tier(QUERY_NOTES[3], Some("model-alpha"), Some("standard"), None),
+        ),
+        fixture_from(
+            &tenant,
+            QUERY_NOTES[4],
+            &payload_with_tier(
+                QUERY_NOTES[4],
+                Some("model-beta"),
+                Some("priority"),
+                Some("{\"input_tokens\":1}"),
+            ),
+        ),
+    ];
+    let store = MockStore::with(&tenant, &corpus);
+    let derived = MockDerived::new();
+    let outcome = block_on(inventory_build(&store, &derived, &projection(), &tenant))
+        .expect("the build completes");
+    assert_eq!(outcome.occurrences_total(), 5);
+    assert!(
+        !outcome.partitions().is_empty(),
+        "the rows land in partitions"
+    );
+
+    let mut merged: std::collections::BTreeMap<(String, Option<String>, Option<String>), Vec<i64>> =
+        std::collections::BTreeMap::new();
+    let mut excluded_total: u64 = 0;
+    let mut decoded_rows = 0_usize;
+
+    for partition in outcome.partitions() {
+        let bytes = derived.bytes_at(&partition.key);
+        // The decode is the query's own first act: vouch the bytes,
+        // their schema, and the file-level identity before any row is
+        // trusted.
+        let file = Table::decode(&bytes).expect("the partition decodes");
+        assert_eq!(file.table().columns(), pinned_schema());
+        let metadata: HashMap<&str, &str> = file
+            .metadata()
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
+        assert_eq!(metadata.get("inventory_schema_version"), Some(&"1"));
+        assert_eq!(metadata.get("pipeline_id"), Some(&INVENTORY_PIPELINE_ID));
+        assert_eq!(
+            metadata.get("pipeline_version"),
+            Some(&INVENTORY_PIPELINE_VERSION)
+        );
+        assert_eq!(metadata.get("tenant_id"), Some(&TENANT_A));
+        assert_eq!(
+            metadata.get("source_inventory_digest"),
+            Some(&outcome.source_inventory_digest())
+        );
+        assert_eq!(metadata.get("usage_pipeline_id"), Some(&"usage"));
+        assert_eq!(
+            metadata.get("usage_projection_version"),
+            Some(&PROJECTION_VERSION)
+        );
+        assert_eq!(metadata.get("usage_summary_version"), Some(&"1"));
+
+        // Every row names the building tenant and keeps the two
+        // denominators apart: the provider state is the bounded unknown
+        // and no provider count exists anywhere in the file.
+        for row in file.table().rows() {
+            decoded_rows += 1;
+            assert_eq!(row[0], Cell::Text(TENANT_A.to_owned()));
+            assert_eq!(row[16], Cell::Text("unknown".to_owned()));
+            for provider_cell in &row[17..20] {
+                assert_eq!(
+                    *provider_cell,
+                    Cell::Null,
+                    "no provider count beside the unknown state"
+                );
+            }
+        }
+        // The inverse decode is exact: re-encoding the decoded table
+        // with its own metadata reproduces the landed bytes.
+        let metadata_pairs: Vec<(&str, &str)> = file
+            .metadata()
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
+        assert_eq!(file.table().encode(&metadata_pairs), bytes);
+
+        // The query itself: per-partition totals, merged across the
+        // partition set.
+        let totals = usage_totals(&bytes).expect("the partition answers the query");
+        excluded_total += totals.excluded_unknown_rows;
+        for group in totals.groups {
+            let entry = merged
+                .entry((group.tenant_id, group.model_id, group.service_tier))
+                .or_insert(vec![0; 8]);
+            for (summed, value) in entry.iter_mut().zip([
+                i64::try_from(group.rows).expect("group rows fit"),
+                group.assistant_message_count,
+                group.input_tokens,
+                group.output_tokens,
+                group.cache_read_tokens,
+                group.cache_creation_5m_tokens,
+                group.cache_creation_1h_tokens,
+                group.reasoning_tokens,
+            ]) {
+                *summed += value;
+            }
+        }
+    }
+    assert_eq!(
+        decoded_rows, 5,
+        "one decoded inventory row per occurrence, across all partitions"
+    );
+
+    let expected: std::collections::BTreeMap<(String, Option<String>, Option<String>), Vec<i64>> =
+        [
+            (
+                (
+                    TENANT_A.to_owned(),
+                    Some("model-alpha".to_owned()),
+                    Some("standard".to_owned()),
+                ),
+                vec![2, 2, 22, 14, 6, 10, 0, 0],
+            ),
+            (
+                (
+                    TENANT_A.to_owned(),
+                    Some("model-beta".to_owned()),
+                    Some("priority".to_owned()),
+                ),
+                vec![1, 1, 30, 20, 4, 6, 2, 8],
+            ),
+        ]
+        .into_iter()
+        .collect();
+    assert_eq!(
+        merged, expected,
+        "the totals cover exactly the measured rows, grouped by identity"
+    );
+    assert_eq!(
+        excluded_total, 2,
+        "the two no-usage sources are excluded and disclosed, never zeroed"
+    );
 }
