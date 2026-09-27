@@ -51,10 +51,11 @@ use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
+use archivist_adapter_sdk::CanonicalArtifact;
 use archivist_adapter_sdk::inference_observer::{LogicalInferenceOutcome, RecordingArtifactSink};
 use archivist_adapter_sdk::openai_compat::{OpenAiEndpoint, RetryPolicy, usage_from_bytes};
 use archivist_adapter_sdk::openai_http1::{
-    DEFAULT_MAX_BODY_BYTES, Http1Transport, SseDecoder, WireEndpoint, WireBody, WireRequest,
+    DEFAULT_MAX_BODY_BYTES, Http1Transport, SseDecoder, WireBody, WireEndpoint, WireRequest,
 };
 use archivist_adapter_sdk::openai_proxy::{CaptureProxy, ExchangeOutcome, ProxyConfig, Refusal};
 use archivist_protocol::inference_artifact::{BoundaryEvent, InferenceArtifact};
@@ -117,12 +118,20 @@ impl Prng {
         self.below(100) < percent
     }
 
+    /// The same draw as [`Prng::below`] in the `usize` domain the
+    /// harness indexes with. Every bound passed here is constructed far
+    /// below `usize::MAX`, so the widening round trip cannot truncate.
+    #[allow(clippy::cast_possible_truncation)]
+    fn below_usize(&mut self, bound: usize) -> usize {
+        self.below(bound as u64) as usize
+    }
+
     /// A hostile byte: mostly printable and framing-adjacent so the
     /// grammar under test is actually reached, occasionally arbitrary.
     fn hostile_byte(&mut self) -> u8 {
         const FLAVOR: &[u8] = br#"{}[]":,data \nret0123456789abcdef-x-"#;
         if self.chance(85) {
-            FLAVOR[self.below(FLAVOR.len() as u64) as usize]
+            FLAVOR[self.below_usize(FLAVOR.len())]
         } else {
             (self.next_u64() & 0xFF) as u8
         }
@@ -318,7 +327,9 @@ fn normalize_line_boundaries(event: &[u8]) -> Vec<u8> {
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.windows(needle.len()).any(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
 }
 
 // ---------------------------------------------------------------------------
@@ -505,7 +516,7 @@ fn assert_content_free(scene: &Scene, round: u64) {
 fn hostile_header(prng: &mut Prng, declared: &mut Option<usize>) -> String {
     match prng.below(12) {
         0 => {
-            *declared = Some(prng.below(48) as usize);
+            *declared = Some(prng.below_usize(48));
             format!("content-length: {}", declared.unwrap_or(0))
         }
         // A second, disagreeing length: the smuggling shape.
@@ -530,7 +541,7 @@ fn hostile_header(prng: &mut Prng, declared: &mut Option<usize>) -> String {
 }
 
 fn generate_hostile_head(prng: &mut Prng) -> Vec<u8> {
-    let method = ["POST", "GET", "post", "DELETE", "BOGUS", "POST"][prng.below(6) as usize];
+    let method = ["POST", "GET", "post", "DELETE", "BOGUS", "POST"][prng.below_usize(6)];
     let route = prng.chance(80);
     let mut declared: Option<usize> = None;
     let count = prng.below(4);
@@ -568,18 +579,18 @@ fn mutate_valid_request(prng: &mut Prng) -> Vec<u8> {
     for _ in 0..mutations {
         match prng.below(3) {
             0 => {
-                let at = prng.below(wire.len() as u64 + 1) as usize;
+                let at = prng.below_usize(wire.len() + 1);
                 if at < wire.len() {
                     wire[at] = prng.hostile_byte();
                 }
             }
             1 => {
-                let at = prng.below(wire.len() as u64 + 1) as usize;
+                let at = prng.below_usize(wire.len() + 1);
                 wire.truncate(at);
             }
             _ => {
-                let at = prng.below(wire.len() as u64 + 1) as usize;
-                let garbage_len = prng.below(9) as usize;
+                let at = prng.below_usize(wire.len() + 1);
+                let garbage_len = prng.below_usize(9);
                 let garbage = prng.bytes(garbage_len);
                 wire.splice(at..at, garbage);
             }
@@ -589,6 +600,7 @@ fn mutate_valid_request(prng: &mut Prng) -> Vec<u8> {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // one round walks every clause of the contract, read top to bottom
 fn hostile_caller_heads_terminate_bounded_and_content_free() {
     let mut prng = Prng::new(0xA23B_606A);
     for round in 0..96u64 {
@@ -631,6 +643,13 @@ fn hostile_caller_heads_terminate_bounded_and_content_free() {
                 );
             }
             ExchangeOutcome::Captured(capture) => {
+                const FORWARDED_HEADER_NAMES: [&str; 5] = [
+                    "host",
+                    "content-type",
+                    "authorization",
+                    "content-length",
+                    "connection",
+                ];
                 assert_eq!(capture.attempts, 1, "{}", context());
                 assert_eq!(
                     capture.close.outcome,
@@ -677,13 +696,6 @@ fn hostile_caller_heads_terminate_bounded_and_content_free() {
                     "forwarded request line is not the route's: {request_line:?}: {}",
                     context()
                 );
-                const FORWARDED_HEADER_NAMES: [&str; 5] = [
-                    "host",
-                    "content-type",
-                    "authorization",
-                    "content-length",
-                    "connection",
-                ];
                 let headers: Vec<(&str, &str)> = lines
                     .map(|line| {
                         let (name, value) = line
@@ -732,12 +744,16 @@ fn hostile_caller_heads_terminate_bounded_and_content_free() {
                 let head_end = wire
                     .windows(4)
                     .position(|window| window == b"\r\n\r\n")
-                    .map(|position| position + 4)
-                    .unwrap_or(wire.len());
+                    .map_or(wire.len(), |position| position + 4);
                 let head_text = String::from_utf8_lossy(&wire[..head_end]);
                 let declared = head_text
                     .split("\r\n")
-                    .find_map(|line| line.strip_prefix("content-length:")?.trim().parse::<usize>().ok())
+                    .find_map(|line| {
+                        line.strip_prefix("content-length:")?
+                            .trim()
+                            .parse::<usize>()
+                            .ok()
+                    })
                     .unwrap_or(0);
                 let expected_body = &wire[head_end..std::cmp::min(head_end + declared, wire.len())];
                 assert_eq!(
@@ -786,7 +802,8 @@ fn refusal_tokens_are_the_bounded_contract() {
 fn an_oversized_declared_body_is_refused_before_capture() {
     let (provider, rx) = spawn_provider(ok_json_response());
     let declared = DEFAULT_MAX_BODY_BYTES + 1;
-    let caller = format!("POST {ROUTE} HTTP/1.1\r\nhost: fuzz\r\ncontent-length: {declared}\r\n\r\n");
+    let caller =
+        format!("POST {ROUTE} HTTP/1.1\r\nhost: fuzz\r\ncontent-length: {declared}\r\n\r\n");
     let scene = run_scene(caller.as_bytes(), provider);
     assert_eq!(
         scene.outcome,
@@ -840,7 +857,7 @@ fn generated_json_body(prng: &mut Prng) -> Vec<u8> {
         1 => br#"{"id":"fuzz-2"}"#.to_vec(),
         2 => Vec::new(),
         _ => {
-            let body_len = prng.below(40) as usize;
+            let body_len = prng.below_usize(40);
             let mut body = prng.bytes(body_len);
             body.extend_from_slice(DENIED_MARKER.as_bytes());
             body
@@ -874,7 +891,7 @@ fn generated_sse_body(prng: &mut Prng) -> Vec<u8> {
                 0 => body.extend_from_slice(br#"{"choices":[{"delta":{"content":"a"}}]}"#),
                 1 => body.extend_from_slice(b"[DONE]"),
                 2 => {
-                    let line_len = prng.below(24) as usize;
+                    let line_len = prng.below_usize(24);
                     let mut line = prng.bytes(line_len);
                     line.extend_from_slice(DENIED_MARKER.as_bytes());
                     // Interior \r padding: the hostile shape the SSE
@@ -884,8 +901,9 @@ fn generated_sse_body(prng: &mut Prng) -> Vec<u8> {
                     }
                     body.extend_from_slice(&line);
                 }
-                3 => body
-                    .extend_from_slice(br#"{"usage":{"prompt_tokens":3,"completion_tokens":4,"total_tokens":7}}"#),
+                3 => body.extend_from_slice(
+                    br#"{"usage":{"prompt_tokens":3,"completion_tokens":4,"total_tokens":7}}"#,
+                ),
                 // An empty data value.
                 4 => {}
                 _ => body.extend_from_slice(b"tail-bytes"),
@@ -914,12 +932,12 @@ fn chunk_encode(prng: &mut Prng, raw: &[u8], truncate: bool) -> Vec<u8> {
     let mut wire = Vec::new();
     let mut at = 0usize;
     while at < raw.len() {
-        let take = 1 + prng.below((raw.len() - at).max(1) as u64) as usize;
+        let take = 1 + prng.below_usize((raw.len() - at).max(1));
         let take = take.min(raw.len() - at);
         let size_line = if prng.chance(30) {
-            format!("{:X};ext=1\r\n", take)
+            format!("{take:X};ext=1\r\n")
         } else {
-            format!("{:x}\r\n", take)
+            format!("{take:x}\r\n")
         };
         wire.extend_from_slice(size_line.as_bytes());
         wire.extend_from_slice(&raw[at..at + take]);
@@ -938,7 +956,7 @@ fn chunk_encode(prng: &mut Prng, raw: &[u8], truncate: bool) -> Vec<u8> {
 /// bead names: content-length, chunked, and EOF framing; truncated
 /// chunking; streaming and buffered bodies.
 fn generate_provider_response(prng: &mut Prng) -> GeneratedResponse {
-    let status = [200, 200, 200, 201, 400, 404, 429, 500, 503][prng.below(9) as usize];
+    let status = [200, 200, 200, 201, 400, 404, 429, 500, 503][prng.below_usize(9)];
     let streaming = prng.chance(55);
     let truncated_frame = prng.chance(30);
     let framing = if prng.chance(55) {
@@ -1029,6 +1047,7 @@ fn generate_provider_response(prng: &mut Prng) -> GeneratedResponse {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // one round walks every clause of the contract, read top to bottom
 fn hostile_provider_responses_relay_faithfully_or_truncate_honestly() {
     let mut prng = Prng::new(0x0158_C25F);
     for round in 0..64u64 {
@@ -1097,25 +1116,31 @@ fn hostile_provider_responses_relay_faithfully_or_truncate_honestly() {
             // The framing died mid-chunk after every real chunk was
             // delivered: the report names the below-boundary class, and
             // nothing clean is fabricated.
-            let failure = capture
-                .final_failure
-                .as_ref()
-                .unwrap_or_else(|| panic!("a truncated body must fail below the boundary: {}", context()));
-            if response.events.is_some() {
+            let failure = capture.final_failure.as_ref().unwrap_or_else(|| {
+                panic!(
+                    "a truncated body must fail below the boundary: {}",
+                    context()
+                )
+            });
+            if let Some(events) = &response.events {
                 assert_eq!(
                     failure.class,
                     TransportErrorClass::StreamInterrupted,
                     "{}",
                     context()
                 );
-                let events = response.events.as_ref().expect("checked above");
                 let expected = (
                     expected_stream_head(response.status, &response.headers),
                     expected_stream_body(events, false),
                 );
                 assert_eq!(
                     answer,
-                    expected.0.iter().copied().chain(expected.1).collect::<Vec<u8>>(),
+                    expected
+                        .0
+                        .iter()
+                        .copied()
+                        .chain(expected.1)
+                        .collect::<Vec<u8>>(),
                     "the truncated relay is not exactly head-plus-relayed-events: {}",
                     context()
                 );
@@ -1185,7 +1210,10 @@ fn hostile_provider_responses_relay_faithfully_or_truncate_honestly() {
                 );
             }
             (Some(_), false) | (None, true) => {
-                panic!("relay mode disagrees with the response framing: {}", context())
+                panic!(
+                    "relay mode disagrees with the response framing: {}",
+                    context()
+                )
             }
         }
 
@@ -1194,12 +1222,15 @@ fn hostile_provider_responses_relay_faithfully_or_truncate_honestly() {
         // when streamed — with the extracted counters.
         let expected_usage = match &response.events {
             None => usage_from_bytes(decoded),
-            Some(events) => events.iter().rev().find_map(|event| usage_from_bytes(event)),
+            Some(events) => events
+                .iter()
+                .rev()
+                .find_map(|event| usage_from_bytes(event)),
         };
         let usage_artifacts: Vec<&InferenceArtifact> = sink
             .artifacts()
             .iter()
-            .map(|recorded| recorded.artifact())
+            .map(CanonicalArtifact::artifact)
             .filter(|artifact| matches!(artifact.event, BoundaryEvent::Usage { .. }))
             .collect();
         match expected_usage {
@@ -1237,8 +1268,7 @@ fn hostile_provider_responses_relay_faithfully_or_truncate_honestly() {
                             .artifact()
                             .payload
                             .as_ref()
-                            .map(|payload| payload.payload_size)
-                            .unwrap_or(0);
+                            .map_or(0, |payload| payload.payload_size);
                         Some((event_ordinal, size))
                     }
                     _ => None,
@@ -1313,31 +1343,35 @@ fn sse_decoder_decodes_chunk_boundary_independently() {
     for round in 0..512u64 {
         let raw = generated_sse_body(&mut prng);
         // Occasionally: fully arbitrary bytes, not SSE-shaped at all.
-        let raw = if round % 5 == 4 { prng.bytes(raw.len()) } else { raw };
+        let raw = if round % 5 == 4 {
+            prng.bytes(raw.len())
+        } else {
+            raw
+        };
 
         let mut decoder = SseDecoder::new();
-        let mut decoded: Vec<Vec<u8>> = Vec::new();
+        let mut assembled: Vec<Vec<u8>> = Vec::new();
         let mut at = 0usize;
         while at < raw.len() {
-            let take = 1 + prng.below((raw.len() - at).max(1) as u64) as usize;
+            let take = 1 + prng.below_usize((raw.len() - at).max(1));
             let take = take.min(raw.len() - at);
             decoder.feed(&raw[at..at + take]);
             at += take;
             while let Some(event) = decoder.take_complete_event() {
-                decoded.push(event);
+                assembled.push(event);
             }
         }
         while let Some(event) = decoder.take_complete_event() {
-            decoded.push(event);
+            assembled.push(event);
         }
         if let Some(event) = decoder.finish() {
-            decoded.push(event);
+            assembled.push(event);
         }
         // Idempotent ends: nothing remains after the flush.
         assert_eq!(decoder.finish(), None, "round {round}");
         assert_eq!(decoder.take_complete_event(), None, "round {round}");
         assert_eq!(
-            decoded,
+            assembled,
             reference_sse_parse(&raw),
             "chunked decode diverged from the reference parse, round {round}",
         );
@@ -1383,7 +1417,7 @@ fn transport_stream_decode_matches_reference_under_hostile_chunking() {
                         // after some events; either way it surfaces.
                         loop {
                             match events.next_event() {
-                                Ok(Some(_)) => continue,
+                                Ok(Some(_)) => {}
                                 Ok(None) => panic!(
                                     "a truncated chunked body decoded as a clean end: {}",
                                     context()
@@ -1393,7 +1427,10 @@ fn transport_stream_decode_matches_reference_under_hostile_chunking() {
                         }
                     }
                     WireBody::Full(_) => {
-                        panic!("a text/event-stream response decoded as buffered: {}", context())
+                        panic!(
+                            "a text/event-stream response decoded as buffered: {}",
+                            context()
+                        )
                     }
                 },
             }
@@ -1401,7 +1438,10 @@ fn transport_stream_decode_matches_reference_under_hostile_chunking() {
         }
         let response = decoded.expect("a complete body decodes");
         let WireBody::Stream(mut events) = response.body else {
-            panic!("a text/event-stream response decoded as buffered: {}", context())
+            panic!(
+                "a text/event-stream response decoded as buffered: {}",
+                context()
+            )
         };
         let mut decoded_events = Vec::new();
         while let Some(event) = events.next_event().expect("stream decodes") {
@@ -1489,8 +1529,15 @@ fn reduction_carriage_return_padded_multi_line_event_relays_to_the_same_decode()
     };
     assert!(capture.streamed);
     assert!(capture.final_failure.is_none());
-    let head = expected_stream_head(200, &[("content-type".to_owned(), "text/event-stream".to_owned())]);
-    assert!(scene.answer.starts_with(&head), "answer: {:?}", scene.answer);
+    let head = expected_stream_head(
+        200,
+        &[("content-type".to_owned(), "text/event-stream".to_owned())],
+    );
+    assert!(
+        scene.answer.starts_with(&head),
+        "answer: {:?}",
+        scene.answer
+    );
     let (frames, completed) = reference_chunk_parse(&scene.answer[head.len()..]);
     assert!(completed, "a drained stream owes its terminal chunk");
     assert_eq!(frames.len(), boundary_events.len());
