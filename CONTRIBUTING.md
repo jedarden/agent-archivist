@@ -65,6 +65,7 @@ python3 tools/check-cli.py --self-test             # CLI command registry gate
 python3 tools/check-wire-schemas.py --self-test    # wire-schema coherence gate
 python3 tools/check-release-container.py --self-test  # release container baseline gate
 python3 tools/check-control-schemas.py --self-test  # control trust schema gate
+python3 tools/check-s3-lifecycle.py --self-test     # S3 noncurrent-version lifecycle gate
 python3 tools/check-threat-model.py --self-test     # threat-model acceptance gate
 python3 tools/fixturegen.py --verify               # synthetic fixtures: byte-exact
                                                    # regeneration + content scan
@@ -87,7 +88,8 @@ The script's lanes keep per-change gating cheap:
   metrics registry gate, config-key registry gate, CLI command registry
   gate, wire-schema
   coherence gate, release container baseline gate, control trust schema
-  gate, threat-model acceptance gate, synthetic-fixture
+  gate, S3 noncurrent-version lifecycle gate, threat-model acceptance
+  gate, synthetic-fixture
   regeneration and content scan, usage-summary-corpus
   regeneration and content scan, the standalone contract verifier and its
   cross-implementation comparison against the Rust implementation (the plan

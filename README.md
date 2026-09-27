@@ -110,6 +110,16 @@ committed.
   the plan's object-key table and timing sentences one contract; the
   per-record contracts live in
   [control trust schemas](docs/notes/control-trust-schemas.md).
+- [Noncurrent-version lifecycle](docs/notes/s3-noncurrent-lifecycle.md)
+  defines the retention and cleanup matrix for the noncurrent physical
+  versions deterministic overwrite leaves behind on versioned S3
+  backends — noncurrent-only expiration for the redundant families, the
+  control current-pointer families' history retained, and the current
+  version of every source-of-truth object structurally out of every
+  rule's reach — backed by the registry in
+  `tools/s3-lifecycle-rules.toml` and a gate that keeps the matrix, the
+  control-records registry, the audit's guidance constant, and the
+  reference profile's owned provisioning rule one contract.
 - [Release container conventions](docs/notes/release-container.md) define the
   `containers/agent-archivist/` baseline — the strict-SemVer `VERSION`
   record kept equal to the workspace version and moved only in the same

@@ -182,6 +182,10 @@ not "known broken".
   roles, encryption, lifecycle cleanup, backup or versioning, restore
   identity, deduplication semantics — is the deployment-profiles
   documentation's scope; a community qualification never substitutes for
-  it (Section 4).
+  it (Section 4). The lifecycle-cleanup half of that scope has its own
+  note: the [noncurrent-version lifecycle](s3-noncurrent-lifecycle.md)
+  defines the per-prefix, per-profile retention matrix the target
+  profiles' noncurrent-version expiration follows, backed by
+  `tools/s3-lifecycle-rules.toml` and its fast-lane gate.
 - The published compatibility matrix (plan Phase 11) cites this registry;
   [SUPPORT.md](../../SUPPORT.md) cites both.

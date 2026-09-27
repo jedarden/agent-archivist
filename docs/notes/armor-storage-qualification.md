@@ -170,7 +170,12 @@ the physical versions and the incomplete sessions are:
 1. **Expiration of noncurrent versions** (STO-009; Section 4). Scope it
    to noncurrent copies only — the current version at a derived key is
    the archive's content address; expiring current objects destroys the
-   archive while every logical claim still holds.
+   archive while every logical claim still holds. The per-prefix
+   baselines the rule takes — and the exception that the control
+   current-pointer families' noncurrent copies are the previous signed
+   trust epoch's only copy and are retained, not expired — are the
+   [noncurrent-version lifecycle note](s3-noncurrent-lifecycle.md)'s
+   retention matrix, row for row.
 2. **A 24-hour incomplete-multipart abort rule** (the B2 qualification's
    Section 6, unchanged here). A commit that dies mid-session orphans the
    upload at the backend; the rule is the designed backstop that reaps

@@ -24,6 +24,15 @@
 #     removed; the server rejects such rules with InvalidArgument). Older
 #     community builds instead take the bucket ILM rule; docs/notes/
 #     minio-reference-profile.md records both models and the evidence.
+#   - the raw bucket's noncurrent-version lifecycle rule: versioning
+#     enabled plus deterministic overwrite means every replay lands a
+#     noncurrent copy behind the current one (requirements STO-006 and
+#     STO-009), so the rule expires noncurrent versions under the tenant
+#     raw prefix after the retention matrix's baseline — never the
+#     current version, which is the archive's content address. The days
+#     are the (minio, raw) cell of docs/notes/s3-noncurrent-lifecycle.md,
+#     pinned identically in tools/s3-lifecycle-rules.toml; the
+#     check-s3-lifecycle.py gate keeps script and registry agreeing.
 #   - optionally (--with-raw-reader, --with-offline-restore) the two
 #     optional roles: the STO-007 preflight raw reader and the offline
 #     restore identity. Both stay out of an ingest replica's configuration;
@@ -103,6 +112,15 @@ command -v python3 >/dev/null 2>&1 || { echo "python3 must be on PATH" >&2; exit
 
 RAW_PREFIX="tenants/${TENANT}/v1/raw/"
 CONTROL_PREFIX="tenants/${TENANT}/v1/control/"
+# The noncurrent-version baseline the reference profile owns: the (minio,
+# raw) cell of docs/notes/s3-noncurrent-lifecycle.md's retention matrix.
+# tools/s3-lifecycle-rules.toml pins the same number and
+# tools/check-s3-lifecycle.py fails when this file and the registry drift
+# apart. The rule is noncurrent-only by construction (the
+# --noncurrent-expire-days action cannot touch a current version), so the
+# current version at a derived key — the archive's content address — is
+# out of its reach.
+RAW_NONCURRENT_EXPIRE_DAYS=30
 
 # The canonical grant sets, mirrored by docs/notes/minio-reference-profile.md.
 # Every statement is allow-only; no identity holds s3:DeleteObject anywhere,
@@ -256,6 +274,55 @@ mc_out() {
   mc --quiet "$@" 2>&1
 }
 
+# Read the raw bucket's noncurrent-version rule state: one ILM listing,
+# parsed for the rule scoped to the tenant raw prefix. Prints exactly one
+# word: "configured" when such a rule expires noncurrent versions at
+# exactly RAW_NONCURRENT_EXPIRE_DAYS, "absent" when no rule carries the
+# prefix, "drift <days>" when a rule carries it with different days (an
+# operator's explicit configuration this script never silently rewrites),
+# "unparseable" when a prefixed rule carries no readable noncurrent
+# expiry. Callers must have proven the listing works before trusting any
+# of these words.
+ilm_rule_state() {
+  mc_out ilm rule ls --json "${ALIAS}/${RAW_BUCKET}" | python3 -c '
+import json, sys
+
+wanted_prefix, wanted_days = sys.argv[1], int(sys.argv[2])
+
+def walk(node):
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from walk(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from walk(item)
+
+state = "absent"
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    nodes = list(walk(json.loads(line)))
+    if not any(node.get("Prefix") == wanted_prefix for node in nodes):
+        continue
+    days = None
+    for node in nodes:
+        expiry = node.get("NoncurrentVersionExpiration")
+        if isinstance(expiry, dict) and "NoncurrentDays" in expiry:
+            days = int(expiry["NoncurrentDays"])
+            break
+    if days == wanted_days:
+        state = "configured"
+    elif days is None:
+        state = "unparseable"
+    else:
+        state = f"drift {days}"
+    break
+print(state)
+' "${RAW_PREFIX}" "${RAW_NONCURRENT_EXPIRE_DAYS}"
+}
+
 # The endpoint behind the admin alias, for the throwaway per-identity probe
 # aliases (their credentials live in their own scratch mc config, never in
 # the operator's). Only the URL leaves this helper.
@@ -345,6 +412,37 @@ provision() {
     echo "incomplete-multipart cleanup: stale_uploads_expiry already 24h"
   fi
 
+  # The noncurrent-version lifecycle rule (the retention matrix's
+  # (minio, raw) cell): noncurrent-only expiration under the tenant raw
+  # prefix. The listing is proven to work before its parse is trusted;
+  # a prefixed rule at different days is an operator's explicit
+  # configuration and fails the run rather than being rewritten.
+  if ! mc_out ilm rule ls --json "${ALIAS}/${RAW_BUCKET}" >/dev/null 2>&1; then
+    echo "noncurrent-version lifecycle: cannot list the ILM rules on ${RAW_BUCKET}" >&2
+    exit 1
+  fi
+  local rule_state
+  rule_state="$(ilm_rule_state)"
+  case "$rule_state" in
+    configured)
+      echo "noncurrent-version lifecycle: rule already expires noncurrent versions after ${RAW_NONCURRENT_EXPIRE_DAYS}d under the tenant raw prefix"
+      ;;
+    absent)
+      mc_out ilm rule add --prefix "${RAW_PREFIX}" \
+        --noncurrent-expire-days "${RAW_NONCURRENT_EXPIRE_DAYS}" \
+        "${ALIAS}/${RAW_BUCKET}" >/dev/null
+      echo "noncurrent-version lifecycle: rule added (noncurrent-only, ${RAW_NONCURRENT_EXPIRE_DAYS}d, prefix ${RAW_PREFIX})"
+      ;;
+    "drift "*)
+      echo "noncurrent-version lifecycle: a rule already carries the tenant raw prefix at ${rule_state#drift }d — an operator configuration this script does not silently rewrite; reconcile by hand" >&2
+      exit 1
+      ;;
+    *)
+      echo "noncurrent-version lifecycle: no readable noncurrent-expiry rule under the tenant raw prefix (state: ${rule_state})" >&2
+      exit 1
+      ;;
+  esac
+
   local role
   for role in raw-writer control-reader; do
     ensure_credential_file "$role"
@@ -418,6 +516,25 @@ verify() {
   else
     echo "  FAIL versioning is not enabled on ${RAW_BUCKET}"
     FAILURES=$((FAILURES + 1))
+  fi
+
+  # 2b. The noncurrent-version lifecycle rule (the retention matrix's
+  #     (minio, raw) cell): present, noncurrent-only, exact days, scoped
+  #     to the tenant raw prefix. The current version at a derived key is
+  #     the archive's content address; the rule this check reads back is
+  #     an --noncurrent-expire-days rule, which cannot touch it.
+  if ! mc_out ilm rule ls --json "${ALIAS}/${RAW_BUCKET}" >/dev/null 2>&1; then
+    echo "  FAIL cannot list the ILM rules on ${RAW_BUCKET}"
+    FAILURES=$((FAILURES + 1))
+  else
+    local rule_state
+    rule_state="$(ilm_rule_state)"
+    if [ "$rule_state" = "configured" ]; then
+      echo "  ok   noncurrent-version rule: noncurrent-only, ${RAW_NONCURRENT_EXPIRE_DAYS}d, scoped to the tenant raw prefix"
+    else
+      echo "  FAIL noncurrent-version rule state: ${rule_state:-unknown} (want configured: noncurrent-only, ${RAW_NONCURRENT_EXPIRE_DAYS}d, tenant raw prefix)"
+      FAILURES=$((FAILURES + 1))
+    fi
   fi
 
   # 3. The required identities exist and carry their policy.

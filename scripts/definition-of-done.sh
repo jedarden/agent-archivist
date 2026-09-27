@@ -13,6 +13,7 @@
 #     release container baseline gate, release SBOM determinism gate,
 #     storage-profile registry gate,
 #     adapter compatibility-matrix gate,
+#     S3 noncurrent-version lifecycle gate,
 #     control trust schema gate, threat-model acceptance gate,
 #     synthetic-fixture, conformance-corpus, compat-corpus,
 #     inference-corpus, usage-summary-corpus, and control-corpus
@@ -260,6 +261,16 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # registry, note, and this gate in the same commit. `--self-test`
   # proves the rejection paths.
   run_check "armor identities"  python3 tools/check-armor-identities.py --self-test
+  # S3 noncurrent-version lifecycle (docs/notes/s3-noncurrent-lifecycle.md
+  # and tools/s3-lifecycle-rules.toml): the per-prefix, per-profile
+  # retention matrix for the noncurrent versions deterministic overwrite
+  # leaves behind — every rule aimed at a source-of-truth family is
+  # noncurrent-only, the control current-pointer families' history is
+  # retained, the control families' split matches the control-records
+  # registry's write classes, and the note, registry, audit guidance
+  # constant, and the MinIO reference script's owned rule cannot drift
+  # apart; `--self-test` proves the rejection paths.
+  run_check "s3 lifecycle rules"  python3 tools/check-s3-lifecycle.py --self-test
   # Control trust family (docs/notes/control-trust.md and
   # docs/notes/control-trust-schemas.md): the archivist.control/v1
   # envelope registry, flat wrapper composition, closed shapes, the

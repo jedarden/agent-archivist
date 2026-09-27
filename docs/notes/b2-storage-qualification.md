@@ -94,7 +94,13 @@ versions**, subject to retention policy. Without it the duplicate traffic
 the idempotency contract invites becomes unbounded storage growth; with
 it, the noncurrent copies age out while the current version — always the
 same canonical bytes — is untouched. This disclosure is normative for B2
-operators, not advisory.
+operators, not advisory. The per-prefix, per-profile retention and
+cleanup configuration that action takes — including the
+prefix-scoped noncurrent-only baselines this profile's deployment
+configures and the rule that the control current-pointer families'
+history is never a lifecycle target — is the
+[noncurrent-version lifecycle note](s3-noncurrent-lifecycle.md)'s
+retention matrix.
 
 ## 5. Prefix limitations
 

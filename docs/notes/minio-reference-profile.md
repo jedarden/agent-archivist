@@ -131,6 +131,41 @@ Pre-2025 community builds that still accept the ILM rule should prefer it
 (bucket-scoped beats server-global); the script's pin and the note's
 evidence describe the 2025+ behavior.
 
+### 4.1 The noncurrent-version lifecycle rule (added 2026-09-27, bead `aa-db8330e5`)
+
+Versioning enabled plus deterministic overwrite (STO-006) means every
+replayed duplicate and equivalent overwrite lands a noncurrent copy
+behind the current one, and requirements STO-009 makes expiring those
+copies a deployment action. The reference profile is the one deployment
+whose lifecycle configuration the project itself owns, so `provision`
+now applies the rule and `verify` reads it back:
+
+- **Scope:** the tenant raw prefix (`tenants/<tenant>/v1/raw/`) on the
+  raw bucket — the only versioned bucket in the reference shape, and the
+  only family the shape's overwrite race touches. The control bucket
+  carries no versioning (Section 2), so it has no noncurrent versions to
+  govern, and the verified reference shape has no catalog/derived
+  namespaces yet.
+- **Action:** `--noncurrent-expire-days 30` — noncurrent versions only,
+  by the action's own semantics; the current version at a derived key is
+  the archive's content address and is out of the rule's reach. The
+  30-day baseline is the (minio, raw) cell of the
+  [noncurrent-version retention matrix](s3-noncurrent-lifecycle.md),
+  pinned identically in `tools/s3-lifecycle-rules.toml`;
+  `tools/check-s3-lifecycle.py` fails the fast lane if this script and
+  the registry drift apart.
+- **Convergence and refusal:** `provision` is idempotent — an already
+  configured rule is left in place. A rule already scoped to the tenant
+  raw prefix at *different* days is an operator's explicit configuration
+  and fails the run rather than being silently rewritten, the same
+  never-rotate philosophy the credentials follow.
+- **Evidence status:** the Section 5 matrix above is the 2026-09-21 run's
+  recorded 20-check evidence and is unchanged by this addition; the new
+  verify line (`noncurrent-version rule: noncurrent-only, 30d, scoped to
+  the tenant raw prefix`) joins it at the next live run of the script,
+  which is also where the 2025-era server's acceptance of the
+  `--noncurrent-expire-days` action is confirmed against this build pin.
+
 ## 5. The verification run
 
 `provision` configures the instance; `verify` re-checks every claim live
