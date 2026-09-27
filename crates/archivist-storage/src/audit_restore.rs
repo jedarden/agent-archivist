@@ -48,15 +48,23 @@ pub const MAX_FREEZE_PAGES: usize = 1_048_576;
 ///
 /// Scopes are closed rather than arbitrary prefixes so an implementation's
 /// provisioning can be checked against a value the contract understands:
-/// catalog rebuild and reference scans consume the raw prefix, and the
-/// `inventory-copy-v1` backup profile freezes raw and control objects
-/// (plan Section 7.10).
+/// catalog rebuild and reference scans consume the raw prefix, the
+/// `inventory-copy-v1` backup profile freezes raw and control objects, and
+/// the offline identity also enumerates the two reserved derived namespaces
+/// — the catalog checkpoints a rebuild resumes from must be recoverable
+/// through the same identity that reads raw objects back, and the
+/// deterministic re-puts of the derived writers accumulate noncurrent
+/// versions a versions audit has to see (plan Section 7.5, Section 7.10).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InventoryScope {
     /// `tenants/<tenant>/v1/raw/` — blobs, occurrences, attestations.
     TenantRaw(TenantId),
     /// `tenants/<tenant>/v1/control/` — the signed control records.
     TenantControl(TenantId),
+    /// `tenants/<tenant>/v1/catalog/` — the rebuild's checkpoints.
+    TenantCatalog(TenantId),
+    /// `tenants/<tenant>/v1/derived/` — the derived projections.
+    TenantDerived(TenantId),
 }
 
 impl InventoryScope {
@@ -67,6 +75,8 @@ impl InventoryScope {
         match self {
             Self::TenantRaw(tenant) => format!("tenants/{tenant}/v1/raw/"),
             Self::TenantControl(tenant) => format!("tenants/{tenant}/v1/control/"),
+            Self::TenantCatalog(tenant) => format!("tenants/{tenant}/v1/catalog/"),
+            Self::TenantDerived(tenant) => format!("tenants/{tenant}/v1/derived/"),
         }
     }
 }
@@ -618,6 +628,67 @@ mod tests {
         assert_eq!(scope().prefix(), format!("tenants/{TENANT}/v1/raw/"));
         let control = InventoryScope::TenantControl(TENANT.parse().unwrap());
         assert_eq!(control.prefix(), format!("tenants/{TENANT}/v1/control/"));
+        let catalog = InventoryScope::TenantCatalog(TENANT.parse().unwrap());
+        assert_eq!(catalog.prefix(), format!("tenants/{TENANT}/v1/catalog/"));
+        let derived = InventoryScope::TenantDerived(TENANT.parse().unwrap());
+        assert_eq!(derived.prefix(), format!("tenants/{TENANT}/v1/derived/"));
+    }
+
+    /// The freeze's scope-membership check keys off the scope's own
+    /// namespace: a listing that leaked from one reserved namespace into
+    /// another's freeze fails closed, for the derived namespaces exactly
+    /// as it already did for raw and control.
+    #[test]
+    fn derived_namespace_freezes_reject_foreign_namespace_keys() {
+        let tenant: archivist_protocol::vocabulary::TenantId = TENANT.parse().unwrap();
+        for (scope, foreign_key) in [
+            (
+                InventoryScope::TenantCatalog(tenant.clone()),
+                key_in_scope("blobs/zstd-v1/sha256/01/x.zst"),
+            ),
+            (
+                InventoryScope::TenantDerived(tenant.clone()),
+                format!("tenants/{TENANT}/v1/control/clients/c.json"),
+            ),
+            (
+                InventoryScope::TenantRaw(tenant.clone()),
+                format!("tenants/{TENANT}/v1/catalog/checkpoints/x.json"),
+            ),
+            (
+                InventoryScope::TenantControl(tenant),
+                format!("tenants/{TENANT}/v1/derived/usage/1/usage-summaries/ab/x.json"),
+            ),
+        ] {
+            let page = Ok(InventoryPage::new(vec![entry(&foreign_key, 5)], None));
+            let error = FrozenInventory::from_pages(&scope, vec![page]).unwrap_err();
+            assert_eq!(
+                error.kind(),
+                StorageErrorKind::InventoryFault,
+                "{foreign_key} must not freeze into {scope:?}"
+            );
+        }
+
+        // And each reserved namespace's own keys do freeze.
+        let checkpoint = entry(
+            &format!("tenants/{TENANT}/v1/catalog/checkpoints/x.json"),
+            5,
+        );
+        let catalog = FrozenInventory::from_pages(
+            &InventoryScope::TenantCatalog(TENANT.parse().unwrap()),
+            vec![Ok(InventoryPage::new(vec![checkpoint], None))],
+        )
+        .unwrap();
+        assert_eq!(catalog.len(), 1);
+        let projection = entry(
+            &format!("tenants/{TENANT}/v1/derived/usage/1/usage-summaries/ab/x.json"),
+            5,
+        );
+        let derived = FrozenInventory::from_pages(
+            &InventoryScope::TenantDerived(TENANT.parse().unwrap()),
+            vec![Ok(InventoryPage::new(vec![projection], None))],
+        )
+        .unwrap();
+        assert_eq!(derived.len(), 1);
     }
 
     #[test]

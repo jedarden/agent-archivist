@@ -663,7 +663,10 @@ where
     }
     match inventory.scope() {
         InventoryScope::TenantRaw(tenant) if tenant == grant.tenant_id() => {}
-        InventoryScope::TenantRaw(_) | InventoryScope::TenantControl(_) => {
+        InventoryScope::TenantRaw(_)
+        | InventoryScope::TenantControl(_)
+        | InventoryScope::TenantCatalog(_)
+        | InventoryScope::TenantDerived(_) => {
             return Err(ExportError::ScopeViolation);
         }
     }

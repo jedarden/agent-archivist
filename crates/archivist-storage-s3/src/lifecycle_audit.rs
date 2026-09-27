@@ -188,10 +188,18 @@ impl<B> S3LifecycleAuditStore<B> {
     }
 
     /// Whether `scope` names a prefix this identity audits: the scope's
-    /// tenant is this store's one tenant, and nothing else.
+    /// tenant is this store's one tenant, and nothing else. All four
+    /// reserved namespaces are auditable — the offline-restore identity's
+    /// list grants cover raw, control, catalog, and derived alike, and
+    /// the derived writers' deterministic re-puts accumulate noncurrent
+    /// versions under catalog and derived exactly as the ingest writes do
+    /// under raw.
     fn check_scope(&self, scope: &InventoryScope) -> Result<(), StorageError> {
         let scope_tenant = match scope {
-            InventoryScope::TenantRaw(tenant) | InventoryScope::TenantControl(tenant) => tenant,
+            InventoryScope::TenantRaw(tenant)
+            | InventoryScope::TenantControl(tenant)
+            | InventoryScope::TenantCatalog(tenant)
+            | InventoryScope::TenantDerived(tenant) => tenant,
         };
         if scope_tenant != &self.tenant {
             return Err(StorageError::new(
@@ -335,6 +343,22 @@ mod tests {
         InventoryKey::parse(&format!("{RAW_PREFIX}{tail}")).unwrap()
     }
 
+    /// One versioned record under an explicit tenant namespace prefix,
+    /// for the reserved-namespace tests.
+    fn keyed_entry(key_text: &str, size: u64, version: &str, latest: bool) -> VersionedEntry {
+        VersionedEntry::new(
+            InventoryKey::parse(key_text).unwrap(),
+            size,
+            StorageVersionId::parse(version).unwrap(),
+            latest,
+            Observation::new(
+                Some(ObjectTag::parse("etag-1").unwrap()),
+                None,
+                observed_at(),
+            ),
+        )
+    }
+
     fn entry(tail: &str, size: u64, version: &str, latest: bool) -> VersionedEntry {
         VersionedEntry::new(
             key(tail),
@@ -350,10 +374,10 @@ mod tests {
     }
 
     /// The mock mirrors the restore identity's provisioning exactly — a
-    /// literal string-prefix grant per scope arm (this tenant's raw and
-    /// control prefixes), every other prefix refused — and paginates the
-    /// records it holds two per page, so the store's freeze is proven to
-    /// drive a real paginator.
+    /// literal string-prefix grant per scope arm (this tenant's four
+    /// reserved prefixes: raw, control, catalog, derived), every other
+    /// prefix refused — and paginates the records it holds two per page,
+    /// so the store's freeze is proven to drive a real paginator.
     #[derive(Debug, Default)]
     struct MockBackend {
         records: Vec<VersionedEntry>,
@@ -381,9 +405,10 @@ mod tests {
             after: Option<&ContinuationToken>,
         ) -> Result<VersionedPage, StorageError> {
             let granted = match scope {
-                InventoryScope::TenantRaw(tenant) | InventoryScope::TenantControl(tenant) => {
-                    tenant.as_str() == TENANT
-                }
+                InventoryScope::TenantRaw(tenant)
+                | InventoryScope::TenantControl(tenant)
+                | InventoryScope::TenantCatalog(tenant)
+                | InventoryScope::TenantDerived(tenant) => tenant.as_str() == TENANT,
             };
             if !granted {
                 return Err(StorageError::of_kind(StorageErrorKind::ScopeViolation));
@@ -500,6 +525,69 @@ mod tests {
             .expect_err("another tenant's prefix is outside this identity");
         assert_eq!(error.kind(), StorageErrorKind::ScopeViolation);
         assert_eq!(error.detail(), DETAIL_SCOPE);
+    }
+
+    /// Every reserved namespace is auditable — the derived namespaces
+    /// included, because the writers' deterministic re-puts accumulate
+    /// noncurrent versions under catalog and derived exactly as the
+    /// ingest writes do under raw — and each namespace's foreign-tenant
+    /// scope is refused before any request.
+    #[test]
+    fn audit_covers_the_reserved_derived_namespaces_and_refuses_their_foreign_tenants() {
+        let backend = MockBackend::holding(vec![
+            // A checkpoint re-put twice at the same digest-derived key:
+            // one current, one noncurrent copy.
+            keyed_entry(
+                &format!("tenants/{TENANT}/v1/catalog/checkpoints/x.json"),
+                30,
+                "v1",
+                false,
+            ),
+            keyed_entry(
+                &format!("tenants/{TENANT}/v1/catalog/checkpoints/x.json"),
+                30,
+                "v2",
+                true,
+            ),
+            // A usage-summary projection superseded by a re-put of the
+            // same content-addressed object: the older version is the
+            // noncurrent residue the audit measures.
+            keyed_entry(
+                &format!("tenants/{TENANT}/v1/derived/usage/1/usage-summaries/ab/x.json"),
+                20,
+                "v1",
+                false,
+            ),
+            keyed_entry(
+                &format!("tenants/{TENANT}/v1/derived/usage/1/usage-summaries/ab/x.json"),
+                25,
+                "v2",
+                true,
+            ),
+        ]);
+        let store = audit_store(backend);
+
+        let catalog = InventoryScope::TenantCatalog(TENANT.parse().unwrap());
+        let report = block_on(store.audit_noncurrent(&catalog)).expect("the catalog scope audits");
+        assert_eq!(report.distinct_keys(), 1);
+        assert_eq!(report.noncurrent_versions(), 1);
+        assert_eq!(report.noncurrent_bytes(), 30);
+
+        let derived = InventoryScope::TenantDerived(TENANT.parse().unwrap());
+        let report = block_on(store.audit_noncurrent(&derived)).expect("the derived scope audits");
+        assert_eq!(report.distinct_keys(), 1);
+        assert_eq!(report.noncurrent_versions(), 1);
+        assert_eq!(report.noncurrent_bytes(), 20);
+
+        for foreign_scope in [
+            InventoryScope::TenantCatalog(FOREIGN.parse().unwrap()),
+            InventoryScope::TenantDerived(FOREIGN.parse().unwrap()),
+        ] {
+            let error = block_on(store.audit_noncurrent(&foreign_scope))
+                .expect_err("another tenant's reserved namespace is outside this identity");
+            assert_eq!(error.kind(), StorageErrorKind::ScopeViolation);
+            assert_eq!(error.detail(), DETAIL_SCOPE);
+        }
     }
 
     #[test]

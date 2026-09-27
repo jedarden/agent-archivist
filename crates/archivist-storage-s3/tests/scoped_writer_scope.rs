@@ -45,6 +45,10 @@ use archivist_protocol::usage_summary::{
     MessageUsage, OccurrenceProvenance, SourceUsageCounts, UsageRegion, UsageSummary,
 };
 use archivist_protocol::vocabulary::{AdapterId, OccurrenceId, TenantId, VersionToken};
+use archivist_storage::audit_restore::{
+    AuditRestoreStore, ContinuationToken, FrozenInventory, InventoryEntry, InventoryKey,
+    InventoryPage, InventoryScope, ObjectBody, ObjectMetadata,
+};
 use archivist_storage::error::{StorageError, StorageErrorKind};
 use archivist_storage::scoped_write::{
     CatalogCheckpointKey, CatalogListPrefix, CatalogWriteStore, DerivedListPrefix,
@@ -207,6 +211,12 @@ impl MapBackend {
 
     fn counters(&self) -> Counters {
         *self.counters.lock().expect("test backend lock")
+    }
+
+    /// The object map, shared with an audit/restore identity over the
+    /// same physical store.
+    fn objects_shared(&self) -> Arc<Mutex<BTreeMap<String, Vec<u8>>>> {
+        Arc::clone(&self.objects)
     }
 
     fn stored(&self, key: &str) -> Option<Vec<u8>> {
@@ -867,4 +877,181 @@ fn configured_writers_reject_every_out_of_scope_prefix_and_action() {
     // Not one of the refused pairs ever reached the backend: every
     // rejection happened before a request existed.
     assert_eq!(backend.counters(), Counters::default());
+}
+
+/// The offline audit/restore identity over the same object map the
+/// writers appended to, holding the provisioning's `get+list` grant on
+/// all four reserved prefixes — the one identity that can enumerate the
+/// derived namespaces and read the objects the writers appended there
+/// back.
+struct AuditRestoreBackend {
+    objects: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+    refused_enumerations: Arc<Mutex<u32>>,
+}
+
+impl AuditRestoreBackend {
+    fn over(objects: Arc<Mutex<BTreeMap<String, Vec<u8>>>>) -> Self {
+        Self {
+            objects,
+            refused_enumerations: Arc::new(Mutex::new(0)),
+        }
+    }
+
+    fn observed_at() -> archivist_protocol::vocabulary::Timestamp {
+        archivist_protocol::vocabulary::Timestamp::parse("2026-09-27T12:00:00Z").unwrap()
+    }
+
+    /// Whether `text` sits inside one of the four provisioned prefixes.
+    fn grants(text: &str) -> bool {
+        let tenant = tenant();
+        for namespace in ["raw", "control", "catalog", "derived"] {
+            if text.starts_with(&format!("tenants/{tenant}/v1/{namespace}/")) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn page(&self, scope: &InventoryScope) -> Result<InventoryPage, StorageError> {
+        if !Self::grants(&scope.prefix()) {
+            *self.refused_enumerations.lock().expect("audit lock") += 1;
+            return Err(StorageError::new(
+                StorageErrorKind::ScopeViolation,
+                "scope is outside this audit identity",
+            ));
+        }
+        let prefix = scope.prefix();
+        let entries = self
+            .objects
+            .lock()
+            .expect("test backend lock")
+            .iter()
+            .filter(|(key, _)| key.starts_with(&prefix))
+            .map(|(key, _)| {
+                InventoryEntry::new(
+                    InventoryKey::parse(key).unwrap(),
+                    0,
+                    archivist_storage::metadata::Observation::new(None, None, Self::observed_at()),
+                )
+            })
+            .collect();
+        Ok(InventoryPage::new(entries, None))
+    }
+}
+
+impl AuditRestoreStore for AuditRestoreBackend {
+    async fn list_page(
+        &self,
+        scope: &InventoryScope,
+        _after: Option<&ContinuationToken>,
+    ) -> Result<InventoryPage, StorageError> {
+        self.page(scope)
+    }
+
+    async fn freeze_inventory(
+        &self,
+        scope: &InventoryScope,
+    ) -> Result<FrozenInventory, StorageError> {
+        let page = self.page(scope)?;
+        FrozenInventory::from_pages(scope, vec![Ok(page)])
+    }
+
+    async fn inspect_object(&self, key: &InventoryKey) -> Result<ObjectMetadata, StorageError> {
+        if !Self::grants(key.as_str()) {
+            return Err(StorageError::new(
+                StorageErrorKind::ScopeViolation,
+                "key is outside this audit identity",
+            ));
+        }
+        let size = self
+            .objects
+            .lock()
+            .expect("test backend lock")
+            .get(key.as_str())
+            .map(Vec::len)
+            .map(|len| len as u64);
+        Ok(ObjectMetadata::new(
+            size.unwrap_or_default(),
+            archivist_storage::metadata::Observation::new(None, None, Self::observed_at()),
+        ))
+    }
+
+    async fn read_object(&self, key: &InventoryKey) -> Result<ObjectBody, StorageError> {
+        if !Self::grants(key.as_str()) {
+            return Err(StorageError::new(
+                StorageErrorKind::ScopeViolation,
+                "key is outside this audit identity",
+            ));
+        }
+        let bytes = self
+            .objects
+            .lock()
+            .expect("test backend lock")
+            .get(key.as_str())
+            .cloned()
+            .unwrap_or_default();
+        Ok(ObjectBody::new(
+            bytes,
+            archivist_storage::metadata::Observation::new(None, None, Self::observed_at()),
+        ))
+    }
+}
+
+/// The backup/restore half of the reserved-prefix contract: the two
+/// writers append under their own namespaces, and the offline
+/// audit/restore identity — the one identity with `get+list` across all
+/// four prefixes — enumerates each derived namespace exactly, reads the
+/// appended checkpoint bytes back, and refuses a foreign tenant's scope
+/// without leaking an entry.
+#[test]
+fn the_offline_identity_covers_the_reserved_namespaces_the_writers_append_to() {
+    let pair = scoped_writers();
+    let backend = MapBackend::new();
+    let catalog = S3CatalogWriteStore::new(pair.catalog().clone(), backend.clone());
+    let derived = S3DerivedWriteStore::new(pair.derived().clone(), backend.clone());
+
+    let checkpoint = checkpoint_key(&checkpoint_bytes(7));
+    block_on(catalog.put_checkpoint(&checkpoint, &checkpoint_bytes(7))).unwrap();
+    let summary = usage_summary();
+    let projection = DerivedObjectKey::parse(&summary.object_key()).unwrap();
+    block_on(derived.put_object(&projection, &summary.serialized())).unwrap();
+
+    let audit = AuditRestoreBackend::over(backend.objects_shared());
+    let tenant = tenant();
+
+    // Each reserved namespace enumerates exactly what its writer
+    // appended — and never the sibling namespace's object.
+    let frozen =
+        block_on(audit.freeze_inventory(&InventoryScope::TenantCatalog(tenant.clone()))).unwrap();
+    assert_eq!(
+        frozen
+            .entries()
+            .iter()
+            .map(|entry| entry.key().as_str())
+            .collect::<Vec<_>>(),
+        vec![checkpoint.as_str()]
+    );
+    let frozen =
+        block_on(audit.freeze_inventory(&InventoryScope::TenantDerived(tenant.clone()))).unwrap();
+    assert_eq!(
+        frozen
+            .entries()
+            .iter()
+            .map(|entry| entry.key().as_str())
+            .collect::<Vec<_>>(),
+        vec![projection.as_str()]
+    );
+
+    // The appended checkpoint is recoverable through the read identity:
+    // the exact bytes the writer put, back through the offline GET.
+    let body = block_on(audit.read_object(&InventoryKey::parse(checkpoint.as_str()).unwrap()))
+        .expect("the audit identity reads the checkpoint back");
+    assert_eq!(body.bytes(), checkpoint_bytes(7).as_slice());
+
+    // Another tenant's reserved namespace is refused before anything
+    // leaks: the grant is this tenant's four prefixes, nothing else.
+    let error = block_on(audit.freeze_inventory(&InventoryScope::TenantCatalog(other_tenant())))
+        .expect_err("a foreign tenant's catalog scope is outside this identity");
+    assert_eq!(error.kind(), StorageErrorKind::ScopeViolation);
+    assert_eq!(*audit.refused_enumerations.lock().expect("audit lock"), 1);
 }

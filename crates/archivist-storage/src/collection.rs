@@ -408,7 +408,9 @@ impl ReferenceScan {
         }
         let tenant = match inventory.scope() {
             InventoryScope::TenantRaw(tenant) => tenant.clone(),
-            InventoryScope::TenantControl(_) => {
+            InventoryScope::TenantControl(_)
+            | InventoryScope::TenantCatalog(_)
+            | InventoryScope::TenantDerived(_) => {
                 return Err(CollectionError::new(
                     CollectionErrorKind::InvalidInput,
                     INVALID_INPUT,

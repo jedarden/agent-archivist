@@ -339,7 +339,9 @@ impl RawCatalogIndex {
     pub fn new(inventory: &FrozenInventory) -> Result<Self, StorageError> {
         let tenant = match inventory.scope() {
             crate::audit_restore::InventoryScope::TenantRaw(tenant) => tenant.clone(),
-            crate::audit_restore::InventoryScope::TenantControl(_) => {
+            crate::audit_restore::InventoryScope::TenantControl(_)
+            | crate::audit_restore::InventoryScope::TenantCatalog(_)
+            | crate::audit_restore::InventoryScope::TenantDerived(_) => {
                 return Err(StorageError::new(
                     StorageErrorKind::MalformedInput,
                     RAW_SCOPE_ONLY,
