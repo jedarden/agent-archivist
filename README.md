@@ -20,7 +20,9 @@ implementation, are community profiles: each carries a qualification record in
 stand unqualified as of 2026-09-15 — no run of the storage compatibility suite
 has been executed against either. Until a recorded run says otherwise, neither
 carries a deployment profile or a capability claim; the note defines what a
-community qualification run requires and what qualifying one would create.
+community qualification run requires and what qualifying one would create,
+and the [community qualification run kit](docs/notes/community-qualification-kit.md)
+is the self-service half a contributor executes to produce one.
 
 This repository records the architecture before the private,
 deployment-specific prototype is generalized. It contains no transcripts,

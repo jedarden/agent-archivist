@@ -88,6 +88,11 @@ at all — the procedure's first precondition is the harness — and
 Section 5's records say exactly that rather than leaving the profiles
 claimable.
 
+The procedure's self-service half — the fixture inputs a run consumes,
+the suite's expected outcome branches, the capability-probe entry point,
+the report shape, and the record template with its acceptance checks —
+is the [community qualification run kit](community-qualification-kit.md).
+
 ## 3. The qualification record
 
 The recording format is the append-only `[[records]]` array of
