@@ -74,6 +74,9 @@
 //! - [`audit_restore`] — the offline audit/restore identity: paginated
 //!   enumeration, the frozen `inventory-v1` contract, and object inspection
 //!   and bounded reads.
+//! - [`lifecycle_audit`] — the versions-shaped audit over the same offline
+//!   identity: the frozen `version-audit-v1` listing and the STO-009
+//!   noncurrent-version measurement it reduces to.
 //! - [`catalog_source`] — the raw catalog source reader: deterministic,
 //!   validating iteration over a frozen tenant raw prefix (occurrences,
 //!   attestations, referenced blobs) for offline catalog rebuild and
@@ -158,6 +161,7 @@ pub mod control;
 pub mod error;
 pub mod export;
 pub mod ingest;
+pub mod lifecycle_audit;
 pub mod manifests;
 pub mod metadata;
 pub mod multipart;

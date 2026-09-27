@@ -18,13 +18,19 @@ use archivist_protocol::vocabulary::{
     AttestationId, BlobDigest, ClientId, HarnessId, OccurrenceId, SessionHash, StorageOutcome,
     StorageProfile, TenantId,
 };
+use archivist_storage::audit_restore::{ContinuationToken, InventoryScope};
 use archivist_storage::capability::{
     ConditionalCreate, EncryptionState, StoreCapabilities, StoredChecksum, VersioningState,
 };
 use archivist_storage::commit::{CreateIfAbsent, ExistingObject, commit_manifest};
 use archivist_storage::error::StorageErrorKind;
+use archivist_storage::lifecycle_audit::{
+    NoncurrentVersionReport, VersionedEntry, VersionedPage, freeze_version_listing,
+};
+use archivist_storage::metadata::ObjectTag;
 use archivist_storage::raw_write::{ManifestKey, PartCommitment, PartNumber, RawWriteStore};
 use archivist_storage_s3::config::{EncryptionPolicy, S3StorageConfig};
+use archivist_storage_s3::lifecycle_audit::{S3LifecycleAuditStore, VersionAuditBackend};
 use archivist_storage_s3::raw_write::{RawObjectKey, RawWriteBackend, S3RawWriteStore};
 
 const TENANT: &str = "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b";
@@ -166,6 +172,23 @@ impl SyntheticBackend {
             .flatten()
             .filter_map(|object| object.version.clone())
             .collect()
+    }
+
+    /// The bytes the noncurrent versions at `key` retain — every version
+    /// except the tail, which is the current one. The audit's numbers are
+    /// asserted against this independently computed sum.
+    fn noncurrent_bytes(&self, key: &str) -> u64 {
+        self.state
+            .lock()
+            .expect("synthetic backend lock")
+            .objects
+            .get(key)
+            .map_or(0, |objects| {
+                objects[..objects.len().saturating_sub(1)]
+                    .iter()
+                    .map(|object| object.bytes.len() as u64)
+                    .sum()
+            })
     }
 
     fn latest_checksum(&self, key: &str) -> Option<String> {
@@ -366,6 +389,104 @@ impl RawWriteBackend for SyntheticBackend {
     }
 }
 
+/// The versions listing the audit identity reads: two records per page,
+/// canonical order (key bytes, then version bytes), continuation tokens
+/// the freeze loop follows. A profile without observed versioning stores
+/// no version identities at all, so its listing is empty by construction
+/// — and the audit store refuses such a profile before any request.
+const SYNTHETIC_PAGE_SIZE: usize = 2;
+
+impl VersionAuditBackend for SyntheticBackend {
+    async fn list_object_versions(
+        &self,
+        _scope: &InventoryScope,
+        after: Option<&ContinuationToken>,
+    ) -> Result<VersionedPage, archivist_storage::error::StorageError> {
+        use archivist_storage::metadata::{Observation, StorageVersionId};
+
+        let state = self.state.lock().expect("synthetic backend lock");
+        // Every physical version, with the vec's tail flagged as the
+        // current version — the same story `physical_versions` tells.
+        let mut records: Vec<(String, u64, String, bool, Option<String>)> = state
+            .objects
+            .iter()
+            .flat_map(|(key, objects)| {
+                let tail = objects.len().saturating_sub(1);
+                objects
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(index, object)| {
+                        let version = object.version.as_ref()?;
+                        Some((
+                            key.clone(),
+                            object.bytes.len() as u64,
+                            version.clone(),
+                            index == tail,
+                            object.checksum.clone(),
+                        ))
+                    })
+            })
+            .collect();
+        records.sort_by(|a, b| {
+            a.0.as_bytes()
+                .cmp(b.0.as_bytes())
+                .then_with(|| a.2.as_bytes().cmp(b.2.as_bytes()))
+        });
+        let entries = records
+            .into_iter()
+            .map(|(key, size, version, is_latest, checksum)| {
+                VersionedEntry::new(
+                    archivist_storage::audit_restore::InventoryKey::parse(&key)
+                        .expect("synthetic keys are inventory keys"),
+                    size,
+                    StorageVersionId::parse(&version).expect("synthetic versions parse"),
+                    is_latest,
+                    Observation::new(
+                        checksum
+                            .as_deref()
+                            .map(ObjectTag::parse)
+                            .transpose()
+                            .expect("synthetic checksums are tags"),
+                        None,
+                        archivist_protocol::vocabulary::Timestamp::parse(OBSERVED_AT)
+                            .expect("static timestamp"),
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        let index = match after {
+            None => 0,
+            Some(token) => token
+                .as_str()
+                .strip_prefix('p')
+                .and_then(|number| number.parse::<usize>().ok())
+                .ok_or_else(|| {
+                    archivist_storage::error::StorageError::of_kind(StorageErrorKind::Unavailable)
+                })?,
+        };
+        let start = index * SYNTHETIC_PAGE_SIZE;
+        if start > entries.len() {
+            return Err(archivist_storage::error::StorageError::of_kind(
+                StorageErrorKind::Unavailable,
+            ));
+        }
+        let end = (start + SYNTHETIC_PAGE_SIZE).min(entries.len());
+        let next = if end < entries.len() {
+            Some(
+                ContinuationToken::parse(&format!("p{}", end / SYNTHETIC_PAGE_SIZE))
+                    .expect("synthetic tokens parse"),
+            )
+        } else {
+            None
+        };
+        Ok(VersionedPage::new(entries[start..end].to_vec(), next))
+    }
+}
+
+/// When the synthetic listing observed everything — a fixed clock, so the
+/// report line is deterministic.
+const OBSERVED_AT: &str = "2026-09-27T12:00:00Z";
+
 #[derive(Debug, Default)]
 struct PhysicalHistory {
     count: usize,
@@ -377,6 +498,7 @@ struct CompatibilityReport {
     profile: &'static str,
     capabilities: StoreCapabilities,
     physical_versions: BTreeMap<String, PhysicalHistory>,
+    noncurrent: Option<NoncurrentVersionReport>,
 }
 
 impl CompatibilityReport {
@@ -414,14 +536,19 @@ impl CompatibilityReport {
             .map(|(label, history)| format!("{label}:{}:{:?}", history.count, history.version_ids))
             .collect::<Vec<_>>()
             .join(",");
+        let noncurrent = match &self.noncurrent {
+            Some(audit) => format!("noncurrent_audit=[{}]", audit.render()),
+            None => "noncurrent_audit=refused".to_owned(),
+        };
         format!(
-            "storage-compatibility profile={} conditional_create={} stored_checksum={} versioning={} server_side_encryption={} physical_versions=[{}]",
+            "storage-compatibility profile={} conditional_create={} stored_checksum={} versioning={} server_side_encryption={} physical_versions=[{}] {}",
             self.profile,
             self.capabilities.conditional_create.token(),
             self.capabilities.stored_checksum.token(),
             self.capabilities.versioning.token(),
             self.capabilities.server_side_encryption.token(),
             histories,
+            noncurrent,
         )
     }
 }
@@ -455,6 +582,7 @@ fn config(profile: Profile) -> S3StorageConfig {
         .control_bucket("archivist-control-synthetic")
         .raw_write_credentials(format!("file:/synthetic/{}/raw-writer", profile.name))
         .control_read_credentials(format!("file:/synthetic/{}/control-reader", profile.name))
+        .offline_restore_credentials(format!("file:/synthetic/{}/offline-restore", profile.name))
         .build()
         .expect("synthetic profile configuration")
 }
@@ -525,6 +653,7 @@ fn run_suite(profile: Profile) -> CompatibilityReport {
         profile: profile.name,
         capabilities: profile.capabilities,
         physical_versions: BTreeMap::new(),
+        noncurrent: None,
     };
 
     // Duplicate requests converge on one logical key.  The physical count is
@@ -786,6 +915,78 @@ fn run_suite(profile: Profile) -> CompatibilityReport {
     report.observe("origin-attestation", &backend, origin_key.as_str());
     report.observe("relay-attestation", &backend, relay_key.as_str());
 
+    // The STO-009 leg: the audit identity lists the physical versions the
+    // suite's own writes left behind and measures the accumulation the
+    // deterministic-overwrite disclosure predicted. Every number is
+    // asserted against the backend's independently observed history, so
+    // the disclosure is a measurement here, not prose. A profile without
+    // established versioning refuses the audit — unknown never
+    // strengthens — and that refusal is the honest branch.
+    let audit_store = S3LifecycleAuditStore::new(config(profile), tenant(), backend.clone())
+        .expect("the synthetic profile grants the offline-restore identity")
+        .with_capabilities(profile.capabilities);
+    let raw_scope = InventoryScope::TenantRaw(tenant());
+    let audited = block_on(audit_store.audit_noncurrent(&raw_scope));
+    match profile.capabilities.versioning {
+        VersioningState::Enabled => {
+            let audit = audited.expect("versioned profiles audit");
+            let keys = [
+                duplicate_key.as_str(),
+                overwrite_key.as_str(),
+                concurrent_key.as_str(),
+                conflict_key.as_str(),
+                blob.as_str(),
+                origin_key.as_str(),
+                relay_key.as_str(),
+            ];
+            let expected_total: usize = keys.iter().map(|key| backend.physical_count(key)).sum();
+            let expected_noncurrent: usize = keys
+                .iter()
+                .map(|key| backend.physical_count(key).saturating_sub(1))
+                .sum();
+            let expected_bytes: u64 = keys.iter().map(|key| backend.noncurrent_bytes(key)).sum();
+            assert_eq!(audit.distinct_keys(), keys.len());
+            assert_eq!(audit.total_versions(), expected_total);
+            assert_eq!(audit.noncurrent_versions(), expected_noncurrent);
+            assert_eq!(audit.noncurrent_bytes(), expected_bytes);
+            // The frozen listing attributes every version the backend
+            // kept, current and noncurrent, exactly as the writer-side
+            // observations recorded them — the per-key detail behind the
+            // aggregates.
+            let listing = block_on(freeze_version_listing(&audit_store, &raw_scope))
+                .expect("the versions listing freezes");
+            assert_eq!(listing.len(), keys.len());
+            for key in keys {
+                let group = listing
+                    .keys()
+                    .iter()
+                    .find(|group| group.key().as_str() == key)
+                    .unwrap_or_else(|| panic!("the listing carries {key}"));
+                let mut listed: Vec<String> = group
+                    .versions()
+                    .iter()
+                    .map(|entry| entry.version().as_str().to_owned())
+                    .collect();
+                listed.sort_unstable();
+                let mut written = backend.physical_versions(key);
+                written.sort_unstable();
+                assert_eq!(listed, written, "per-key version attribution for {key}");
+                let noncurrent = group.noncurrent().count();
+                assert_eq!(
+                    noncurrent,
+                    backend.physical_count(key).saturating_sub(1),
+                    "noncurrent attribution for {key}"
+                );
+                assert_eq!(group.noncurrent_bytes(), backend.noncurrent_bytes(key));
+            }
+            report.noncurrent = Some(audit);
+        }
+        VersioningState::Unknown | VersioningState::Disabled => {
+            let error = audited.expect_err("unversioned profiles refuse the audit");
+            assert_eq!(error.kind(), StorageErrorKind::CapabilityUnavailable);
+        }
+    }
+
     report
 }
 
@@ -803,6 +1004,29 @@ fn the_same_suite_passes_for_every_supported_profile_and_records_versions() {
             "{} did not record a physical-version observation",
             report.profile
         );
+        // The noncurrent-version disclosure is measurable wherever
+        // versioning is established: one current version per key, and the
+        // audit counted everything behind it.
+        match report.capabilities.versioning {
+            VersioningState::Enabled => {
+                let audit = report.noncurrent.as_ref().unwrap_or_else(|| {
+                    panic!("{} did not audit noncurrent versions", report.profile)
+                });
+                assert_eq!(
+                    audit.noncurrent_versions() + audit.distinct_keys(),
+                    audit.total_versions(),
+                    "{}: every key carries exactly one current version",
+                    report.profile
+                );
+            }
+            VersioningState::Unknown | VersioningState::Disabled => {
+                assert!(
+                    report.noncurrent.is_none(),
+                    "{} refused the audit",
+                    report.profile
+                );
+            }
+        }
         println!("{}", report.render());
     }
 }

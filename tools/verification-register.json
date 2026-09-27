@@ -623,7 +623,7 @@
       ]
     },
     "STO-009": {
-      "status": "planned",
+      "status": "implemented",
       "verifications": [
         "T-STO-009"
       ]
@@ -1591,6 +1591,7 @@
       ],
       "kind": "test",
       "lane": "slow",
+      "locator": "crates/archivist-storage-s3/tests/storage_compatibility.rs",
       "owner": "compatibility-matrix"
     },
     "T-STO-010": {

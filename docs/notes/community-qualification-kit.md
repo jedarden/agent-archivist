@@ -210,11 +210,37 @@ hold: the live binding and the physical observation.
    checksums) through the read-shaped role or tooling.
 4. **Execute Leg B** and record its outcome.
 5. **Render the report** — one line per run, the exact grammar the
-   in-repo suite renders, with all seven scenario observations present:
+   in-repo suite renders, with all seven scenario observations present,
+   plus the noncurrent-version audit the suite rides behind them:
 
 ```text
-storage-compatibility profile=<key> conditional_create=<token> stored_checksum=<token> versioning=<token> server_side_encryption=<token> physical_versions=[<scenario>:<count>:[<version-ids>],…]
+storage-compatibility profile=<key> conditional_create=<token> stored_checksum=<token> versioning=<token> server_side_encryption=<token> physical_versions=[<scenario>:<count>:[<version-ids>],…] noncurrent_audit=[noncurrent-version-audit scope=<prefix> keys=<k> versions=<v> noncurrent=<n> retained_bytes=<b> guidance=sto-009-noncurrent-version-expiration[ fullest_key=<key> fullest_noncurrent=<d>]]
 ```
+
+The trailing `fullest_key`/`fullest_noncurrent` pair appears whenever the
+scope holds any accumulation at all — the key where noncurrent versions
+run deepest and how deep — so a live versioned bucket's line normally
+carries it; a scope with no noncurrent versions renders without it.
+
+The `noncurrent_audit` field is the STO-009 leg
+([`archivist_storage::lifecycle_audit`](../../crates/archivist-storage/src/lifecycle_audit.rs)):
+through the audit/restore identity — the one authority with list grants
+across the tenant prefixes — the driver lists every physical version the
+run's own writes left under the tenant raw prefix and reports how many
+are noncurrent and how many bytes they retain, cited against the
+documented guidance (requirements STO-009; the qualification notes'
+noncurrent-only scope rule). The suite asserts the audit's counts against
+the backend's independently observed physical history, so the seven
+scenarios' `physical_versions` and the audit's `versions` count are two
+readings of one truth. On a profile whose versioning axis is `unknown`,
+the audit is refused (`noncurrent_audit=refused`) — a report that cannot
+attribute versions can never support the current/noncurrent distinction,
+and unknown never strengthens. On a live versioned backend a qualified
+run's audit line is the baseline an operator compares against later: the
+lifecycle rules themselves are invisible to every archivist identity by
+construction, so the growth (or stabilization) of `noncurrent` and
+`retained_bytes` between runs is the only evidence the bucket carries
+about whether the STO-009 rule is doing its work.
 
 (See [the MinIO reference profile](minio-reference-profile.md) Section 7
 for a real rendered line; the values above are placeholders, not

@@ -37,7 +37,12 @@
 //! portable `ControlReadStore` over the dedicated read-only credential
 //! the [`config`] module's `ControlReadConfig` surface validates, five
 //! bounded signed-record reads and their head inspections derived through
-//! the same key grammar the administration store writes with. The
+//! the same key grammar the administration store writes with. Sixth
+//! slice: the offline lifecycle audit ([`lifecycle_audit`]) — the
+//! portable `LifecycleAuditStore` over the optional offline-restore
+//! credential, listing every physical version under the identity's
+//! tenant scopes and reporting the noncurrent accumulation requirements
+//! STO-009 makes a deployment duty. The
 //! remaining adapter behavior arrives with its own deliverables:
 //! capability probing, the synthetic compatibility suite against the
 //! local reference backend, B2, and ARMOR, and the ingest reads.
@@ -51,6 +56,7 @@
 pub mod config;
 pub mod control_admin;
 pub mod control_read;
+pub mod lifecycle_audit;
 pub mod raw_write;
 pub mod request;
 pub mod scoped_write;
