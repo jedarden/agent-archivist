@@ -186,3 +186,80 @@ proven by the B2 lane at the run's exit 0:
 
 Deterministic overwrite degrades the *physical story*, never the
 *logical identity*: that is the property the B2 profile is qualified on.
+
+## 9. Physical results — the live run (2026-09-27, bead `aa-c4a549c6`)
+
+The live release-time run Section 5 deferred has now executed against a
+real B2 instance — not through a synthetic backend but through the same
+S3-compatible API, path-style SigV4, on the deployment's own backing
+bucket. This section records the physical observations; Sections 1–8
+remain the synthetic lane's record and are distinct from it.
+
+**The run.** 2026-09-27, bead `aa-c4a549c6`. The instrument is the
+kit's equivalent live lane: five write-shaped instruments (one per
+capability axis, plus multipart commit and abort sessions and reader
+read-backs) over a pure-stdlib SigV4 driver executed on the tailnet
+workstation, aimed at an isolated run prefix at the bucket root —
+outside every tenant tree, carrying only synthetic data. The identity
+was the deployment's bucket-scoped B2 application key (its native
+capabilities verified before use: list/read/write/delete files,
+lifecycle and encryption read/write, restricted to the one bucket).
+Every operation's status code, response headers, and elapsed time were
+captured; the full transcript is retained with the bead, not committed
+(SP-006). Post-run cleanup deleted all six versions the run created and
+verified zero remaining — the key holds delete, so unlike any
+archivist-path identity this lane leaves no residue.
+
+**Observed five-axis report** (tokens as defined in
+[storage profiles](storage-profiles.md) Section 3):
+
+```text
+storage-compatibility profile=backblaze-b2[live,direct] conditional_create=unavailable stored_checksum=provider_specific versioning=enabled server_side_encryption=verified multipart_commit_abort=verified
+```
+
+**Physical observations**, per instrument:
+
+| Instrument | Observed live | Latency |
+| --- | --- | --- |
+| calibration list (run prefix) | `200`, empty prefix | ~730 ms |
+| conditional create (`If-None-Match: *`, fresh key, then same key) | `501 NotImplemented` on **both** PUTs — B2's S3 API does not implement conditional writes | ~720 ms |
+| checksum (PUT, response ETag) | `200`; ETag is the 32-hex MD5-derived form — **not** SHA-256 | ~700 ms |
+| versioning (two PUTs, one key; ListObjectVersions) | `200`/`200`; each PUT echoes a distinct `x-amz-version-id`; list returns 2 versions with correct `IsLatest` flags | ~0.8–0.9 s |
+| server-side encryption (PUT with `x-amz-server-side-encryption: AES256`; plain PUT; GetBucketEncryption) | conditional PUT echoes `AES256`; plain PUT echoes nothing; **the bucket carries no default encryption configuration** (`404 ServerSideEncryptionConfigurationNotFoundError`) | ~730 ms |
+| multipart commit (create → part → complete) | `200`/`200`/`200`; response ETag in a provider-specific (non-MD5) form; version id header present | ~0.7–0.8 s |
+| multipart abort (create → part → abort → abort again) | first abort `204`; **repeat abort `404 NoSuchUpload`**; zero open uploads afterwards | ~0.7–0.8 s |
+| read-back (list objects + versions under the run prefix) | 4 current objects / 6 versions — exactly the instruments' writes, reconciled | ~0.8–3.1 s |
+
+**What the live run adds to the synthetic lane's record:**
+
+1. **The five-axis tokens held.** The live answers match the synthetic
+   lane's declared matrix (`unavailable`, `provider_specific`,
+   `enabled`, `verified`, multipart verified) — the synthetic backend
+   was a faithful model on every axis it modeled.
+2. **Repeat abort is not idempotent at the physical edge.** The
+   synthetic lane (Section 6) proves "a repeat `abort` succeeds"; live
+   B2 returns `404 NoSuchUpload` for an upload id already reaped. The
+   adapter's teardown path must map `NoSuchUpload` on abort to
+   idempotent success — a physical fact the synthetic lane could not
+   expose, and a required behavior for the writer's own validation-
+   failure and shutdown cleanup.
+3. **The bucket carries no default S3 encryption.** At-rest SSE is
+   opt-in per request on this bucket. Tenant data written through the
+   ARMOR path is protected by ARMOR's envelope (ARCH-006), not by a
+   bucket policy — consistent with the profile model, but a deployment
+   fact an operator writing to the bucket outside ARMOR must know.
+4. **Real latency, for the first time.** ~0.7–0.9 s per write-shaped
+   operation and ~3.1 s for a versions listing, workstation to
+   `us-west-002`. The synthetic lane models logical behavior only;
+   these are the magnitudes the release-time budget inherits.
+5. **The documented aa-e827d0f0 canary no longer exists** at the
+   backing store (404 via a bucket-wide read-capable key, 2026-09-27).
+   The provisioning note's residue record — and the read-probe
+   expectations that cite it — describe an object that is no longer
+   there; the next ARMOR-path run needs its own committed probe target.
+
+**Still not established by this run** (SP-005 honesty): throttling and
+error behavior under load, account-level controls outside the bucket,
+the ARMOR path's own layer over this backing store — that is the
+[ARMOR qualification note](armor-storage-qualification.md) Section 11,
+whose live run could not execute and is recorded as such.

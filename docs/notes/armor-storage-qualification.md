@@ -249,3 +249,79 @@ and unknown facts reduce fail-closed (plan Section 10), never stronger.
 | Restore access | Section 6: the optional restore credential ref; the backup/restore identity's live cross-prefix `get+list` and the canary read-probe (writer 403 / restorer 200 on the identical key); no write, no delete. |
 | Lifecycle guidance | Section 7: noncurrent-version expiration scoped away from current objects, 24-hour incomplete-multipart abort, operator-managed via the effect-decides-verb mapping, invisible to the archivist identity set by construction. |
 | Observed physical results match the public storage contract | Sections 1–2: the verbatim lane report — every version count and id traced to its scenario's contract expectation (`2` where deterministic overwrite lands a noncurrent copy, `1` where the primitive lands exactly one object), `multipart-commit:1`, idempotent abort, and the profile's own five-axis tokens with no strengthened unknown. |
+
+## 11. Physical results — the live run could not execute (2026-09-27, bead `aa-c4a549c6`)
+
+The live release-time run Section 8 deferred was staged on 2026-09-27
+and **could not execute**; per SP-005's rule this records the run that
+did not happen with the same seriousness as a run that failed. The
+ARMOR target profile's release gate remains unexecuted, and nothing in
+this section strengthens any capability claim.
+
+**What was staged.** The kit's equivalent live lane — five write-shaped
+instruments over the five capability axes, run prefix
+`agent-archivist/raw/aa-c4a549c6-live-qual/`, the scoped identities
+loaded from their per-role OpenBao paths into the environment only
+(raw writer for the writes, backup/restore for the read-backs), the
+same driver that executed the live B2 run. The identity set's
+propagation state was verified first: both per-role paths hold their
+documented anchors (raw writer v4, backup/restore v1).
+
+**What blocked it.** The tailnet S3 edge deployed that morning for
+exactly this lane — the `armor-s3-vpn` IngressRoute
+(`armor-iad_ci-ts.ardenone.com:8444` → `armor:9000`, path-style) — is
+down to a Traefik/cert-manager race:
+
+- Traefik (v3.7.13) received the route at 09:58:45Z, found the TLS
+  secret missing, retried, and logged `Error configuring TLS: secret
+  armor/armor-s3-tls does not exist` through 09:59:52Z, after which it
+  gave up and never rebuilt the route.
+- cert-manager reported the Certificate `armor-s3-tls` **Ready at
+  10:00:07Z** — fifteen seconds after Traefik's last retry.
+- Observed from the workstation since: every request on the route —
+  including calibration calls signed by the scoped archivist
+  identities — returns the Traefik default handler's 404 over the
+  **Traefik default certificate** (status 404, no S3 error body;
+  polled unchanged at 16:32:29Z). The serving pod's request log over
+  an eight-minute sample (351 requests) contains **zero** requests
+  carrying the run's prefix: the lane's traffic never reached ARMOR.
+- The alternatives are exhausted, not skipped: the credential-free
+  read-only service account cannot create `pods/portforward` (`auth
+  can-i` → no), and the real iad-ci kubeconfig is an interactive-OIDC
+  credential unusable from this box — the transient port-forward path
+  the 2026-09 rotation drills used is gone, which is why the route
+  exists at all.
+
+**Remediation is an operator/GitOps action** (no archivist or agent
+credential may touch a Traefik-managed resource): rebuild Traefik's
+dynamic configuration now that the secret exists — a restart of the
+`traefik-iad-ci` deployment, or a re-apply of the route through the
+declarative-config flow. Once the route serves `armor-iad_ci-ts`
+with its own certificate, the staged lane runs as-is: the instruments,
+prefix, identity loading, and observation rules are recorded with the
+bead and in the [B2 qualification note](b2-storage-qualification.md)
+Section 9.
+
+**What this bead's run still binds for the ARMOR path.** The backing
+store behind the ARMOR deployment is the same bucket the direct
+B2 lane exercised, so the physical facts recorded there are the ARMOR
+path's inherited physical story: versioning enabled, provider-specific
+checksums (MD5-form ETags; non-MD5 multipart forms), no conditional
+create at the direct seam, multipart commit and abort supported, no
+bucket-default S3 encryption — and the documented aa-e827d0f0 canary
+no longer exists at the backing store, so Sections 5–6's read-probe
+expectations now describe a removed object; the next run commits its
+own probe target with the raw writer's put grant. One ARMOR-specific
+signal was also observed in the serving pod's log during the window:
+the deployment already serves conditional-PUT semantics for another
+consumer (a genuine `412 PreconditionFailed` on a `PUT`), so
+precondition behavior through ARMOR's layer is not a passthrough of
+the backing store's `501` — which makes the ARMOR lane's own
+conditional-create observation a required measurement, not an
+inference from either side.
+
+**Still unknown until the lane runs against the deployment** (SP-005):
+the live five-axis answer at the ARMOR seam, real latency and
+throttling through ARMOR's layer, the authority matrix's interaction
+with the adapter's production request binding, and the passthrough
+behavior under partial failure. Unknown stays unknown; fail-closed.
