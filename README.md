@@ -1,6 +1,6 @@
 # Agent Archivist
 
-Agent Archivist is a design-stage, open system for collecting complete coding-agent
+Agent Archivist is an open system for collecting complete coding-agent
 session histories from many hosts into S3-compatible object storage.
 
 The intended system has two deliberately small halves:
@@ -24,18 +24,22 @@ community qualification run requires and what qualifying one would create,
 and the [community qualification run kit](docs/notes/community-qualification-kit.md)
 is the self-service half a contributor executes to produce one.
 
-This repository records the architecture before the private,
-deployment-specific prototype is generalized. It contains no transcripts,
+This repository generalizes the architecture of a private, deployment-specific
+prototype into the public implementation. It contains no transcripts,
 credentials, infrastructure inventory, or history copied from that prototype.
 
 The twelve-crate boundary map fixed at Phase 0 is unchanged, still on the
 pinned toolchain and the committed lockfile, and implementation now fills it
-in phase by phase: the protocol core (canonical serialization, deterministic
+in phase by phase: 12 of 12 workspace crates carry landed, verification-gated
+behavior — the protocol core (canonical serialization, deterministic
 identifiers, conformance-corpus replay), the owned Ed25519/SHA-512 trust
-primitives, the storage contract with a portable S3 backend behind it, and
-the first client-engine slices carry landed, verification-gated behavior,
-while the ingestion data plane, harness adapters, and the `archivist` CLI are
-still ahead of their phases. The
+primitives, the storage contract with its portable S3 backend, the client
+engine's crash-safe state and scheduling surfaces, the four harness adapters,
+the stateless ingestion data plane (its Phase 4 bootstrap surface — the four
+routes with the streaming `/v1/ingest` commit pipeline, signed receipts, and
+the serve lifecycle — is complete), and the `archivist` CLI that composes
+them, from the operator commands to the `serve` replica and `probe`
+health-check compositions. The
 [crate ownership map](docs/notes/crate-ownership.md) states each crate's
 purpose, its phase, its dependency boundary, and what it carries today.
 
@@ -53,8 +57,9 @@ registry gate, the metrics registry gate (name, unit, label, span, and
 status conventions, the forbidden-label list, and export-name collision
 checking), byte-exact regeneration and a content scan of the synthetic
 fixture, exact-inference, and usage-summary example corpora, the
-requirement-verification register gate, the release
-container baseline gate (version equality, digest-pinned bases, the
+requirement-verification register gate, the README status-coherence gate,
+the release container baseline gate (version equality, digest-pinned bases,
+the
 mtime-pinned reproducible install layer, the same-commit version rule),
 a redacted
 secret scan of the working tree and the git history, and a `cargo audit`
@@ -160,13 +165,21 @@ committed.
 
 ## Status
 
-Architecture and requirements are established. The crate boundaries fixed at
-Phase 0 hold; implementation advances through the phases in the
-[implementation plan](docs/plan/plan.md), and the
+Architecture and requirements are established, and implementation is under
+way across the workspace: each crate's landed behavior and remaining open
+work is recorded in the
+[crate ownership map](docs/notes/crate-ownership.md), and the ingestion data
+plane's Phase 4 bootstrap surface — the four routes with the streaming
+`/v1/ingest` commit pipeline, signed receipts, and the serve lifecycle — is
+complete. The
 [requirement-verification register](tools/verification-register.json) is the
 machine-checked statement of which requirements are implemented and which are
-still planned — most remain planned, and this remains a design-stage
-repository. No production-ready client or server is included yet.
+still planned — 10 of 116 requirements are implemented; most remain planned —
+so this is not yet a released product: no ingestion replica is deployed (the
+[ARMOR storage provisioning note](docs/notes/armor-storage-provisioning.md)
+stages the credential set for a future deployment), and the pilot and
+production-hardening phases are still ahead in the
+[implementation plan](docs/plan/plan.md).
 
 ## License
 

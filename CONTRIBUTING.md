@@ -74,6 +74,7 @@ python3 tools/contract-verifier.py self-test        # standalone contract verifi
 python3 tools/contract-verifier.py compare --quiet  # Rust vs standalone answer sheets
 python3 tools/verification-manifest.py check       # this tree's verification register
 python3 tools/verification-manifest.py self-test   # verification map rejection paths
+python3 tools/check-readme-status.py --self-test   # README status-coherence gate
 gitleaks dir --redact .                            # secret scan, working tree
 gitleaks detect --redact                           # secret scan, git history
 cargo audit --file Cargo.lock --deny warnings      # dependency audit
@@ -90,7 +91,8 @@ The script's lanes keep per-change gating cheap:
   regeneration and content scan, usage-summary-corpus
   regeneration and content scan, the standalone contract verifier and its
   cross-implementation comparison against the Rust implementation (the plan
-  Section 8 Phase 1 exit gate), verification-register gate,
+  Section 8 Phase 1 exit gate), verification-register gate, README
+  status-coherence gate,
   working-tree secret scan — seconds, fully offline once the workspace is
   built.
 - `--slow`: the workspace test suite.
