@@ -168,7 +168,7 @@ maintained by hand.
 | --- | --- | --- | --- |
 | `minio` | reference | qualified by the suite on every full verification run | plan Section 7.7 |
 | `backblaze-b2` | target | qualified before each compatible release | plan Section 10; live run recorded 2026-09-27 (the [B2 qualification note](b2-storage-qualification.md) Section 9) |
-| `armor` | target | qualified before deployment on the ARMOR path | plan Section 10; live run staged 2026-09-27, could not execute and is recorded as such (the [ARMOR qualification note](armor-storage-qualification.md) Section 11) |
+| `armor` | target | qualified before deployment on the ARMOR path | plan Section 10; live run recorded 2026-09-27 (the [ARMOR qualification note](armor-storage-qualification.md) Section 11) |
 | `aws-s3` | community | unqualified | record 2026-09-15 (release 0.1.0) |
 | `garage` | community | unqualified | record 2026-09-15 (release 0.1.0) |
 
@@ -185,10 +185,12 @@ The two target rows carry their live release-time run state, recorded
 where the deployment-profile documentation owns it: the B2 profile's
 live run executed on 2026-09-27 against a real B2 instance with the
 five axes observed (its note's Section 9), and the ARMOR profile's live
-run was staged the same day and could not execute — its note's
-Section 11 records the blocked edge with the same SP-005 seriousness a
-failed run gets. Target profiles still carry no registry `[[records]]`;
-their qualification is the release gate these runs feed.
+run executed the same day at the deployment's tailnet S3 edge — its
+note's Section 11 records the run, including the morning the staged
+edge was blocked, which was written down with the same SP-005
+seriousness a failed run gets before it recovered. Target profiles
+still carry no registry `[[records]]`; their qualification is the
+release gate these runs feed.
 
 For a later release, a contributor either runs the complete kit and appends
 a `qualified` record with its suite revision and capability matrix, or

@@ -219,6 +219,10 @@ behavior under partial failure, and account-level controls outside the
 tenant prefixes. The capability report a live run observes is the input
 the adapter acts on; this run pins the branches, not the live answers —
 and unknown facts reduce fail-closed (plan Section 10), never stronger.
+The live run of 2026-09-27 has since pinned the seam's physical answer
+set — the live capability answers, real latency, and the seam's own
+failure modes (Section 11) — re-scoping what remains unknown to the list
+recorded there.
 
 ## 9. Required actions for an ARMOR deployment
 
@@ -250,78 +254,163 @@ and unknown facts reduce fail-closed (plan Section 10), never stronger.
 | Lifecycle guidance | Section 7: noncurrent-version expiration scoped away from current objects, 24-hour incomplete-multipart abort, operator-managed via the effect-decides-verb mapping, invisible to the archivist identity set by construction. |
 | Observed physical results match the public storage contract | Sections 1–2: the verbatim lane report — every version count and id traced to its scenario's contract expectation (`2` where deterministic overwrite lands a noncurrent copy, `1` where the primitive lands exactly one object), `multipart-commit:1`, idempotent abort, and the profile's own five-axis tokens with no strengthened unknown. |
 
-## 11. Physical results — the live run could not execute (2026-09-27, bead `aa-c4a549c6`)
+## 11. Physical results — the live run (2026-09-27, bead `aa-c4a549c6`)
 
-The live release-time run Section 8 deferred was staged on 2026-09-27
-and **could not execute**; per SP-005's rule this records the run that
-did not happen with the same seriousness as a run that failed. The
-ARMOR target profile's release gate remains unexecuted, and nothing in
-this section strengthens any capability claim.
+The live release-time run Section 8 deferred executed the same day it
+was staged — against the deployment's tailnet S3 edge, through ARMOR's
+own S3 layer, on the tenant's real backing store. This section records
+the physical observations at the ARMOR seam; Sections 1–8 and 10 remain
+the synthetic lane's record and are distinct from it.
 
-**What was staged.** The kit's equivalent live lane — five write-shaped
-instruments over the five capability axes, run prefix
-`agent-archivist/raw/aa-c4a549c6-live-qual/`, the scoped identities
-loaded from their per-role OpenBao paths into the environment only
-(raw writer for the writes, backup/restore for the read-backs), the
-same driver that executed the live B2 run. The identity set's
-propagation state was verified first: both per-role paths hold their
-documented anchors (raw writer v4, backup/restore v1).
+**Staging, blockage, recovery.** The edge the run needs is the
+`armor-s3-vpn` IngressRoute (`armor-iad-ci-ts.ardenone.com:8444` →
+`armor:9000`, path-style) deployed that morning. It came up broken: the
+route reached Traefik (v3.7.13) at 09:58:45Z, the `armor/armor-s3-tls`
+secret did not exist yet, Traefik logged `Error configuring TLS` through
+09:59:52Z and gave up, and cert-manager reported the Certificate Ready
+at 10:00:07Z — fifteen seconds after the last retry. Every request met
+the Traefik default handler (404 over the default certificate), polled
+unchanged through 16:32:29Z; the transient port-forward alternative the
+2026-09 rotation drills used is gone (the read-only service account
+cannot create `pods/portforward`; the real iad-ci kubeconfig is an
+interactive-OIDC credential unusable from this box). The route was
+serving by the run window — its earliest server-timestamped artifact is
+17:39:47Z — and no restart of Traefik or the serving pod was observed:
+the dynamic-config rebuild happened without this bead taking any action
+(candidate trigger: the 16:43:55Z declarative-config sync landing inside
+the recovery window; Traefik's log carries no route-level record either
+way). At record time the edge serves its own Let's Encrypt certificate
+for `armor-iad-ci-ts.ardenone.com` — the route's Host rule and the
+certificate's name, with hyphens; the underscore form in the morning's
+staging record was a transcription error, corrected here.
 
-**What blocked it.** The tailnet S3 edge deployed that morning for
-exactly this lane — the `armor-s3-vpn` IngressRoute
-(`armor-iad_ci-ts.ardenone.com:8444` → `armor:9000`, path-style) — is
-down to a Traefik/cert-manager race:
+**The run.** 2026-09-27, bead `aa-c4a549c6`, complete lane 17:45–17:52Z.
+The instrument is the kit's equivalent live lane — the same driver that
+executed the live B2 run ([B2 qualification
+note](b2-storage-qualification.md) Section 9) — aimed at
+`https://armor-iad-ci-ts.ardenone.com:8444`, bucket `iad-ci`, region
+`us-west-002`, run prefix `agent-archivist/raw/aa-c4a549c6-live-qual/`.
+The identities are the provisioning note's scoped pairs, loaded from
+their per-role OpenBao paths into the environment only (raw writer for
+the writes, backup/restore for the read-backs); the anchors were
+verified first (raw writer v4, backup/restore v1; the raw-writer
+fingerprint `4e5d334895dfff80` matches the drill record). The serving
+pod was `armor-6dbb6ff7c4-89tvk` (`ronaldraygun/armor:0.1.1971`). The
+lane ran three times at the edge: two partial bring-up runs (stamps
+`a800dc0b`, `160fa507`) committed a few objects each before dying, and
+the complete run (`3770b390`) executed every instrument, its teardown
+aborting the partial run's one leftover open multipart session (`204`,
+zero open after). Every operation's status, response headers of
+interest, and latency were captured; the transcript is retained with
+the bead, not committed (SP-006), and the five-axis reduction below is
+re-derivable from it with the driver's `--from-transcript` mode.
 
-- Traefik (v3.7.13) received the route at 09:58:45Z, found the TLS
-  secret missing, retried, and logged `Error configuring TLS: secret
-  armor/armor-s3-tls does not exist` through 09:59:52Z, after which it
-  gave up and never rebuilt the route.
-- cert-manager reported the Certificate `armor-s3-tls` **Ready at
-  10:00:07Z** — fifteen seconds after Traefik's last retry.
-- Observed from the workstation since: every request on the route —
-  including calibration calls signed by the scoped archivist
-  identities — returns the Traefik default handler's 404 over the
-  **Traefik default certificate** (status 404, no S3 error body;
-  polled unchanged at 16:32:29Z). The serving pod's request log over
-  an eight-minute sample (351 requests) contains **zero** requests
-  carrying the run's prefix: the lane's traffic never reached ARMOR.
-- The alternatives are exhausted, not skipped: the credential-free
-  read-only service account cannot create `pods/portforward` (`auth
-  can-i` → no), and the real iad-ci kubeconfig is an interactive-OIDC
-  credential unusable from this box — the transient port-forward path
-  the 2026-09 rotation drills used is gone, which is why the route
-  exists at all.
+**Observed five-axis report** (tokens as defined in
+[storage profiles](storage-profiles.md) Section 3; reduced from the
+retained transcript by the committed driver):
 
-**Remediation is an operator/GitOps action** (no archivist or agent
-credential may touch a Traefik-managed resource): rebuild Traefik's
-dynamic configuration now that the secret exists — a restart of the
-`traefik-iad-ci` deployment, or a re-apply of the route through the
-declarative-config flow. Once the route serves `armor-iad_ci-ts`
-with its own certificate, the staged lane runs as-is: the instruments,
-prefix, identity loading, and observation rules are recorded with the
-bead and in the [B2 qualification note](b2-storage-qualification.md)
-Section 9.
+```text
+storage-compatibility profile=armor[live,armor-seam] conditional_create=unavailable stored_checksum=provider_specific versioning=enabled server_side_encryption=unavailable multipart_commit_abort=verified
+```
 
-**What this bead's run still binds for the ARMOR path.** The backing
-store behind the ARMOR deployment is the same bucket the direct
-B2 lane exercised, so the physical facts recorded there are the ARMOR
-path's inherited physical story: versioning enabled, provider-specific
-checksums (MD5-form ETags; non-MD5 multipart forms), no conditional
-create at the direct seam, multipart commit and abort supported, no
-bucket-default S3 encryption — and the documented aa-e827d0f0 canary
-no longer exists at the backing store, so Sections 5–6's read-probe
-expectations now describe a removed object; the next run commits its
-own probe target with the raw writer's put grant. One ARMOR-specific
-signal was also observed in the serving pod's log during the window:
-the deployment already serves conditional-PUT semantics for another
-consumer (a genuine `412 PreconditionFailed` on a `PUT`), so
-precondition behavior through ARMOR's layer is not a passthrough of
-the backing store's `501` — which makes the ARMOR lane's own
-conditional-create observation a required measurement, not an
-inference from either side.
+**Physical observations**, per instrument:
 
-**Still unknown until the lane runs against the deployment** (SP-005):
-the live five-axis answer at the ARMOR seam, real latency and
-throttling through ARMOR's layer, the authority matrix's interaction
-with the adapter's production request binding, and the passthrough
-behavior under partial failure. Unknown stays unknown; fail-closed.
+| Instrument | Observed live at the ARMOR seam | Latency |
+| --- | --- | --- |
+| calibration list (run prefix, raw writer) | `200` (the prefix already carried the partial runs' objects; the response omits `KeyCount`, so no count was captured) | ~4.3 s |
+| conditional create (`If-None-Match: *`, fresh key, then same key) | **`500 InternalError` on both** — ARMOR's own failure ("Failed to encode block table: cannot encode empty block table: invalid block table entry"), not the backing store's `501` | ~0.5–0.7 s |
+| checksum (PUT, response ETag) | `200`; ETag in the 32-hex MD5-derived form; no version-id echo | ~1.2 s |
+| versioning (two PUTs, one key) | `200`/`200`; **neither PUT echoes `x-amz-version-id`** | ~1.2–1.3 s |
+| per-key version listing (`GET key?versions`, backup/restore) | `200` — **but the body is the object's content** (`application/octet-stream`), not a version listing | ~1.8 s |
+| server-side encryption (PUT with `x-amz-server-side-encryption: AES256`; plain PUT; GetBucketEncryption) | both PUTs `200`; **the SSE header is not echoed**; GetBucketEncryption is `403 AccessDenied` from ARMOR's own authorizer — the prefix-scoped ACLs refuse the bucket-level question before the backend is asked | ~0.9–2.3 s |
+| multipart commit (create → part → complete) | `200`/`200`/`200`; complete ETag in the backing store's non-MD5 `…-1` multipart form; no version id | ~0.9–1.8 s |
+| multipart abort (create → part → abort → abort again) | first abort `204`; repeat abort `404 NoSuchUpload`; zero open uploads afterwards | ~0.9–1.6 s |
+| read-back (list objects + versions under the run prefix, backup/restore) | `200`/`200`; 12 current objects / 15 versions, exactly one `IsLatest` per multi-version key | ~2.5–4.8 s |
+
+**What the live run adds to the synthetic lane's record:**
+
+1. **Four of the five tokens held; one was honestly downgraded.**
+   `server_side_encryption=verified` (the synthetic lane's answer) does
+   not survive contact with the seam — not because encryption is absent
+   but because **the seam does not expose SSE state**: no echo on either
+   PUT, and the bucket-level question is ACL-refused before the backend,
+   so the direct seam's 404 answer is unreachable through ARMOR. The
+   fail-closed reduction is `unavailable`: what cannot be observed is
+   not claimed. Objects written through the tenant tree carry no
+   observable at-rest SSE guarantee at this seam; tenant-data protection
+   remains ARMOR's envelope (ARCH-006) on ARMOR's own API, and the
+   backing bucket has no default encryption ([B2 qualification
+   note](b2-storage-qualification.md) Section 9, fact 3).
+2. **Conditional create fails inside ARMOR, not at the backing store.**
+   The direct seam's `501 NotImplemented` predicted nothing: at this
+   seam the same request shape dies in ARMOR's block-table encoder on
+   both the fresh and the repeat PUT. ARMOR demonstrably serves
+   conditional-PUT semantics for another consumer (a genuine `412`), so
+   the `If-None-Match: *` path — exactly what the adapter's conditional
+   create would issue — is a concrete defect surface in the serving
+   release (0.1.1971), and the ARMOR lane's conditional-create
+   observation was indeed a required measurement, not an inference from
+   either side. The adapter-side rule stands unchanged: a non-2xx on
+   conditional create reduces to `unavailable`, and the write path must
+   not depend on the primitive.
+3. **`GET key?versions` is not version retrieval at this seam.** ARMOR
+   returns the object's current content with `200` and
+   `application/octet-stream` — the per-key `?versions` subresource is
+   silently swallowed. The prefix-wide `?versions&prefix=` listing
+   parses correctly and is the only usable version history here; the
+   behavior re-probed identically at record time, so it is a stable
+   seam property, not a transient. A version-aware client that trusted
+   the per-key shape would read object bytes as if they were a listing;
+   the adapter's version reconciliation must use prefix-wide listings
+   only.
+4. **No version-id echo, though the store versions every write.**
+   Physically proven through the seam — 15 versions behind 12 current
+   keys, exactly one latest per multi-version key — yet no PUT response
+   carries `x-amz-version-id`. The adapter cannot bind a returned
+   version id on this path; history reconciliation is list-only, which
+   is what the probe model's read-back-primary versioning reduction
+   already requires.
+5. **Multipart matches the direct seam, including the teardown fact.**
+   Commit `200`/`200`/`200`; abort `204` with the repeat abort's
+   `404 NoSuchUpload` — the same non-idempotence the B2 run established,
+   now through ARMOR's layer, so the teardown mapping (`NoSuchUpload` →
+   idempotent success) is required at both seams. One new ARMOR-specific
+   fact: the completed multipart object is accompanied by a sibling
+   `mp-commit-3770b390.armor-manifest` object the seam itself writes
+   under the tenant prefix — prefix listings through ARMOR include
+   ARMOR's own bookkeeping objects, and an enumerator must expect
+   non-data siblings.
+6. **Real latency through the layer, for the first time.** Write-shaped
+   operations ~0.5–2.3 s (direct seam: ~0.7–0.9 s — comparable medians,
+   fatter tail) and listings up to ~4.8 s (direct: ~3.1 s for a versions
+   list). The synthetic lane models logical behavior only; these are
+   the magnitudes the release-time budget inherits.
+7. **Residue, by design — and the retired canary replaced.** The run
+   prefix holds 12 current objects / 15 versions across the three run
+   stamps (`checksum` ×3; `versioned` ×3 keys × 2 versions; `sse` and
+   `sse-plain` ×2 each; the committed multipart object and its
+   `.armor-manifest` sibling; the conditional-create keys hold nothing —
+   both PUTs errored). No archivist identity holds `delete`, so this
+   residue stands exactly as the aa-e827d0f0 canary stood: removal is an
+   operator action. It also fills the gap the canary's disappearance
+   left — Sections 5–6's read-probe expectations (writer 403 / restorer
+   200 on an identical committed key) now have a live, bead-owned target
+   in any key under this prefix.
+
+**Record-time reconciliation** (read-only, same identities, ~18:10Z,
+this bead's second attempt): prefix state unchanged (12 keys / 15
+versions / 3 multi-version keys, each with exactly one latest), zero
+open multipart uploads, the per-key `?versions` behavior reproduces, and
+the edge serves its own Let's Encrypt certificate. The reconciliation
+transcript is retained with the bead alongside the run's.
+
+**Still not established** (SP-005 honesty): throttling and error
+behavior under load; passthrough behavior under partial failure beyond
+the conditional-create 500; account-level controls outside the tenant
+prefixes; the backing bucket's lifecycle rules (invisible to this
+identity set by construction); and the production request backend's
+composition on these semantics — the backend does not exist yet
+(Section 8), so nothing here exercises archivist code against live
+ARMOR. What this run establishes is the seam's physical answer set: the
+capability report the adapter must treat as the truth when the backend
+lands.

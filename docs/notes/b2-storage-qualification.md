@@ -260,6 +260,6 @@ storage-compatibility profile=backblaze-b2[live,direct] conditional_create=unava
 
 **Still not established by this run** (SP-005 honesty): throttling and
 error behavior under load, account-level controls outside the bucket,
-the ARMOR path's own layer over this backing store — that is the
-[ARMOR qualification note](armor-storage-qualification.md) Section 11,
-whose live run could not execute and is recorded as such.
+the ARMOR path's own layer over this backing store — the
+[ARMOR qualification note](armor-storage-qualification.md) Section 11
+records that layer's own live run, executed the same day.
