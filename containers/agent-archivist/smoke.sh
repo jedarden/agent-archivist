@@ -480,7 +480,25 @@ STALE_STATUS="$(post_attempt "$SMOKE_PORT_R1" \
   "$SMOKE_WORK_DIR/records/stale-response.json")"
 ALTERED="$SMOKE_WORK_DIR/attempts/altered.body"
 cp "$SMOKE_WORK_DIR/attempts/request.body" "$ALTERED"
-printf 'X' | dd of="$ALTERED" bs=1 seek=200 conv=notrunc status=none
+# The flip lands inside part two — the payload bytes — by construction:
+# the midpoint between the payload part's boundary line and the closing
+# boundary. A flip in part one would corrupt the envelope's schema and
+# answer the parse gate (envelope.schema_invalid) before authorization
+# is even reached; a payload flip survives parsing, and the digest
+# agreement it breaks is checked only after the evidence gate — 503
+# server.unavailable today, the rejection class once the transport key
+# makes digest verification reachable.
+FLIP_AT="$(python3 - "$ALTERED" "$SMOKE_WORK_DIR/attempts/content-type.txt" <<'PY'
+import sys
+body = open(sys.argv[1], "rb").read()
+content_type = open(sys.argv[2]).read()
+boundary = ("--" + content_type.split("boundary=")[1].strip()).encode()
+part_two = body.find(boundary, body.find(boundary) + 1)
+closing = body.find(boundary, part_two + 1)
+print((part_two + closing) // 2)
+PY
+)"
+printf 'X' | dd of="$ALTERED" bs=1 seek="$FLIP_AT" conv=notrunc status=none
 ALTERED_STATUS="$(post_attempt "$SMOKE_PORT_R1" "$ALTERED" \
   "$SMOKE_WORK_DIR/attempts/content-type.txt" \
   "$SMOKE_WORK_DIR/attempts/attempt.json" \
@@ -629,9 +647,18 @@ else
 fi
 CAPS_OK=1
 for name in aa-smoke-r1 aa-smoke-r2; do
+  # The second replica booted moments ago; its docker HEALTHCHECK probes
+  # on a 30s interval behind a 15s start period. Give each replica the
+  # same bounded window the health stage gives the first before judging
+  # it left the envelope.
+  HEALTHY=0
+  for _ in $(seq 1 30); do
+    [ "$(docker_health "$name")" = "healthy" ] && { HEALTHY=1; break; }
+    sleep 3
+  done
+  [ "$HEALTHY" -eq 1 ] || { CAPS_OK=0; echo "[smoke] $name never reached healthy ($(docker_health "$name"))" >&2; }
   state="$(docker inspect --format '{{.State.OOMKilled}} {{.RestartCount}}' "$name" 2>/dev/null || echo missing)"
   [ "$state" = "false 0" ] || { CAPS_OK=0; echo "[smoke] $name state: $state" >&2; }
-  [ "$(docker_health "$name")" = "healthy" ] || CAPS_OK=0
 done
 if [ "$CAPS_OK" -eq 1 ]; then
   record PASS multi-replica "both replicas healthy, never OOM-killed, zero restarts inside the reference envelope"

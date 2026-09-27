@@ -265,9 +265,11 @@ Asserted:
      freshness gate — the one authorization decision that needs no
      control evidence — and answers the single closed wire class
      `auth.authorization_rejected`; and
-   - a byte-altered fresh body (one flipped byte at a fixed offset,
-     breaking the request digest and the envelope transport together)
-     carries a proof whose digests no longer describe it — but a
+   - a byte-altered fresh body (one flipped byte placed inside part
+     two by construction — the midpoint of the payload part — so the
+     envelope itself still parses; the flip breaks the request digest
+     and the envelope transport together) carries a proof whose
+     digests no longer describe it — but a
      replica verifies nothing it cannot check against readable control
      evidence, so today it stops at the registry boundary instead
      (503 `server.unavailable`, Section 7's gap three); post-landing
