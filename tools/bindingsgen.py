@@ -62,10 +62,14 @@ rules only.
 
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import json
 import re
 import sys
+import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -85,6 +89,12 @@ MAX_LINE = 96
 class GenerationError(Exception):
     """A fail-closed extraction error: the family holds something the
     generator does not model, and emitting nothing is the only safe output."""
+
+
+def fail(message: str) -> None:
+    """A clean tool failure: name the violated rule on stderr and let the
+    caller supply the exit code — never a traceback."""
+    print(f"FAIL: {message}", file=sys.stderr)
 
 
 def load_family() -> dict[str, dict]:
@@ -430,24 +440,24 @@ def run_generate(argv: list[str]) -> int:
     return 0
 
 
-def run_verify() -> int:
+def run_verify(output: Path = DEFAULT_OUTPUT) -> int:
     try:
         schemas = load_family()
         text = render_module(schemas)
     except GenerationError as exc:
         fail(str(exc))
         return 3
-    if not DEFAULT_OUTPUT.is_file():
-        fail(f"{DEFAULT_OUTPUT}: missing committed bindings module")
+    if not output.is_file():
+        fail(f"{output}: missing committed bindings module")
         return 2
-    report = first_difference(text.encode("utf-8"), DEFAULT_OUTPUT.read_bytes())
+    report = first_difference(text.encode("utf-8"), output.read_bytes())
     if report is not None:
-        fail(f"{DEFAULT_OUTPUT}: committed bindings drifted from the schemas")
+        fail(f"{output}: committed bindings drifted from the schemas")
         fail(f"  {report}")
         fail("  regenerate with: python3 tools/bindingsgen.py --generate")
         return 2
     print(f"agent-archivist protocol bindings: {summarize(schemas, text)}")
-    print(f"OK: {DEFAULT_OUTPUT} matches regeneration from {SCHEMA_DIR}")
+    print(f"OK: {output} matches regeneration from {SCHEMA_DIR}")
     return 0
 
 
@@ -469,6 +479,14 @@ def run_self_test() -> int:
             drifted = True
             label = f"{label} (rejected: {exc})"
         return label, drifted
+
+    def captured_exit(call: Callable[[], int]) -> tuple[int, str]:
+        """Run a mode entry point with stderr captured: a clean failure
+        prints a message and returns its exit code, never a traceback."""
+        buffer = io.StringIO()
+        with contextlib.redirect_stderr(buffer):
+            code = call()
+        return code, buffer.getvalue()
 
     checks: list[tuple[str, bool]] = []
     checks.append((
@@ -507,6 +525,38 @@ def run_self_test() -> int:
                    first_difference(generated, hand_edited) is not None))
     checks.append(("the drift detector accepts identical bytes",
                    first_difference(generated, generated) is None))
+
+    # The failure paths report through `fail` and exit cleanly: a usage or
+    # argument error, a missing committed module, and detected drift each
+    # name the rule on stderr and return 2 — never a NameError traceback.
+    code, message = captured_exit(lambda: main(["tools/bindingsgen.py"]))
+    checks.append((
+        "the usage path reports usage and exits 2 (no NameError traceback)",
+        code == 2 and "usage:" in message and "Traceback" not in message,
+    ))
+    code, message = captured_exit(
+        lambda: main(["tools/bindingsgen.py", "--verify", "extra"]))
+    checks.append((
+        "an argument error names the rule and exits 2",
+        code == 2 and "--verify takes no arguments" in message
+        and "Traceback" not in message,
+    ))
+    with tempfile.TemporaryDirectory() as scratch:
+        code, message = captured_exit(
+            lambda: run_verify(Path(scratch) / "absent" / "bindings.rs"))
+        checks.append((
+            "--verify on a missing committed module fails cleanly",
+            code == 2 and "missing committed bindings module" in message
+            and "Traceback" not in message,
+        ))
+        drifted = Path(scratch) / "drifted-bindings.rs"
+        drifted.write_text(hand_edited.decode("utf-8"), encoding="utf-8")
+        code, message = captured_exit(lambda: run_verify(drifted))
+        checks.append((
+            "--verify on a drifted module fails cleanly",
+            code == 2 and "drifted from the schemas" in message
+            and "Traceback" not in message,
+        ))
 
     passed = sum(1 for _, ok in checks if ok)
     for label, ok in checks:
