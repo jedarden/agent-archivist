@@ -188,9 +188,12 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   run_check "config registry"     python3 tools/check-config.py --self-test
   # CLI command registry (docs/notes/cli.md): command grammar, the three
   # disjoint flag namespaces, the versioned output envelope, and
-  # cross-registry coherence with the config keys — including that no
-  # secret key ever exposes a flag tier; `--self-test` proves the
-  # rejection paths.
+  # cross-registry coherence in both directions — with the config keys
+  # (every consumed key registered under a workspace-crate owner, every
+  # registered key consumed, no secret key ever exposing a flag tier) and
+  # with the error-code registry (every code the CLI contract exits on
+  # named, classified, and derived by a command's registry row);
+  # `--self-test` proves the rejection paths.
   run_check "cli command registry"  python3 tools/check-cli.py --self-test
   # Wire-schema coherence (docs/notes/wire-schemas.md): refs, fail-closed
   # enum/version metadata, reserved-name blocks, the construction registry,

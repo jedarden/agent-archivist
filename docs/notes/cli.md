@@ -266,19 +266,28 @@ in the same commit.
   three flag namespaces (mode, key-derived, operational — pairwise disjoint,
   each injective), cross-registry coherence with
   [`tools/config-keys.toml`](../../tools/config-keys.toml) (command key
-  lists reference registered keys; every registered key is consumed; no
-  secret key exposes a flag tier), and the output envelope schema
-  (`$id`, namespace const, closed member set, `command` pattern agreement
-  with the registry's joined forms, resolvable `generated_at` reference,
-  no floats). It runs in the fast lane, so no commit can land an invalid
-  command surface.
+  lists reference registered keys, each naming a workspace-crate owner from
+  the [crate-ownership map](crate-ownership.md); every registered key is
+  consumed; no secret key exposes a flag tier), cross-registry coherence
+  with the [error-code
+  registry](../../tools/error-codes.toml) — both directions of the CLI-002
+  exit join: every code the contract exits on (the usage pair from every
+  command, the lock-contention code from every exclusive command) is one
+  the registry names, in the class and at the exit the contract pins, and
+  each is derived by at least one command's registry row — and the output
+  envelope schema (`$id`, namespace const, closed member set, `command`
+  pattern agreement with the registry's joined forms, resolvable
+  `generated_at` reference, no floats). It runs in the fast lane, so no
+  commit can land an invalid command surface.
 - **CLI-030** — Its `--self-test` mode mutates copies of the committed
-  trio — bad command grammar, joined-form collisions, flag collisions in
-  each direction, a value-taking operational flag, unknown or duplicate key
-  references, a registered key no command consumes, a secret key granted a
-  flag tier, enum and bound drift, and a schema with a wrong namespace, an
-  opened shape, a dropped member, a float, or a dangling reference — and
-  fails unless every one is rejected. The rejection paths are tested, not
+  registries — bad command grammar, joined-form collisions, flag collisions
+  in each direction, a value-taking operational flag, unknown or duplicate
+  key references, a consumed key naming a non-crate owner, a registered key
+  no command consumes, a contract exit code no command's row derives, a
+  secret key granted a flag tier, enum and bound drift, and a schema with a
+  wrong namespace, an opened shape, a dropped member, a float, or a
+  dangling reference — and fails unless every one is rejected. The
+  rejection paths are tested, not
   assumed.
 - **CLI-031** — Runtime tests that follow (the Phase 3 linking, Phase 4
   server, and Phase 5 client suites) **MUST** assert against this registry:

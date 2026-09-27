@@ -9,21 +9,26 @@ artifacts that pin it:
    bounded summaries, phase and owner sanity, joined-form uniqueness
    (CLI-005), and boolean, globally unique operational flags (CLI-011);
 2. cross-registry coherence with ``tools/config-keys.toml`` — a command's
-   key list references registered keys only, every registered key is
-   consumed by at least one command, and no secret key exposes a flag tier
-   (CLI-010, CLI-024), so the argument surface is secret-free by
-   construction;
+   key list references registered keys only, every consumed key names a
+   workspace-crate owner from the crate-ownership map, every registered key
+   is consumed by at least one command, and no secret key exposes a flag
+   tier (CLI-002, CLI-010, CLI-024), so the argument surface is secret-free
+   by construction;
 3. ``schemas/v1/cli-output.json`` (``archivist.cli-output/v1``) — the $id,
    the namespace const, the closed four-member envelope, the command-token
    pattern the registry's joined forms must satisfy, the resolvable
    ``generated_at`` reference, and the no-float discipline (CLI-014);
 4. cross-registry coherence with ``tools/error-codes.toml`` — the exit
    mappings and error conditions the CLI contract names (CLI-002's third
-   registry): the usage class allocates exit 64 for ``cli.usage_error`` and
-   ``cli.decision_missing`` (CLI-008, CLI-022), the lock-contention class
-   allocates exit 75 for ``client.lock_held`` (CLI-007), no class claims
-   exit 0 — the success exit (CLI-018) — and none reaches the ``128+n``
-   signal range (CLI-020, ERR-023).
+   registry), in both directions: the usage class allocates exit 64 for
+   ``cli.usage_error`` and ``cli.decision_missing`` (CLI-008, CLI-022), the
+   lock-contention class allocates exit 75 for ``client.lock_held``
+   (CLI-007), no class claims exit 0 — the success exit (CLI-018) — none
+   reaches the ``128+n`` signal range (CLI-020, ERR-023), every code a
+   command's contract can exit with is one the registry names, and every
+   one of those codes is derived by at least one command's registry row —
+   the usage pair from every command, the lock code from every command
+   whose state lock is ``exclusive``.
 
 The three flag namespaces (mode, key-derived, operational) are proven
 pairwise disjoint, and the mode-flag set is pinned here so neither registry
@@ -231,6 +236,7 @@ def validate(cli: dict, config: dict, schema: dict,
     joined: dict[str, str] = {}
     operational: dict[str, str] = {}
     consumed: set[str] = set()
+    exit_sources: dict[str, list[str]] = {}
     for name, declared in commands.items():
         what = f"command {name!r}"
         if not isinstance(name, str):
@@ -288,6 +294,18 @@ def validate(cli: dict, config: dict, schema: dict,
                 if key not in config_keys:
                     errors.append(f"{what} consumes unregistered key {key!r} "
                                   "(CFG-001, CLI-010)")
+                else:
+                    # CLI-002: the consumption joins the command to a key
+                    # whose owning crate is on the crate-ownership map
+                    # (docs/notes/crate-ownership.md) — a command may not
+                    # configure a value no crate owns.
+                    key_declared = config_keys[key]
+                    key_owner = (key_declared.get("owner")
+                                 if isinstance(key_declared, dict) else None)
+                    if key_owner not in CRATES:
+                        errors.append(f"{what} consumes key {key!r} whose "
+                                      f"owner {key_owner!r} is not a "
+                                      "workspace crate (CLI-002)")
             consumed.update(keys)
 
         flags = declared.get("flags", {})
@@ -341,17 +359,45 @@ def validate(cli: dict, config: dict, schema: dict,
                 errors.append(f"{what} result_schema {result_schema!r} does "
                               "not exist in this tree")
 
-    # --- coverage: the two registries close over each other -----------------
+        # CLI-002's exit join: the codes this command's contract can exit
+        # with. The usage pair is reachable from every command (CLI-008,
+        # CLI-022); the lock code from every command whose state lock is
+        # exclusive (CLI-007). An invalid state_lock is reported above and
+        # derives nothing beyond the usage pair.
+        contract_exits = set(USAGE_CODES)
+        if declared.get("state_lock") == "exclusive":
+            contract_exits.add(LOCK_CODE)
+        for code in sorted(contract_exits):
+            exit_sources.setdefault(code, []).append(name)
+
+    # --- coverage: the registries close over each other ---------------------
     unconsumed = sorted(set(config_keys) - consumed)
     if unconsumed:
         errors.append("registered keys no command consumes (CLI-010): "
                       f"{unconsumed}")
+    unreferenced = sorted(code for code in (*USAGE_CODES, LOCK_CODE)
+                          if code not in exit_sources)
+    if unreferenced:
+        errors.append("error codes the CLI contract exits on that no "
+                      f"command's registry row derives (CLI-002): "
+                      f"{unreferenced}")
 
     # --- output envelope -----------------------------------------------------
     errors.extend(schema_errors(schema, set(joined)))
 
     # --- cross-registry coherence with the error-code registry ---------------
     errors.extend(error_coherence(error_registry))
+    # The forward direction of the exit join: every code a command's row
+    # derives is one the error registry names. (The class each pinned code
+    # sits in and the exit its class allocates are error_coherence's check
+    # above.)
+    codes_table = error_registry.get("codes")
+    if isinstance(codes_table, dict):
+        for code in sorted(exit_sources):
+            if code not in codes_table:
+                errors.append(f"commands {exit_sources[code]} exit on "
+                              f"{code!r}, which the error-code registry "
+                              "does not name (CLI-002)")
     return errors
 
 
@@ -544,6 +590,9 @@ SELF_TEST_CASES: list[tuple[str, str, object]] = [
      lambda c, k, s, e: c["commands"]["status"].__setitem__("stdin", "tty")),
     ("consumption of an unregistered key", "cli",
      lambda c, k, s, e: c["commands"]["status"]["keys"].append("teapot.mode")),
+    ("consumed key naming a non-workspace owner", "config",
+     lambda c, k, s, e: k["keys"]["client.state_dir"].__setitem__(
+         "owner", "archivist-teapot")),
     ("duplicate key in one command's list", "cli",
      lambda c, k, s, e: c["commands"]["status"]["keys"].append(
          "client.state_dir")),
@@ -609,6 +658,10 @@ SELF_TEST_CASES: list[tuple[str, str, object]] = [
     ("client.lock_held reclassified off lock contention", "errors",
      lambda c, k, s, e: e["codes"]["client.lock_held"].__setitem__(
          "class", "internal")),
+    ("a contract exit code no command's row derives", "cli",
+     lambda c, k, s, e: (
+         c["commands"]["daemon"].__setitem__("state_lock", "read_only"),
+         c["commands"]["run"].__setitem__("state_lock", "read_only"))),
     ("error class claiming the success exit", "errors",
      lambda c, k, s, e: e["classes"]["internal"].__setitem__("exit", 0)),
     ("error class claiming the 128+n signal range", "errors",
