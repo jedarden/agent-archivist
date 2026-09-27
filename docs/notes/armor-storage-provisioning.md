@@ -582,6 +582,24 @@ boto3 import — the real import is lazy) wired into the DoD fast lane;
 the live run itself is deliberately not a gate, because it needs a
 reachable serving edge and real pairs.
 
+`tools/rotation-drill.py` composes the probe into the drill this section
+describes — `baseline` (step 1: delivery-chain preflight, serving-pod
+snapshot, startup-dump fingerprints, the positive pin), `watch` (the
+propagation hops: ExternalSecret `refreshTime` bump, Reloader rollout,
+per-sample ready counts for continuity, and the replacement pod's dump
+captured the moment it runs), `flip` (the step-6 matrix, one probe
+subprocess per credential state, pairs in the child's environment only),
+and `verify` (the machine-checked verdict: preflight held, continuity
+never sampled at zero, the new fingerprint present in and the retired
+fingerprint absent from the replacement dumps, every flip row matched).
+Staging the rotation (steps 2–4) stays a manual OpenBao write; the
+evidence file carries only fingerprints and status codes, mode 600, and
+a supplied pair value reaching its text refuses the write.
+[`docs/notes/rotation-drill-runbook.md`](rotation-drill-runbook.md) is
+the operating guide; the orchestrator's `--self-test` (scripted fake
+cluster with a real rollout timeline, no network, no credentials) is
+wired into the DoD fast lane beside the probe's.
+
 ### Intended rotation interval per role
 
 | Role | Interval | Anchor (current version) | Next due | Rationale |

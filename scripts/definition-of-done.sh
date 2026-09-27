@@ -262,6 +262,16 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # in-process fake client. The live run is a drill instrument, never a
   # gate.
   run_check "rotation probe"  python3 tools/rotation-drill-probe.py --self-test
+  # Rotation-drill orchestrator (docs/notes/rotation-drill-runbook.md): the
+  # baseline/watch/flip/verify composition of the probe into one drill —
+  # delivery-chain preflight, the propagation watch with per-sample
+  # continuity, the step-6 enforcement matrix, and the machine-checked
+  # verdict. Credential pairs travel by environment only, the only
+  # credential-derived evidence values are fingerprints, and an evidence
+  # write carrying a supplied pair value is refused; --self-test proves
+  # that contract and that every injected fault fails the verdict, against
+  # a scripted fake cluster. The live drill is a runbook run, never a gate.
+  run_check "rotation drill orchestrator"  python3 tools/rotation-drill.py --self-test
   # Armor identity set (docs/notes/armor-storage-provisioning.md,
   # "Identities" and tools/armor-identities.toml): the machine-readable
   # record of the six scoped storage identities — ADR-012 ACL grammar,
