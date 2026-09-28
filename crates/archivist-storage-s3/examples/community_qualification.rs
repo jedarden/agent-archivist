@@ -51,7 +51,7 @@ use archivist_protocol::vocabulary::{TenantId, Timestamp};
 use archivist_storage_s3::config::{EncryptionPolicy, PathStyle, S3StorageConfig};
 use archivist_storage_s3::lifecycle_audit::S3LifecycleAuditStore;
 use archivist_storage_s3::probe::S3ProbeSource;
-use archivist_storage_s3::qualify::{self, RunPlan, RunTranscript, FIXTURE_TENANT};
+use archivist_storage_s3::qualify::{self, FIXTURE_TENANT, RunPlan, RunTranscript};
 use archivist_storage_s3::raw_write::S3RawWriteStore;
 use archivist_storage_s3::request::S3RequestBackend;
 
@@ -140,9 +140,8 @@ impl Settings {
             .control_read_credentials(self.control_read_credentials.clone())
             .offline_restore_credentials(self.offline_restore_credentials.clone());
         if let Some(token) = self.path_style.as_deref() {
-            let path_style = PathStyle::parse(token).map_err(|_| {
-                "ARCHIVIST_QUALIFY_PATH_STYLE is outside its token set".to_owned()
-            })?;
+            let path_style = PathStyle::parse(token)
+                .map_err(|_| "ARCHIVIST_QUALIFY_PATH_STYLE is outside its token set".to_owned())?;
             builder = builder.path_style(path_style);
         }
         builder
@@ -187,8 +186,8 @@ fn settings() -> Result<Settings, String> {
 /// authority type); the audit store rides the offline-restore identity.
 fn execute(settings: &Settings) -> Result<RunTranscript, String> {
     let config = settings.storage_config()?;
-    let tenant =
-        TenantId::parse(FIXTURE_TENANT).map_err(|_| "the kit's fixture tenant parses".to_owned())?;
+    let tenant = TenantId::parse(FIXTURE_TENANT)
+        .map_err(|_| "the kit's fixture tenant parses".to_owned())?;
     let profile_key = settings.profile_key.clone();
     let suite_revision = settings.suite_revision.clone();
     let read_capable = settings.read_capable == "true";
