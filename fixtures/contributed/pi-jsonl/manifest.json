@@ -1,0 +1,57 @@
+{
+  "corpus": "authentic-pi-jsonl-v1-v2",
+  "manifest_version": 1,
+  "generated_at": "2026-09-28T14:24:47Z",
+  "read_only": true,
+  "review": {
+    "reviewed_at": "2026-09-28",
+    "scope": "Every byte of every JSONL artifact in this directory",
+    "result": "pass",
+    "credentials": "none present",
+    "unintended_host_user_session_identifiers": "none present; generated IDs and timestamps are required Pi fields and are not attributable to a real installation",
+    "sensitive_transcript_content": "none present; no prompt, response text, tool payload, extension data, or provider data",
+    "sanitization": "Generated from fresh SessionManager instances with a neutral cwd; the empty assistant record exists only to trigger the package writer's persistence path. No real transcript was collected."
+  },
+  "artifacts": [
+    {
+      "path": "session-v1.jsonl",
+      "fingerprint": "pi-jsonl-v1",
+      "header_version": 1,
+      "header_version_encoding": "omitted legacy version member",
+      "sha256": "665cf8224996464cf6d3d03f7f2d884eee29e2020c6722f60142e070c4fe968a",
+      "bytes": 239,
+      "jsonl_records": 2,
+      "provenance": {
+        "source": "official Pi coding-agent npm package",
+        "package": "@mariozechner/pi-coding-agent",
+        "package_version": "0.30.0",
+        "npm_tarball": "https://registry.npmjs.org/@mariozechner/pi-coding-agent/-/pi-coding-agent-0.30.0.tgz",
+        "npm_sha512_integrity": "sha512-t6zcxwSySiN0/UDei/YdDuHuUlgUgm8nKqX62oTbcOhCeGxixI7XrYCORV+LEP2c/q9yP2FgSVbDg+OkjgjQqw==",
+        "upstream_repository": "https://github.com/earendil-works/pi",
+        "upstream_tag": "v0.30.0",
+        "upstream_commit": "6d97d212d5b5b2927cdcd8e668af05f51e157ddd",
+        "writer": "SessionManager.create('/workspace/pi-jsonl-corpus', output_dir); saveMessage({ role: 'assistant', content: [] })"
+      }
+    },
+    {
+      "path": "session-v2.jsonl",
+      "fingerprint": "pi-jsonl-v2",
+      "header_version": 2,
+      "header_version_encoding": "explicit version member",
+      "sha256": "a1db13d8c78294dd3f917e592b88503b335f27e937c739cddcbf8a5052cd0957",
+      "bytes": 283,
+      "jsonl_records": 2,
+      "provenance": {
+        "source": "official Pi coding-agent npm package",
+        "package": "@mariozechner/pi-coding-agent",
+        "package_version": "0.32.0",
+        "npm_tarball": "https://registry.npmjs.org/@mariozechner/pi-coding-agent/-/pi-coding-agent-0.32.0.tgz",
+        "npm_sha512_integrity": "sha512-/1YesYuG1ZKWtccO2FhtR4qS5czV5DwPWCwcE+QOVMbZOEc+2Vzxkh+kgvzouzcVdBXCkCGPsfNa/CvDtr8Xmg==",
+        "upstream_repository": "https://github.com/earendil-works/pi",
+        "upstream_tag": "v0.32.0",
+        "upstream_commit": "42a19ea81dea05aa15e610eac4df1043ad34de02",
+        "writer": "SessionManager.create('/workspace/pi-jsonl-corpus', output_dir); appendMessage({ role: 'assistant', content: [] })"
+      }
+    }
+  ]
+}
