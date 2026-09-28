@@ -18,11 +18,17 @@ into a drill and adds the propagation watch the probe cannot do:
 2. ``watch`` — after the operator stages the rotation through OpenBao (by
    pipe, under the provisioning identity — deliberately not automated), poll
    the chain until the flip is observed: the ExternalSecret ``refreshTime``
-   bump, the rollout (new pod appears, goes Ready, baseline pods terminate),
-   a per-sample ready count (service continuity), and the replacement pod's
+   bump, the rollout (new pods appear, go Ready, baseline pods terminate),
+   a per-sample ready count (service continuity), and the replacement pods'
    startup-dump fingerprints captured promptly — kubelet retention can be
-   under an hour at request volume, so the dump is taken the moment the pod
-   is Running, not at the end.
+   under an hour at request volume, so each dump is taken the moment its pod
+   is Running, not at the end. The rollout counts as observed only once it
+   has **converged across every replica**: every live pod matching the
+   selector is a post-baseline replacement, Ready, and dump-captured. A
+   replica that escapes replacement is serving a stale secret — the subPath
+   mount means the kubelet never rewrites a running container's credential
+   file, so delivery *is* replacement — and the watch names that state
+   rather than declaring victory on whichever replica happened to roll.
 3. ``flip`` — the step-6 enforcement matrix, one probe subprocess per
    credential state: current pair positive, retired pair ``403
    InvalidAccessKeyId``, current key with a sentinel wrong secret ``403
@@ -30,8 +36,9 @@ into a drill and adds the propagation watch the probe cannot do:
 4. ``verify`` — replay the evidence file against the documented
    expectations and print the verdict: preflight held, baseline pinned,
    exactly the propagation hops observed, ready count never dropped to
-   zero, the replacement pod's dump carries the new fingerprint and not the
-   retired one, and every flip row matched.
+   zero and reached the deployment's replica count, every converged
+   replica's dump carries the new fingerprint and the retired one appears
+   in none, and every flip row matched.
 
 Policy, one rule per check in the self-test:
 
@@ -48,9 +55,18 @@ Policy, one rule per check in the self-test:
    them cannot pass ``verify``: a ready-count gap, a retired fingerprint
    still present, a flip row off by one error code, or a missing
    replacement-pod dump each fail the verdict;
-4. ``--self-test`` proves all of the above deterministically against a
+4. the rollout verdict is per-replica, not existential — the watch
+   converges only when every live pod matching the selector is a
+   post-rotation replacement that is Ready and dump-captured, and
+   ``verify`` asserts the new fingerprint in every converged replica's
+   dump: on a multi-replica deployment one stale replica (the subPath
+   hazard — an unreplaced pod keeps serving the retired pair forever)
+   fails the drill even when every other replica rolled cleanly;
+5. ``--self-test`` proves all of the above deterministically against a
    scripted fake cluster and fake probes: no network, no kubectl binary,
-   no boto3, no credentials.
+   no boto3, no credentials — including a two-replica rollout where one
+   replica escapes replacement, stays not-Ready, or serves a different
+   credential, each of which must fail the drill.
 
 Usage::
 
@@ -514,7 +530,10 @@ def cmd_watch(cfg, args, kc, clock=None, sleeper=None, values=None):
     samples = []
     dumps = {}
     hop = {"t0": t0_text, "eso_refresh_bumped": False, "new_pods": [],
-           "baseline_pods_gone": False, "new_pod_ready": False, "timed_out": False}
+           "baseline_pods_gone": False, "new_pod_ready": False,
+           "converged": False, "timed_out": False}
+    final_pods = []
+    stale = not_ready = missing_dump = []
     deadline = clock() + timeout
     while True:
         try:
@@ -545,12 +564,32 @@ def cmd_watch(cfg, args, kc, clock=None, sleeper=None, values=None):
             if bump and not hop["eso_refresh_bumped"]:
                 hop["eso_refresh_bumped_at"] = now_iso()
             hop["eso_refresh_bumped"] = hop["eso_refresh_bumped"] or bool(bump)
+            # Convergence is per-replica: every live pod matching the
+            # selector must be a post-baseline replacement, Ready, and
+            # dump-captured. "Live" excludes terminating pods; a pod that
+            # escapes replacement, never goes Ready, or whose dump cannot
+            # be captured keeps the rollout unconverged — that replica
+            # would be serving a stale secret (subPath mounts are never
+            # rewritten in place), so the drill refuses to call the flip
+            # observed while it survives.
+            live = [p for p in snap["pods"] if not p["deleting"]]
+            stale = [p for p in live if p["uid"] in baseline_uids]
+            not_ready = [p for p in live if p["uid"] not in baseline_uids
+                         and not p["ready"]]
+            missing_dump = [p for p in live if p["uid"] not in baseline_uids
+                            and p["name"] not in dumps]
+            hop["converged"] = (hop["eso_refresh_bumped"] and hop["baseline_pods_gone"]
+                                and bool(live) and not stale and not not_ready
+                                and not missing_dump)
+            if hop["converged"]:
+                final_pods = [{"name": p["name"], "uid": p["uid"],
+                               "ready": p["ready"]} for p in live]
+                hop["converged_at"] = hop.get("converged_at") or now_iso()
             samples.append({"t": now_iso(), "ready": snap["ready"],
                             "refresh_time": snap["refresh_time"],
                             "new_ready": sorted(p["name"] for p in new if p["ready"])})
         hop["new_pods"] = hop["new_pods"] or []
-        if (hop["eso_refresh_bumped"] and hop["new_pod_ready"]
-                and hop["baseline_pods_gone"] and dumps):
+        if hop["converged"]:
             break
         if clock() >= deadline:
             hop["timed_out"] = True
@@ -562,6 +601,8 @@ def cmd_watch(cfg, args, kc, clock=None, sleeper=None, values=None):
         "t0": t0_text,
         "samples": samples,
         "min_ready": min(readies) if readies else None,
+        "max_ready": max(readies) if readies else None,
+        "final_pods": final_pods,
         "replacement_dumps": dumps,
         "hop": hop,
     }
@@ -569,15 +610,20 @@ def cmd_watch(cfg, args, kc, clock=None, sleeper=None, values=None):
     if rc:
         return rc
     if hop["timed_out"]:
-        print("watch: TIMED OUT before the full chain was observed "
-              f"(eso_bumped={hop['eso_refresh_bumped']}, new_ready={hop['new_pod_ready']}, "
-              f"baseline_gone={hop['baseline_pods_gone']}, dumps={len(dumps)}) — "
-              "evidence recorded; investigate before re-running")
+        print("watch: TIMED OUT before the rollout converged across every "
+              f"replica (eso_bumped={hop['eso_refresh_bumped']}, "
+              f"baseline_gone={hop['baseline_pods_gone']}, "
+              f"stale_replicas={len(stale)}, not_ready_replicas={len(not_ready)}, "
+              f"replicas_missing_dump={len(missing_dump)}) — evidence recorded; "
+              "a surviving baseline replica or an unReady replacement is "
+              "serving a stale secret; investigate before re-running")
         return 4
-    print(f"watch: flip observed — eso {hop.get('eso_refresh_bumped_at')}, "
-          f"new pod ready {hop.get('new_pod_ready_at')}, baseline gone "
-          f"{hop.get('baseline_pods_gone_at')}, {len(dumps)} replacement dump(s), "
-          f"min ready {ev['watch']['min_ready']} across {len(samples)} samples")
+    print(f"watch: flip observed and converged — eso {hop.get('eso_refresh_bumped_at')}, "
+          f"baseline gone {hop.get('baseline_pods_gone_at')}, "
+          f"{len(final_pods)} live replica(s) all replacements and ready, "
+          f"{len(dumps)} replacement dump(s), "
+          f"ready {ev['watch']['min_ready']}–{ev['watch']['max_ready']} "
+          f"across {len(samples)} samples")
     print("watch: run `flip` for the enforcement matrix, then `verify`.")
     return 0
 
@@ -664,14 +710,41 @@ def cmd_verify(cfg, args):
     if watch:
         hop = watch.get("hop", {})
         check("watch: eso refresh bumped", hop.get("eso_refresh_bumped"))
-        check("watch: replacement pod appeared and went ready", hop.get("new_pod_ready"))
+        check("watch: replacement pods appeared", bool(hop.get("new_pods")))
         check("watch: baseline pods replaced", hop.get("baseline_pods_gone"))
         check("watch: not timed out", not hop.get("timed_out"))
         mr = watch.get("min_ready")
         check("watch: service continuity (ready never sampled at 0)", mr is not None and mr >= 1,
               f"min_ready={mr} over {len(watch.get('samples', []))} samples")
-        check("replacement dump captured", bool(repl_dumps),
-              "kubelet may have rotated it; re-run the drill capturing promptly")
+        replicas = (ev.get("preflight", {}).get("observed", {}) or {}).get("replicas")
+        xr = watch.get("max_ready")
+        check("watch: ready count reached the deployment's replicas",
+              replicas is not None and xr is not None and xr >= replicas,
+              f"max_ready={xr}, deployment replicas={replicas}")
+        # The converged final pod set is the anti-stale core: every live
+        # replica at convergence must be a post-baseline replacement…
+        finals = watch.get("final_pods") or []
+        check("watch: converged final pod set recorded", bool(finals),
+              "the rollout never converged across every replica; read the "
+              "watch's timeout diagnostics for the stale/not-ready/"
+              "missing-dump replica counts")
+        check("watch: every converged replica is ready",
+              bool(finals) and all(p.get("ready") for p in finals))
+        check("watch: every converged replica is a replacement",
+              bool(finals) and all(p.get("uid") not in
+                                   {q.get("uid") for q in ev.get("pods", [])}
+                                   for p in finals))
+        final_names = {p.get("name") for p in finals}
+        captured = sorted(final_names - set(repl_dumps))
+        check("replacement dump captured for every converged replica",
+              bool(finals) and not captured,
+              (f"missing dumps: {captured}; kubelet may have rotated them — "
+               "re-run the drill capturing promptly" if captured else
+               f"{len(final_names)} converged replica(s)"))
+        for name in sorted(final_names & set(repl_dumps)):
+            fps = repl_dumps[name].get("fingerprints", [])
+            check(f"new fingerprint in replacement dump of {name}",
+                  new_fp in fps, f"new_fp={new_fp}, dump fingerprints={fps}")
     else:
         check("watch stage present", False, "run `watch` between the write and `flip`")
     check("new fingerprint in a replacement dump", new_fp in repl_fps,
@@ -946,6 +1019,8 @@ def self_test():
     def fake_cycle_probe(mode, penv):
         return 0, "create-mpu: 200\nupload-part: 200\nabort-mpu: 204\n", ""
 
+    import contextlib
+    import io
     import tempfile
 
     with tempfile.TemporaryDirectory() as td:
@@ -1101,6 +1176,116 @@ def self_test():
                           probe_runner=leaky_probe, values=values)
         check("redaction scan refuses the write (exit 5)", rc == 5)
         check("refused write left no file", not os.path.exists(out))
+
+    # 5b. multi-replica rollout: the same drill against a two-replica
+    #     deployment — the ingest-replica shape. Convergence demands BOTH
+    #     replicas roll; one stale replica (escaped replacement, never
+    #     Ready, serving a different credential, or a dump the kubelet
+    #     rotated away) must fail the verdict or time the watch out.
+    dep2 = json.loads(json.dumps(FIXTURE_DEPLOYMENT))
+    dep2["spec"]["replicas"] = 2
+    uid_oa, uid_ob = "uid-old-a", "uid-old-b"
+    uid_na, uid_nb = "uid-new-a", "uid-new-b"
+    multi = [
+        {"refresh": "2026-09-27T22:06:27Z",
+         "pods": [("armor-old-a", uid_oa, "Running", True, True),
+                  ("armor-old-b", uid_ob, "Running", True, True)]},
+        {"refresh": "2026-09-27T23:08:26Z",
+         "pods": [("armor-old-a", uid_oa, "Running", True, True),
+                  ("armor-old-b", uid_ob, "Running", True, True)]},
+        {"refresh": "2026-09-27T23:08:26Z",
+         "pods": [("armor-old-a", uid_oa, "Running", True, True),
+                  ("armor-old-b", uid_ob, "Running", True, True),
+                  ("armor-new-a", uid_na, "Running", False, True)]},
+        {"refresh": "2026-09-27T23:08:26Z",
+         "pods": [("armor-old-a", uid_oa, "Running", True, True),
+                  ("armor-old-b", uid_ob, "Running", True, True),
+                  ("armor-new-a", uid_na, "Running", True, True)]},
+        {"refresh": "2026-09-27T23:08:26Z",
+         "pods": [("armor-old-b", uid_ob, "Running", True, True),
+                  ("armor-new-a", uid_na, "Running", True, True)]},
+        {"refresh": "2026-09-27T23:08:26Z",
+         "pods": [("armor-old-b", uid_ob, "Running", True, True),
+                  ("armor-new-a", uid_na, "Running", True, True),
+                  ("armor-new-b", uid_nb, "Running", False, True)]},
+        {"refresh": "2026-09-27T23:08:26Z",
+         "pods": [("armor-old-b", uid_ob, "Running", True, True),
+                  ("armor-new-a", uid_na, "Running", True, True),
+                  ("armor-new-b", uid_nb, "Running", True, True)]},
+        {"refresh": "2026-09-27T23:08:26Z",
+         "pods": [("armor-new-a", uid_na, "Running", True, True),
+                  ("armor-new-b", uid_nb, "Running", True, True)]},
+        {"refresh": "2026-09-27T23:08:26Z",
+         "pods": [("armor-new-a", uid_na, "Running", True, True),
+                  ("armor-new-b", uid_nb, "Running", True, True)]},
+    ]
+    multi_dumps = {
+        "armor-new-a": fixture_dump_line({fp: [("agent-archivist/raw/", ["put", "list"])]}),
+        "armor-new-b": fixture_dump_line({fp: [("agent-archivist/raw/", ["put", "list"])]}),
+    }
+
+    def run_multi(states, dumps_override=None, timeout="95m", capture=False):
+        dd = multi_dumps if dumps_override is None else dumps_override
+        with tempfile.TemporaryDirectory() as td:
+            out = os.path.join(td, "evidence.json")
+            a = {"out": out}
+            rc = cmd_baseline(cfg, a, fake_kc(states, deployment=dep2, dump_by_pod=dd),
+                              probe_runner=fake_probe, values=values)
+            if rc:
+                return rc, None, None
+            clock_m = FakeClock(datetime(2026, 9, 27, 22, 30, tzinfo=timezone.utc))
+            rc = cmd_watch(cfg, dict(a, timeout=timeout, interval="30s"),
+                           fake_kc(states, deployment=dep2, dump_by_pod=dd),
+                           clock=clock_m,
+                           sleeper=lambda s: clock_m.advance(seconds=s), values=values)
+            if rc:
+                return rc, load_evidence(out), None
+            cmd_flip(cfg, a, probe_runner=fake_flip_probe, values=values)
+            if capture:
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    vrc = cmd_verify(cfg, a)
+                return vrc, load_evidence(out), buf.getvalue()
+            return cmd_verify(cfg, a), load_evidence(out), None
+
+    rc, ev, _ = run_multi(list(multi))
+    check("multi-replica drill PASS", rc == 0)
+    check("multi-replica converged set is both replacements",
+          ev and {p["name"] for p in ev["watch"]["final_pods"]}
+          == {"armor-new-a", "armor-new-b"})
+    check("multi-replica ready count reaches the replicas",
+          ev and ev["watch"]["max_ready"] >= 2)
+
+    # one replica serves a credential that is neither new nor retired —
+    # the verdict must fail AND name the replica
+    stranger_fp = fingerprint("stranger-credential-never-issued")
+    wrong_cred = dict(multi_dumps)
+    wrong_cred["armor-new-b"] = fixture_dump_line({stranger_fp: []})
+    rc, _ev, verdict = run_multi(list(multi), dumps_override=wrong_cred, capture=True)
+    check("replica serving another credential fails verify", rc == 3)
+    check("verdict names the stale replica",
+          "new fingerprint in replacement dump of armor-new-b" in (verdict or ""))
+
+    # one baseline replica escapes replacement entirely — it keeps serving
+    # the retired pair, so the rollout can never converge
+    escaped = list(multi)[:7]
+    rc, ev, _ = run_multi(escaped)
+    check("escaped baseline replica times the watch out (exit 4)", rc == 4)
+    check("escape recorded as non-convergence",
+          ev and not ev["watch"]["hop"]["converged"])
+
+    # one replacement replica never goes Ready (bad rollout for that pod)
+    stuck = list(multi[:6]) + [
+        {"refresh": "2026-09-27T23:08:26Z",
+         "pods": [("armor-new-a", uid_na, "Running", True, True),
+                  ("armor-new-b", uid_nb, "Running", False, True)]}] * 3
+    rc, _ev, _ = run_multi(stuck)
+    check("never-ready replacement replica times the watch out (exit 4)", rc == 4)
+
+    # one replacement replica's dump cannot be captured (kubelet rotation)
+    rc, _ev, _ = run_multi(list(multi),
+                           dumps_override={"armor-new-a": multi_dumps["armor-new-a"]})
+    check("replica without a captured dump times the watch out (exit 4)", rc == 4)
 
     # 6. usage paths: watch without a baseline; verify without evidence;
     #    flip without pairs.

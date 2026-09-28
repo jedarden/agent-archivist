@@ -596,12 +596,16 @@ reachable serving edge and real pairs.
 describes — `baseline` (step 1: delivery-chain preflight, serving-pod
 snapshot, startup-dump fingerprints, the positive pin), `watch` (the
 propagation hops: ExternalSecret `refreshTime` bump, Reloader rollout,
-per-sample ready counts for continuity, and the replacement pod's dump
-captured the moment it runs), `flip` (the step-6 matrix, one probe
-subprocess per credential state, pairs in the child's environment only),
-and `verify` (the machine-checked verdict: preflight held, continuity
-never sampled at zero, the new fingerprint present in and the retired
-fingerprint absent from the replacement dumps, every flip row matched).
+per-sample ready counts for continuity, and each replacement pod's dump
+captured the moment it runs, with the rollout counting as observed only
+once it has converged across every replica — every live pod a
+post-baseline replacement, Ready, dump-captured), `flip` (the step-6
+matrix, one probe subprocess per credential state, pairs in the child's
+environment only), and `verify` (the machine-checked verdict: preflight
+held, continuity never sampled at zero and the ready count reaching the
+Deployment's replicas, the new fingerprint present in every converged
+replica's dump and the retired fingerprint absent from all of them,
+every flip row matched).
 Staging the rotation (steps 2–4) stays a manual OpenBao write; the
 evidence file carries only fingerprints and status codes, mode 600, and
 a supplied pair value reaching its text refuses the write.
@@ -613,7 +617,13 @@ the rollback procedure: a rotation that must be undone is reversed by
 restoring the previous KV version into both copies under the same
 CAS/pipe rules, with the drill stages proving the recovery — and the
 window before the next ESO refresh tick is the cheap rollback, where a
-restore lands before the bad pair ever reaches the cluster.
+restore lands before the bad pair ever reaches the cluster. And it
+carries the stale-secret detection procedure: because the credential
+file is a subPath mount the kubelet never rewrites, delivery *is* pod
+replacement, so a replica that escapes the rollout would keep serving
+the retired pair forever after the edge rejects it — the drill's
+convergence, per-replica fingerprint sweep, and flip matrix exist to
+catch exactly that replica, by pod name.
 
 ### Intended rotation interval per role
 

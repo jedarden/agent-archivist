@@ -8,7 +8,7 @@ control-reader drill is bead `aa-51a272be`). This runbook is the operating
 guide that turns that procedure's deployment half into one repeatable,
 machine-checked sequence; the property it owns is that **every rotation is
 itself a drill** — the calendar rotations keep the propagation path
-exercised, and each run leaves evidence that the four drill properties
+exercised, and each run leaves evidence that the drill properties below
 held, without a single credential value leaving the channel.
 
 Two tools, one operator:
@@ -33,10 +33,11 @@ the write.
 | Drill property | Stage | Machine check (`verify`) |
 |---|---|---|
 | the documented delivery chain still stands | `baseline` preflight | Reloader annotation, subPath secret mount, RollingUpdate, startup/readiness probes, ready ExternalSecret with its refresh interval |
-| replacement replicas serve the new credential | `watch` + `verify` | the replacement pod's startup dump carries the new fingerprint; the retired fingerprint appears nowhere in the replacement dumps |
+| the rotated credential reached **every** replica | `watch` + `verify` | the rollout counts as observed only once it converged: every live pod matching the selector is a post-baseline replacement, Ready, and dump-captured; each converged replica's startup dump carries the new fingerprint |
+| no replica serves a stale secret | `watch` + `verify` | convergence refuses to declare while any baseline pod survives, any replacement sits unReady, or any replica's dump is missing; the retired fingerprint appears nowhere in any replacement dump; the ready count reached the deployment's replica count |
 | old credentials are rejected at the edge | `flip` | retired pair → `403 InvalidAccessKeyId` |
 | refusals are calibrated, not coincidental | `flip` | wrong secret → `403 SignatureDoesNotMatch`; out-of-scope prefix → `403 AccessDenied` |
-| service continuity through the rollout | `watch` | per-sample ready count never sampled at 0; the recorded hop shows ESO refresh bump → new pod Ready → baseline pods gone |
+| service continuity through the rollout | `watch` | per-sample ready count never sampled at 0; the recorded hop shows ESO refresh bump → replacements Ready → baseline pods gone |
 | no secret values in evidence | every stage | the evidence write is refused (exit 5) if any supplied pair value reaches the text; only fingerprints and status codes are recorded |
 
 ## 2. Prerequisites
@@ -77,7 +78,7 @@ mode `600`).
    ```
 
    Preflight asserts the delivery chain where it stands (a drift is a
-   finding, not a tool error), snapshots the serving pods, captures the
+   finding, not a tool error), snapshots the serving pods, captures each
    serving pod's `ARMOR starting` dump fingerprints (best effort — kubelet
    log rotation can retire the line; the positive probe is the accepted
    substitute), and runs the "old pair works" positive pin. Use
@@ -113,15 +114,21 @@ mode `600`).
    ```
 
    Polls until the full chain is observed — ExternalSecret `refreshTime`
-   bump, new pod appears and goes Ready, baseline pods terminate, and the
+   bump, new pods appear and go Ready, baseline pods terminate, and each
    replacement pod's startup dump captured the moment it runs (kubelet
-   retention can be under an hour at request volume). `--timeout 95m`
-   budgets one ESO refresh phase (0–60 min, phase-uniform) plus the
-   seconds-long Reloader rollout plus the ~10 min startupProbe cap; the
-   recorded drills measured 38m37s and similar end to end. Each sample
-   records the ready count, so continuity is a fact about the rollout, not
-   an impression. Exit 4 on timeout — evidence is still written; read the
-   hop before re-running anything.
+   retention can be under an hour at request volume). The rollout counts
+   as observed only once it has **converged across every replica**: every
+   live pod matching the selector is a post-baseline replacement, Ready,
+   and dump-captured. On a multi-replica deployment (the ingest-replica
+   shape) one replica that escaped replacement keeps the watch open — see
+   "Stale-secret detection" below for why that replica is a finding, not
+   noise. `--timeout 95m` budgets one ESO refresh phase (0–60 min,
+   phase-uniform) plus the seconds-long Reloader rollout plus the ~10 min
+   startupProbe cap; the recorded drills measured 38m37s and similar end
+   to end. Each sample records the ready count, so continuity is a fact
+   about the rollout, not an impression. Exit 4 on timeout, naming the
+   counts of stale / never-Ready / dump-missing replicas — evidence is
+   still written; read the hop before re-running anything.
 
 6. **`flip`** (procedure step 6, enforcement matrix):
 
@@ -145,8 +152,12 @@ mode `600`).
    ```
 
    Replays the evidence against the documented expectations and prints one
-   line per failed check. Exit 0 is the drill's PASS; exit 3 names every
-   failed check. Record the verdict and the evidence path on the rotation
+   line per failed check — per replica where the property is per-replica:
+   the converged pod set is asserted Ready and all-replacement, every
+   converged replica's dump is present and carries the new fingerprint,
+   and the ready count reached the deployment's replica count. Exit 0 is
+   the drill's PASS; exit 3 names every failed check, stale replicas by
+   pod name. Record the verdict and the evidence path on the rotation
    bead, then update the provisioning note's interval table (new anchor
    version and date) in the same commit as the drill record.
 
@@ -223,7 +234,8 @@ Reloader rollout; the standing `--timeout 95m`):
    shape-invalid it cannot produce a calibrated refusal; record what the
    probe reported — that report is itself evidence of the fault.)
 5. **`watch`** the rollback rollout (stage 5 above): ESO refresh bump,
-   new pod Ready, baseline pods gone, per-sample ready counts.
+   replacements Ready, baseline pods gone, per-sample ready counts —
+   converged across every replica, same as a forward rotation.
 6. **`flip` + `verify`** (stages 6–7 above) with the pairs swapped:
    `current` = the restored pair (must go positive), `retired` = the bad
    pair. Two verdict shapes are possible, and the record must say which
@@ -263,7 +275,67 @@ rollback write heals the deployment on the next propagation. What no
 rollback can shorten is the ESO refresh phase: plan on the same 0–60
 minutes, or catch the write before the tick and spend none of it.
 
-## 5. Evidence handling
+## 5. Stale-secret detection
+
+A **stale secret** is any serving replica still holding the pre-rotation
+credential after the drill's rollout is complete. The hazard is structural,
+not incidental: the Deployment mounts the credential file via `subPath`, and
+the kubelet never rewrites a running container's subPath mount when the
+Secret changes (the provisioning note's chain correction — delivery is the
+Reloader rollout, not the in-process watcher). Delivery *is* replacement, so
+a replica that escapes the rollout serves the retired pair indefinitely and
+nothing upstream will ever correct it: the ExternalSecret refreshes, the
+Secret updates, Reloader fires — and a pod that never restarted still reads
+the bytes it mounted at start. Worse, after the flip the edge rejects the
+retired pair, so such a replica is not merely outdated but broken, failing
+every request it signs.
+
+The drill detects a stale secret at three layers, each machine-checked:
+
+1. **Convergence (watch).** The watch refuses to declare the rollout
+   observed until every live pod matching the selector is a post-baseline
+   replacement, Ready, and dump-captured. A baseline replica that survives
+   (`stale_replicas`), a replacement that never goes Ready
+   (`not_ready_replicas`), or a replica whose dump cannot be captured
+   (`replicas_missing_dump`) each hold the watch open until it times out
+   — exit 4 names all three counts. A timed-out watch with
+   `baseline_gone=False` is the signature of a replica that escaped
+   replacement.
+2. **Fingerprint sweep (verify).** The verdict asserts the new
+   fingerprint in **every** converged replica's dump — a check per pod,
+   failing by pod name — and the retired fingerprint in **none** of the
+   replacement dumps. A replica whose dump carries some other credential
+   (a partial write, a wrong role's block, a manually patched mount)
+   fails the per-pod check even though every other replica rolled
+   cleanly; the sweep is scoped to replacement dumps because the
+   baseline dumps are *supposed* to carry the retired fingerprint. The
+   ready count must also have reached the Deployment's `spec.replicas` —
+   a rollout that converged below full availability cannot pass.
+3. **Edge rejection (flip).** The retired-pair row (`403
+   InvalidAccessKeyId`) proves the edge no longer honors the old
+   credential, which is what turns any undetected stale holder from
+   "outdated" into "failing": the flip row and the fingerprint sweep
+   together close the loop — no replica can keep the old pair and still
+   work.
+
+**Responding to a stale replica.** Read, don't mutate: the read-only
+endpoint's `get`/`describe`/`logs` on the named pod (its ReplicaSet
+generation, restart count, and dump) is the diagnosis. The fix is the
+documented delivery path itself — the rollout is Reloader-driven from the
+Secret, and mutating kubectl (`rollout restart` &c.) is prohibited
+fleet-wide and would also fight ArgoCD; if the pod's own Deployment spec
+drifted, the correction goes through `declarative-config`. A replica that
+cannot be replaced without spec churn is an availability finding for the
+rotation record, not something the drill waves through.
+
+The same detection covers the multi-replica ingest shape: when ingest
+replicas are provisioned referencing the per-role paths (the provisioning
+note's "Distribution invariant"), a drill pointed at that deployment
+(`ARMOR_DRILL_DEPLOYMENT` / `ARMOR_DRILL_SELECTOR` / `ARMOR_DRILL_CONTAINER`)
+gets the identical per-replica convergence and sweep — no single-replica
+assumption anywhere in the tool.
+
+## 6. Evidence handling
 
 The evidence file is JSON, mode `600`, schema
 `rotation-drill-evidence/v1`, written to a tmpfs path
@@ -277,7 +349,7 @@ refuses the write (exit 5) rather than redacting, because a hit is a tool
 bug. The file never enters a repository; keep it out of `$HOME` globs and
 shred it when the drill record is written.
 
-## 6. Exit codes
+## 7. Exit codes
 
 | Code | Meaning |
 |---|---|
@@ -285,10 +357,10 @@ shred it when the drill record is written.
 | 1 | usage or environment error (missing pairs for `flip`, bad duration) |
 | 2 | self-test failure |
 | 3 | verify verdict FAIL (each failed check is named) |
-| 4 | stage or evidence error (watch without baseline, watch timeout, verify on an incomplete drill) |
+| 4 | stage or evidence error (watch without baseline, watch timeout — including one raised by a replica escaping the rollout — verify on an incomplete drill) |
 | 5 | evidence write refused — a supplied pair value reached the evidence text |
 
-## 7. Deliberately not automated
+## 8. Deliberately not automated
 
 - **The OpenBao writes.** Procedure steps 2–4 — and their rollback
   counterparts in "Rolling back a rotation" — stay manual, under the
@@ -303,4 +375,7 @@ shred it when the drill record is written.
   injected fault — a ready-count gap, a retired fingerprint still in a
   replacement dump, a flip row off by one error code, a degraded
   preflight, a stripped replacement dump, a leaky probe — fails the
-  verdict, against a scripted fake cluster with a real rollout timeline.
+  verdict, and that a two-replica rollout fails the same way when one
+  replica escapes replacement, never goes Ready, serves a credential
+  that is neither new nor retired, or loses its dump to kubelet
+  rotation, against a scripted fake cluster with a real rollout timeline.
