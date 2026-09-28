@@ -153,8 +153,16 @@ impl Settings {
 /// Read the run's settings from the process environment. A missing
 /// setting is named by its variable; nothing else is echoed.
 fn settings() -> Result<Settings, String> {
-    let required = |name: &str| {
-        std::env::var(name).map_err(|_| format!("{name} is not set — the run cannot compose"))
+    settings_from(|name| std::env::var(name).ok())
+}
+
+/// Parse settings from a value lookup. Keeping the lookup separate from the
+/// process environment lets the executable's refusal boundary be tested
+/// without mutating a process-global environment shared by other tests.
+fn settings_from(mut lookup: impl FnMut(&str) -> Option<String>) -> Result<Settings, String> {
+    let path_style = lookup("ARCHIVIST_QUALIFY_PATH_STYLE");
+    let mut required = |name: &str| {
+        lookup(name).ok_or_else(|| format!("{name} is not set — the run cannot compose"))
     };
     let read_capable = required("ARCHIVIST_QUALIFY_READ_CAPABLE")?;
     if read_capable != "true" && read_capable != "false" {
@@ -171,7 +179,7 @@ fn settings() -> Result<Settings, String> {
         raw_bucket: required("ARCHIVIST_QUALIFY_RAW_BUCKET")?,
         control_bucket: required("ARCHIVIST_QUALIFY_CONTROL_BUCKET")?,
         encryption: required("ARCHIVIST_QUALIFY_ENCRYPTION")?,
-        path_style: std::env::var("ARCHIVIST_QUALIFY_PATH_STYLE").ok(),
+        path_style,
         raw_write_credentials: required("ARCHIVIST_QUALIFY_RAW_WRITE_CREDENTIALS")?,
         control_read_credentials: required("ARCHIVIST_QUALIFY_CONTROL_READ_CREDENTIALS")?,
         offline_restore_credentials: required("ARCHIVIST_QUALIFY_OFFLINE_RESTORE_CREDENTIALS")?,
@@ -256,4 +264,83 @@ fn run_instant() -> String {
         (day_seconds % 3_600) / 60,
         day_seconds % 60
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ENDPOINT: &str = "https://operator.example.invalid";
+    const RAW_BUCKET: &str = "raw";
+    const CONTROL_BUCKET: &str = "ctl";
+    const RAW_CREDENTIAL: &str = "env:RAW_CREDENTIAL";
+    const CONTROL_CREDENTIAL: &str = "file:/run/control";
+    const RESTORE_CREDENTIAL: &str = "env:RESTORE_CREDENTIAL";
+
+    fn values(name: &str) -> Option<String> {
+        match name {
+            "ARCHIVIST_QUALIFY_PROFILE" => Some("community-fixture".to_owned()),
+            "ARCHIVIST_QUALIFY_SUITE_REVISION" => Some("test-revision".to_owned()),
+            "ARCHIVIST_QUALIFY_ENDPOINT" => Some(ENDPOINT.to_owned()),
+            "ARCHIVIST_QUALIFY_REGION" => Some("test-region".to_owned()),
+            "ARCHIVIST_QUALIFY_RAW_BUCKET" => Some(RAW_BUCKET.to_owned()),
+            "ARCHIVIST_QUALIFY_CONTROL_BUCKET" => Some(CONTROL_BUCKET.to_owned()),
+            "ARCHIVIST_QUALIFY_ENCRYPTION" => Some("s3_sse".to_owned()),
+            "ARCHIVIST_QUALIFY_RAW_WRITE_CREDENTIALS" => Some(RAW_CREDENTIAL.to_owned()),
+            "ARCHIVIST_QUALIFY_CONTROL_READ_CREDENTIALS" => Some(CONTROL_CREDENTIAL.to_owned()),
+            "ARCHIVIST_QUALIFY_OFFLINE_RESTORE_CREDENTIALS" => Some(RESTORE_CREDENTIAL.to_owned()),
+            "ARCHIVIST_QUALIFY_READ_CAPABLE" => Some("true".to_owned()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn settings_refusals_name_only_the_setting_class() {
+        let missing = match settings_from(|name| {
+            (name == "ARCHIVIST_QUALIFY_READ_CAPABLE").then(|| "true".to_owned())
+        }) {
+            Ok(_) => panic!("the incomplete environment must be refused"),
+            Err(error) => error,
+        };
+        assert!(missing.contains("ARCHIVIST_QUALIFY_PROFILE"));
+        assert!(!missing.contains(ENDPOINT));
+
+        let invalid = match settings_from(|name| {
+            if name == "ARCHIVIST_QUALIFY_READ_CAPABLE" {
+                Some("maybe".to_owned())
+            } else {
+                Some("https://secret.example.invalid/credential".to_owned())
+            }
+        }) {
+            Ok(_) => panic!("a non-boolean read capability must be refused"),
+            Err(error) => error,
+        };
+        assert!(invalid.contains("ARCHIVIST_QUALIFY_READ_CAPABLE"));
+        assert!(!invalid.contains("secret.example.invalid"));
+    }
+
+    #[test]
+    fn valid_settings_keep_operator_values_out_of_configuration_errors_and_scan_them() {
+        let settings = settings_from(values).expect("fixture environment");
+        let configuration = settings.storage_config().expect("fixture settings compose");
+        assert_eq!(configuration.raw_bucket(), RAW_BUCKET);
+
+        let scan = settings.redaction_scan();
+        assert!(scan.iter().any(|value| value == RAW_BUCKET));
+        assert!(scan.iter().any(|value| value == CONTROL_BUCKET));
+        assert!(scan.iter().any(|value| value == RAW_CREDENTIAL));
+        assert!(scan.iter().any(|value| value == CONTROL_CREDENTIAL));
+        assert!(scan.iter().any(|value| value == RESTORE_CREDENTIAL));
+    }
+
+    #[test]
+    fn run_instant_is_a_protocol_timestamp() {
+        let instant = run_instant();
+        assert_eq!(instant.len(), 20);
+        assert!(instant.ends_with('Z'));
+        assert_eq!(instant.as_bytes()[10], b'T');
+        assert_eq!(instant.as_bytes()[13], b':');
+        assert_eq!(instant.as_bytes()[16], b':');
+        Timestamp::parse(&instant).expect("driver instant uses the protocol grammar");
+    }
 }

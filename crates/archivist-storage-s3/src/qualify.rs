@@ -454,7 +454,7 @@ impl QualificationReport {
             .collect::<Vec<_>>()
             .join(",");
         let noncurrent = match &self.noncurrent {
-            Some(audit) => format!("noncurrent_audit=[{}]", audit.render()),
+            Some(audit) => format!("noncurrent_audit=[{}]", render_safe_audit(audit)),
             None => "noncurrent_audit=refused".to_owned(),
         };
         format!(
@@ -468,6 +468,37 @@ impl QualificationReport {
             noncurrent,
         )
     }
+}
+
+/// Render the audit counters without putting a tenant prefix or a raw object
+/// key into the qualification report. The underlying audit retains those
+/// values for the operator's private physical evidence; the report and its
+/// transcript are the printable record and must stay free of account, tenant,
+/// client, session, and occurrence identifiers.
+fn render_safe_audit(audit: &NoncurrentVersionReport) -> String {
+    let scope = match audit.scope() {
+        InventoryScope::TenantRaw(_) => "tenant-raw",
+        InventoryScope::TenantControl(_) => "tenant-control",
+        InventoryScope::TenantCatalog(_) => "tenant-catalog",
+        InventoryScope::TenantDerived(_) => "tenant-derived",
+    };
+    let mut line = format!(
+        "noncurrent-version-audit scope={scope} keys={} versions={} noncurrent={} retained_bytes={} guidance={}",
+        audit.distinct_keys(),
+        audit.total_versions(),
+        audit.noncurrent_versions(),
+        audit.noncurrent_bytes(),
+        archivist_storage::lifecycle_audit::NONCURRENT_VERSION_GUIDANCE,
+    );
+    if audit.fullest_key().is_some() {
+        use std::fmt::Write as _;
+        let _ = write!(
+            line,
+            " fullest_key=redacted fullest_noncurrent={}",
+            audit.fullest_noncurrent()
+        );
+    }
+    line
 }
 
 /// The run's fixed inputs: what the operator's driver supplies besides
@@ -1490,9 +1521,9 @@ pub struct RedactionViolation {
 /// (its endpoint, its bucket names, its credential reference targets).
 ///
 /// The shape classes mirror the record gate's own identifier patterns:
-/// a URL or scheme prefix, an IPv4 address, an address-shaped
-/// `user@host` string, and a tailnet hostname. A nonempty violation
-/// list means the text must not be rendered into a transcript.
+/// a URL or scheme prefix, an IPv4 address, a UUID-shaped identity, an
+/// address-shaped `user@host` string, and a tailnet hostname. A nonempty
+/// violation list means the text must not be rendered into a transcript.
 #[must_use]
 pub fn redaction_violations(text: &str, configured: &[String]) -> Vec<RedactionViolation> {
     let mut violations = Vec::new();
@@ -1505,6 +1536,12 @@ pub fn redaction_violations(text: &str, configured: &[String]) -> Vec<RedactionV
     for (at, ()) in address_shapes(text) {
         violations.push(RedactionViolation {
             what: "an IPv4 address",
+            at,
+        });
+    }
+    for (at, ()) in uuid_shapes(text) {
+        violations.push(RedactionViolation {
+            what: "an identifier-shaped UUID",
             at,
         });
     }
@@ -1526,7 +1563,11 @@ pub fn redaction_violations(text: &str, configured: &[String]) -> Vec<RedactionV
         }
     }
     for value in configured {
-        if value.len() >= 4
+        // Empty values are not useful scan terms and would match every
+        // transcript. Every non-empty configured value is sensitive,
+        // including short bucket names, so never let a length heuristic
+        // turn one into printable output.
+        if !value.is_empty()
             && let Some(at) = text.find(value.as_str())
         {
             violations.push(RedactionViolation {
@@ -1579,6 +1620,38 @@ fn address_shapes(text: &str) -> Vec<(usize, ())> {
             index = cursor;
         } else {
             index = start + digits.max(1);
+        }
+    }
+    found
+}
+
+/// The canonical UUID shape used by tenant, client, session, occurrence, and
+/// attestation identities. It is deliberately shape-only: the renderer does
+/// not need to know which identity family a leaked value belongs to before it
+/// refuses the transcript.
+fn uuid_shapes(text: &str) -> Vec<(usize, ())> {
+    const UUID_BYTES: usize = 36;
+    let bytes = text.as_bytes();
+    let mut found = Vec::new();
+    if bytes.len() < UUID_BYTES {
+        return found;
+    }
+    for start in 0..=bytes.len() - UUID_BYTES {
+        let candidate = &bytes[start..start + UUID_BYTES];
+        let hyphen = [8, 13, 18, 23];
+        if hyphen.iter().any(|&position| candidate[position] != b'-')
+            || candidate
+                .iter()
+                .enumerate()
+                .any(|(position, byte)| !hyphen.contains(&position) && !byte.is_ascii_hexdigit())
+        {
+            continue;
+        }
+        let bounded_before = start == 0 || !bytes[start - 1].is_ascii_hexdigit();
+        let end = start + UUID_BYTES;
+        let bounded_after = end == bytes.len() || !bytes[end].is_ascii_hexdigit();
+        if bounded_before && bounded_after {
+            found.push((start, ()));
         }
     }
     found
@@ -2267,5 +2340,48 @@ mod tests {
             !redaction_violations("endpoint https://s3.example.invalid/bucket", &[]).is_empty(),
             "address shapes are violations on their own"
         );
+        assert!(
+            !redaction_violations("tenant=0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b", &[]).is_empty(),
+            "identity-shaped UUIDs are violations on their own"
+        );
+        assert!(
+            !redaction_violations("bucket=raw", &[String::from("raw")]).is_empty(),
+            "short configured values are still sensitive"
+        );
+    }
+
+    #[test]
+    fn safe_audit_render_keeps_counts_without_identity_keys() {
+        let tenant = tenant();
+        let scope = InventoryScope::TenantRaw(tenant.clone());
+        let key = InventoryKey::parse(&format!("tenants/{tenant}/v1/raw/objects/synthetic-object"))
+            .expect("synthetic audit key");
+        let entries = vec![
+            VersionedEntry::new(
+                key.clone(),
+                4,
+                StorageVersionId::parse("v1").expect("version"),
+                false,
+                Observation::new(None, None, observed_at()),
+            ),
+            VersionedEntry::new(
+                key,
+                4,
+                StorageVersionId::parse("v2").expect("version"),
+                true,
+                Observation::new(None, None, observed_at()),
+            ),
+        ];
+        let listing =
+            FrozenVersionListing::from_pages(&scope, vec![Ok(VersionedPage::new(entries, None))])
+                .expect("synthetic version listing");
+        let audit = NoncurrentVersionReport::from_listing(&listing);
+        let rendered = render_safe_audit(&audit);
+
+        assert!(rendered.contains("scope=tenant-raw"));
+        assert!(rendered.contains("versions=2"));
+        assert!(rendered.contains("noncurrent=1"));
+        assert!(rendered.contains("fullest_key=redacted fullest_noncurrent=1"));
+        assert!(!rendered.contains(FIXTURE_TENANT));
     }
 }

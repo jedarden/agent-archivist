@@ -86,6 +86,7 @@ struct State {
     versioning_answer: VersioningAnswer,
     fail_raw_writes: bool,
     fail_probe_multipart: bool,
+    fail_control_enumeration: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -387,6 +388,9 @@ impl VersionAuditBackend for Fake {
         after: Option<&ContinuationToken>,
     ) -> Result<VersionedPage, StorageError> {
         let state = self.state.lock().expect("fake lock");
+        if state.fail_control_enumeration && matches!(scope, InventoryScope::TenantControl(_)) {
+            return Err(StorageError::of_kind(StorageErrorKind::Unavailable));
+        }
         let prefix = scope.prefix();
         let mut records = state
             .objects
@@ -522,6 +526,7 @@ fn public_driver_runs_every_leg_and_redacts_deployment_data() {
     assert_eq!(report.physical_versions().len(), 7);
     assert!(report.noncurrent().is_some());
     assert!(report.render_line().contains("noncurrent-version-audit"));
+    assert!(report.render_line().contains("scope=tenant-raw"));
 
     // The transcript is the only printable run record.  Supplying every
     // operator value to the public redaction boundary proves that none of
@@ -546,8 +551,62 @@ fn public_driver_runs_every_leg_and_redacts_deployment_data() {
             "prohibited deployment or credential data leaked: {prohibited}"
         );
     }
+    assert!(!transcript.contains(FIXTURE_TENANT));
     assert!(qualify::redaction_violations(&transcript, &[]).is_empty());
     assert!(transcript.contains("leg=enumeration exit=complete"));
+    assert!(
+        !qualify::redaction_violations("bucket=raw", &[String::from("raw")]).is_empty(),
+        "short configured bucket names are still sensitive"
+    );
+    assert!(
+        !qualify::redaction_violations("tenant=0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b", &[])
+            .is_empty(),
+        "identity-shaped UUIDs are refused"
+    );
+}
+
+#[test]
+fn report_and_transcript_have_the_documented_complete_shape() {
+    let report = run_over(&Fake::honest());
+    let line = report.render_line();
+    for field in [
+        "storage-compatibility profile=community-fixture",
+        "conditional_create=supported",
+        "stored_checksum=sha256",
+        "versioning=enabled",
+        "server_side_encryption=verified",
+        "physical_versions=[",
+        "noncurrent_audit=[noncurrent-version-audit",
+    ] {
+        assert!(line.contains(field), "report omitted {field}: {line}");
+    }
+    for scenario in [
+        "duplicate-request",
+        "equivalent-overwrite",
+        "concurrent-writers",
+        "read-capable-conflict",
+        "multipart-commit",
+        "origin-attestation",
+        "relay-attestation",
+    ] {
+        assert!(
+            line.contains(&format!("{scenario}:")),
+            "report omitted physical history for {scenario}: {line}"
+        );
+    }
+
+    let transcript = RunTranscript::from_report(&report, SUITE_REVISION)
+        .render(&[])
+        .expect("the complete transcript is safe to render");
+    assert!(transcript.contains("capability-report-digest=sha256:"));
+    assert!(transcript.contains("profile_supported=true"));
+    assert!(transcript.contains("verdict=qualified"));
+    for leg in ["probe", "write-path", "enumeration"] {
+        assert!(transcript.contains(&format!("leg={leg} exit=complete")));
+    }
+    for scenario in SCENARIOS {
+        assert!(transcript.contains(&format!("scenario={scenario} outcome=matched")));
+    }
 }
 
 #[test]
@@ -613,5 +672,27 @@ fn write_failure_is_recorded_as_unqualified_without_claiming_completion() {
             .scenarios()
             .iter()
             .all(|scenario| scenario.outcome != ScenarioOutcome::Matched)
+    );
+}
+
+#[test]
+fn enumeration_failure_is_recorded_as_unqualified_after_write_completion() {
+    let failed = Fake::honest();
+    failed
+        .state
+        .lock()
+        .expect("fake lock")
+        .fail_control_enumeration = true;
+    let report = run_over(&failed);
+
+    assert!(matches!(report.verdict(), RunVerdict::Unqualified(_)));
+    assert_eq!(report.leg(LegId::Probe).exit, LegExit::Complete);
+    assert_eq!(report.leg(LegId::WritePath).exit, LegExit::Complete);
+    assert_eq!(report.leg(LegId::Enumeration).exit, LegExit::Unknown);
+    assert!(
+        report
+            .scenarios()
+            .iter()
+            .all(|scenario| scenario.outcome == ScenarioOutcome::Matched)
     );
 }

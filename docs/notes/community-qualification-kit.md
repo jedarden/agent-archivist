@@ -249,6 +249,13 @@ scope holds any accumulation at all — the key where noncurrent versions
 run deepest and how deep — so a live versioned bucket's line normally
 carries it; a scope with no noncurrent versions renders without it.
 
+The printable qualification line keeps the same fields and counts but
+redacts infrastructure identifiers: `scope` is the closed label
+(`tenant-raw`, `tenant-control`, `tenant-catalog`, or `tenant-derived`) and
+`fullest_key=redacted` replaces the physical object key when that optional
+pair is present. The operator's private audit evidence retains the exact
+prefix and key; neither enters the transcript or any committed record.
+
 The `noncurrent_audit` field is the STO-009 leg
 ([`archivist_storage::lifecycle_audit`](../../crates/archivist-storage/src/lifecycle_audit.rs)):
 through the audit/restore identity — the one authority with list grants
