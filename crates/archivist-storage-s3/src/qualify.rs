@@ -777,7 +777,9 @@ where
     let fixtures = Fixtures::new(tenant);
     let conditional_supported =
         store.capabilities().conditional_create == ConditionalCreate::Supported;
-    let mut observations: Vec<ScenarioObservation> = Vec::new();
+    // Seeded with the closed not-reached outcome per slot: a scenario the
+    // leg never reaches records NotReached — there is no absent slot.
+    let mut observations: Vec<ScenarioObservation> = unwalked_scenarios(REASON_UNREACHED);
     let mut failure: Option<(LegExit, &'static str)> = None;
 
     // duplicate-request: two identical commits on one occurrence key.
@@ -1678,5 +1680,592 @@ impl RunTranscript {
         } else {
             Err(RedactionError { violations })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The outcome model over synthetic seams: one honest backend proves
+    //! the complete run qualifies, fault toggles prove the failed and
+    //! unknown outcomes file the honest negative, and the redaction guard
+    //! proves the transcript refuses forbidden fields.
+
+    use super::*;
+    use crate::config::{EncryptionPolicy, S3StorageConfig};
+    use crate::probe::{ProbeObjectObservation, ProbeReceipt};
+    use crate::raw_write::RawObjectKey;
+    use archivist_storage::audit_restore::ContinuationToken;
+    use archivist_storage::commit::{CreateIfAbsent, ExistingObject};
+    use archivist_storage::metadata::ObjectTag;
+    use archivist_storage::probe::{ProbeKey, VersioningObservation};
+    use archivist_storage::raw_write::PartCommitment;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    const OBSERVED_AT: &str = "2026-09-27T12:00:00Z";
+
+    /// One listing record: key, size, version id, currency, stored tag.
+    type AuditRecord = (String, u64, String, bool, Option<String>);
+
+    /// One open multipart session: its key and the uploaded parts.
+    type UploadSession = (String, Vec<(PartNumber, Vec<u8>, String)>);
+
+    /// What the bucket-versioning read answers: the real surface, or
+    /// the honest no-surface answer.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    enum VersioningAnswer {
+        #[default]
+        Enabled,
+        NoSurface,
+    }
+
+    #[derive(Clone, Debug)]
+    struct Physical {
+        bytes: Vec<u8>,
+        checksum: Option<String>,
+        version: Option<String>,
+    }
+
+    #[derive(Debug, Default)]
+    struct State {
+        objects: HashMap<String, Vec<Physical>>,
+        uploads: HashMap<String, UploadSession>,
+        probe_objects: HashMap<String, Vec<Physical>>,
+        probe_uploads: HashMap<String, UploadSession>,
+        next_id: u64,
+        versioning_answer: VersioningAnswer,
+        fail_raw_writes: bool,
+        fail_probe_multipart: bool,
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct Fake {
+        state: Arc<Mutex<State>>,
+        versioned: bool,
+    }
+
+    impl Fake {
+        fn honest() -> Self {
+            Self {
+                state: Arc::new(Mutex::new(State::default())),
+                versioned: true,
+            }
+        }
+
+        fn version(&self, state: &mut State) -> String {
+            state.next_id += 1;
+            if self.versioned {
+                format!("v{}", state.next_id)
+            } else {
+                // The real listing hands a pre-versioning object the
+                // "null" sentinel: parseable, but never a claimable
+                // identity.
+                String::from(NULL_VERSION)
+            }
+        }
+
+        fn store(map: &mut HashMap<String, Vec<Physical>>, key: &str, object: Physical) {
+            map.entry(key.to_owned()).or_default().push(object);
+        }
+    }
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        use archivist_protocol::sha256;
+        sha256::encode_hex(&sha256::digest(bytes))
+    }
+
+    /// The stored tag an honest sha256-checksumming backend attaches.
+    fn checksum(bytes: &[u8]) -> String {
+        sha256_hex(bytes)
+    }
+
+    fn tenant() -> TenantId {
+        TenantId::parse(FIXTURE_TENANT).expect("fixture tenant")
+    }
+
+    fn observed_at() -> Timestamp {
+        Timestamp::parse(OBSERVED_AT).expect("static timestamp")
+    }
+
+    fn config() -> S3StorageConfig {
+        S3StorageConfig::builder()
+            .endpoint_url("https://synthetic.example.test")
+            .region("synthetic")
+            .encryption(EncryptionPolicy::S3Sse)
+            .raw_bucket("archivist-raw-synthetic")
+            .control_bucket("archivist-control-synthetic")
+            .raw_write_credentials("file:/synthetic/raw-writer")
+            .control_read_credentials("file:/synthetic/control-reader")
+            .offline_restore_credentials("file:/synthetic/offline-restore")
+            .build()
+            .expect("synthetic configuration")
+    }
+
+    impl ProbeWriteBackend for Fake {
+        async fn write_probe_if_absent(
+            &self,
+            key: &ProbeKey,
+            bytes: &[u8],
+        ) -> Result<ProbeReceipt, StorageError> {
+            let mut state = self.state.lock().expect("fake lock");
+            if let Some(existing) = state
+                .probe_objects
+                .get(key.as_str())
+                .and_then(|objects| objects.last())
+            {
+                return Ok(ProbeReceipt::new(
+                    false,
+                    existing.version.clone(),
+                    existing.checksum.clone(),
+                    true,
+                ));
+            }
+            let version = self.version(&mut state);
+            let object = Physical {
+                bytes: bytes.to_vec(),
+                checksum: Some(checksum(bytes)),
+                version: Some(version),
+            };
+            Self::store(&mut state.probe_objects, key.as_str(), object);
+            let stored = state.probe_objects[key.as_str()]
+                .last()
+                .expect("just stored");
+            Ok(ProbeReceipt::new(
+                true,
+                stored.version.clone(),
+                stored.checksum.clone(),
+                true,
+            ))
+        }
+
+        async fn read_probe_object(
+            &self,
+            key: &ProbeKey,
+        ) -> Result<Option<ProbeObjectObservation>, StorageError> {
+            let state = self.state.lock().expect("fake lock");
+            Ok(state
+                .probe_objects
+                .get(key.as_str())
+                .and_then(|objects| objects.last())
+                .map(|object| {
+                    ProbeObjectObservation::new(
+                        object.bytes.len() as u64,
+                        object.version.clone(),
+                        object.checksum.clone(),
+                        true,
+                    )
+                }))
+        }
+
+        async fn bucket_versioning(&self) -> Result<Option<VersioningObservation>, StorageError> {
+            match self.state.lock().expect("fake lock").versioning_answer {
+                VersioningAnswer::Enabled => Ok(Some(VersioningObservation::Enabled)),
+                VersioningAnswer::NoSurface => Ok(None),
+            }
+        }
+
+        async fn bucket_encryption(&self) -> Result<bool, StorageError> {
+            Ok(true)
+        }
+
+        async fn create_probe_multipart(&self, key: &ProbeKey) -> Result<String, StorageError> {
+            let mut state = self.state.lock().expect("fake lock");
+            if state.fail_probe_multipart {
+                return Err(StorageError::of_kind(StorageErrorKind::Unavailable));
+            }
+            state.next_id += 1;
+            let id = format!("probe-upload-{}", state.next_id);
+            state
+                .probe_uploads
+                .insert(id.clone(), (key.as_str().to_owned(), Vec::new()));
+            Ok(id)
+        }
+
+        async fn upload_probe_part(
+            &self,
+            _key: &ProbeKey,
+            session: &str,
+            part: PartNumber,
+            bytes: &[u8],
+        ) -> Result<String, StorageError> {
+            let mut state = self.state.lock().expect("fake lock");
+            let upload = state
+                .probe_uploads
+                .get_mut(session)
+                .expect("adapter validates the probe session");
+            let tag = checksum(bytes);
+            upload.1.push((part, bytes.to_vec(), tag.clone()));
+            Ok(tag)
+        }
+
+        async fn complete_probe_multipart(
+            &self,
+            _key: &ProbeKey,
+            session: &str,
+            _parts: &[PartCommitment],
+        ) -> Result<(), StorageError> {
+            let mut state = self.state.lock().expect("fake lock");
+            let (key, parts) = state
+                .probe_uploads
+                .remove(session)
+                .expect("open probe session");
+            let mut bytes = Vec::new();
+            for (_, part, _) in parts {
+                bytes.extend(part);
+            }
+            let version = self.version(&mut state);
+            let object = Physical {
+                checksum: Some(checksum(&bytes)),
+                version: Some(version),
+                bytes,
+            };
+            Self::store(&mut state.probe_objects, &key, object);
+            Ok(())
+        }
+
+        async fn abort_probe_multipart(
+            &self,
+            _key: &ProbeKey,
+            session: &str,
+        ) -> Result<(), StorageError> {
+            self.state
+                .lock()
+                .expect("fake lock")
+                .probe_uploads
+                .remove(session);
+            Ok(())
+        }
+    }
+
+    impl RawWriteBackend for Fake {
+        async fn put_raw_object(
+            &self,
+            key: &RawObjectKey,
+            bytes: &[u8],
+        ) -> Result<(), StorageError> {
+            let mut state = self.state.lock().expect("fake lock");
+            if state.fail_raw_writes {
+                return Err(StorageError::of_kind(StorageErrorKind::Unavailable));
+            }
+            let version = self.version(&mut state);
+            let object = Physical {
+                bytes: bytes.to_vec(),
+                checksum: Some(checksum(bytes)),
+                version: Some(version),
+            };
+            Self::store(&mut state.objects, key.as_str(), object);
+            Ok(())
+        }
+
+        async fn create_raw_object_if_absent(
+            &self,
+            key: &RawObjectKey,
+            bytes: &[u8],
+        ) -> Result<CreateIfAbsent, StorageError> {
+            let mut state = self.state.lock().expect("fake lock");
+            if state.fail_raw_writes {
+                return Err(StorageError::of_kind(StorageErrorKind::Unavailable));
+            }
+            if let Some(existing) = state
+                .objects
+                .get(key.as_str())
+                .and_then(|objects| objects.last())
+            {
+                let mut evidence = ExistingObject::new().with_size(existing.bytes.len() as u64);
+                if existing.checksum.is_some() {
+                    evidence = evidence
+                        .with_stored_sha256(archivist_protocol::sha256::digest(&existing.bytes));
+                }
+                return Ok(CreateIfAbsent::AlreadyExists(evidence));
+            }
+            let version = self.version(&mut state);
+            let object = Physical {
+                bytes: bytes.to_vec(),
+                checksum: Some(checksum(bytes)),
+                version: Some(version),
+            };
+            Self::store(&mut state.objects, key.as_str(), object);
+            Ok(CreateIfAbsent::Created)
+        }
+
+        async fn create_multipart(&self, key: &RawObjectKey) -> Result<String, StorageError> {
+            let mut state = self.state.lock().expect("fake lock");
+            state.next_id += 1;
+            let id = format!("upload-{}", state.next_id);
+            state
+                .uploads
+                .insert(id.clone(), (key.as_str().to_owned(), Vec::new()));
+            Ok(id)
+        }
+
+        async fn upload_part(
+            &self,
+            _key: &RawObjectKey,
+            session: &str,
+            part: PartNumber,
+            bytes: &[u8],
+        ) -> Result<String, StorageError> {
+            let mut state = self.state.lock().expect("fake lock");
+            let upload = state.uploads.get_mut(session).expect("open session");
+            let tag = checksum(bytes);
+            upload.1.push((part, bytes.to_vec(), tag.clone()));
+            Ok(tag)
+        }
+
+        async fn complete_multipart(
+            &self,
+            _key: &RawObjectKey,
+            session: &str,
+            _parts: &[PartCommitment],
+        ) -> Result<(), StorageError> {
+            let mut state = self.state.lock().expect("fake lock");
+            let (key, parts) = state.uploads.remove(session).expect("open session");
+            let mut bytes = Vec::new();
+            for (_, part, _) in parts {
+                bytes.extend(part);
+            }
+            let version = self.version(&mut state);
+            let object = Physical {
+                checksum: Some(checksum(&bytes)),
+                version: Some(version),
+                bytes,
+            };
+            Self::store(&mut state.objects, &key, object);
+            Ok(())
+        }
+
+        async fn abort_multipart(
+            &self,
+            _key: &RawObjectKey,
+            session: &str,
+        ) -> Result<(), StorageError> {
+            self.state
+                .lock()
+                .expect("fake lock")
+                .uploads
+                .remove(session);
+            Ok(())
+        }
+    }
+
+    impl VersionAuditBackend for Fake {
+        async fn list_object_versions(
+            &self,
+            scope: &InventoryScope,
+            after: Option<&ContinuationToken>,
+        ) -> Result<VersionedPage, StorageError> {
+            let state = self.state.lock().expect("fake lock");
+            // A real prefix listing answers with the scope's keys only —
+            // the control-prefix freeze over an honest run is empty.
+            let scope_prefix = scope.prefix();
+            let mut records: Vec<AuditRecord> = state
+                .objects
+                .iter()
+                .filter(|(key, _)| key.starts_with(&scope_prefix))
+                .flat_map(|(key, objects)| {
+                    let tail = objects.len().saturating_sub(1);
+                    objects
+                        .iter()
+                        .enumerate()
+                        .filter_map(move |(index, object)| {
+                            let version = object.version.as_ref()?;
+                            Some((
+                                key.clone(),
+                                object.bytes.len() as u64,
+                                version.clone(),
+                                index == tail,
+                                object.checksum.clone(),
+                            ))
+                        })
+                })
+                .collect();
+            records.sort_by(|a, b| {
+                a.0.as_bytes()
+                    .cmp(b.0.as_bytes())
+                    .then(a.2.as_bytes().cmp(b.2.as_bytes()))
+            });
+            let entries = records
+                .into_iter()
+                .map(|(key, size, version, is_latest, checksum)| {
+                    VersionedEntry::new(
+                        InventoryKey::parse(&key).expect("synthetic inventory key"),
+                        size,
+                        StorageVersionId::parse(&version).expect("synthetic version"),
+                        is_latest,
+                        Observation::new(
+                            checksum
+                                .as_deref()
+                                .map(ObjectTag::parse)
+                                .transpose()
+                                .expect("synthetic tag"),
+                            None,
+                            observed_at(),
+                        ),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let page = 2usize;
+            let index = match after {
+                None => 0,
+                Some(token) => token
+                    .as_str()
+                    .strip_prefix('p')
+                    .and_then(|number| number.parse::<usize>().ok())
+                    .ok_or_else(|| StorageError::of_kind(StorageErrorKind::Unavailable))?,
+            };
+            let start = index * page;
+            if start > entries.len() {
+                return Err(StorageError::of_kind(StorageErrorKind::Unavailable));
+            }
+            let end = (start + page).min(entries.len());
+            let next = if end < entries.len() {
+                Some(
+                    ContinuationToken::parse(&format!("p{}", end / page)).expect("synthetic token"),
+                )
+            } else {
+                None
+            };
+            Ok(VersionedPage::new(entries[start..end].to_vec(), next))
+        }
+    }
+
+    fn block_on<F: std::future::Future>(future: F) -> F::Output {
+        let mut future = std::pin::pin!(future);
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        loop {
+            match future.as_mut().poll(&mut context) {
+                std::task::Poll::Ready(output) => return output,
+                std::task::Poll::Pending => std::thread::yield_now(),
+            }
+        }
+    }
+
+    /// One full run over the given fake, driven exactly as the operator
+    /// driver drives it: probe first, then the rebased store and audit.
+    fn run_over(fake: &Fake, profile: &'static str) -> QualificationReport {
+        let probe = S3ProbeSource::new(fake.clone(), tenant());
+        let store = Arc::new(S3RawWriteStore::new(config(), tenant(), fake.clone()));
+        let audit = S3LifecycleAuditStore::new(config(), tenant(), fake.clone())
+            .expect("the synthetic profile grants the offline-restore identity");
+        let plan = RunPlan {
+            profile_key: profile,
+            suite_revision: "test-revision",
+            read_capable: true,
+            observed_at: observed_at(),
+        };
+        block_on(run(&plan, &tenant(), &probe, &store, &audit))
+    }
+
+    #[test]
+    fn complete_run_qualifies_over_an_honest_backend() {
+        let fake = Fake::honest();
+        let report = run_over(&fake, "minio");
+        assert_eq!(report.verdict(), &RunVerdict::Qualified);
+        for leg in report.legs() {
+            assert_eq!(leg.exit, LegExit::Complete, "leg {:?}", leg.leg);
+        }
+        let scenarios = report.scenarios();
+        assert_eq!(scenarios.len(), SCENARIO_LABELS.len());
+        for observation in scenarios {
+            assert_eq!(observation.outcome, ScenarioOutcome::Matched);
+        }
+        assert!(report.profile_supported());
+        assert!(report.noncurrent().is_some(), "the STO-009 audit measured");
+        for (label, history) in report.physical_versions() {
+            assert!(history.count > 0, "{label} stored nothing");
+            assert!(
+                !history.version_ids.is_empty(),
+                "{label} claimed no versions"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_versioning_refuses_the_audit_and_claims_no_versions() {
+        let fake = Fake {
+            state: Arc::new(Mutex::new(State {
+                versioning_answer: VersioningAnswer::NoSurface,
+                ..State::default()
+            })),
+            versioned: false,
+        };
+        let report = run_over(&fake, "minio");
+        assert_eq!(report.verdict(), &RunVerdict::Qualified);
+        assert!(report.noncurrent().is_none(), "unknown never strengthens");
+        for (label, history) in report.physical_versions() {
+            assert!(
+                history.version_ids.is_empty(),
+                "{label} claimed versions without an established axis"
+            );
+        }
+        assert!(
+            report.render_line().contains("noncurrent_audit=refused"),
+            "the report line files the refusal: {}",
+            report.render_line()
+        );
+    }
+
+    #[test]
+    fn failed_backend_files_the_honest_negative_and_skips_nothing() {
+        let fake = Fake::honest();
+        fake.state.lock().expect("fake lock").fail_raw_writes = true;
+        let report = run_over(&fake, "minio");
+        assert!(matches!(report.verdict(), RunVerdict::Unqualified(_)));
+        let write_leg = report.leg(LegId::WritePath);
+        assert_ne!(write_leg.exit, LegExit::Complete);
+        assert_eq!(report.leg(LegId::Enumeration).exit, LegExit::NotReached);
+        assert!(
+            report
+                .scenarios()
+                .iter()
+                .any(|observation| observation.outcome == ScenarioOutcome::Errored),
+            "the backend failure surfaced as an errored scenario"
+        );
+        for observation in report.scenarios() {
+            assert_ne!(observation.outcome, ScenarioOutcome::Matched);
+        }
+    }
+
+    #[test]
+    fn unsupported_profile_ends_the_run_at_the_probe_leg() {
+        let fake = Fake::honest();
+        fake.state.lock().expect("fake lock").fail_probe_multipart = true;
+        let report = run_over(&fake, "minio");
+        assert_eq!(
+            report.verdict(),
+            &RunVerdict::Unqualified(REASON_PROFILE),
+            "SP-004: multipart is the profile question"
+        );
+        assert!(!report.profile_supported());
+        assert_eq!(report.leg(LegId::Probe).exit, LegExit::Complete);
+        for leg in [LegId::WritePath, LegId::Enumeration] {
+            assert_eq!(report.leg(leg).exit, LegExit::NotReached);
+        }
+        for observation in report.scenarios() {
+            assert_eq!(observation.outcome, ScenarioOutcome::NotReached);
+        }
+    }
+
+    #[test]
+    fn transcript_renders_clean_and_refuses_forbidden_fields() {
+        let report = run_over(&Fake::honest(), "minio");
+        let transcript = RunTranscript::from_report(&report, "test-revision");
+        let clean = transcript
+            .render(&[String::from("a-value-not-in-the-run")])
+            .expect("clean render");
+        assert!(clean.contains("minio"));
+        let violation = transcript
+            .render(&[String::from("minio")])
+            .expect_err("a configured value the record carries is a violation");
+        let message = format!("{violation:?}");
+        assert!(!message.contains("minio"), "refusals never echo the value");
+        assert!(
+            redaction_violations("plain content only", &[]).is_empty(),
+            "content-free text is clean"
+        );
+        assert!(
+            !redaction_violations("endpoint https://s3.example.invalid/bucket", &[]).is_empty(),
+            "address shapes are violations on their own"
+        );
     }
 }
