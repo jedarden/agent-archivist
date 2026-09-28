@@ -1,6 +1,6 @@
 # Community qualification run kit
 
-Status: accepted baseline · Last updated: 2026-09-27
+Status: accepted baseline · Last updated: 2026-09-28
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and
 **MAY** are to be interpreted as described in RFC 2119 and RFC 8174 when
@@ -45,6 +45,13 @@ any committed record field — the transcript is attached to the
 contribution, never committed), and SP-005 (a run that fails or could not
 complete is recorded `unqualified` with the reason; unknown stays
 unknown).
+
+The driver half ships with the workspace:
+[`crates/archivist-storage-s3/examples/community_qualification.rs`](../../crates/archivist-storage-s3/examples/community_qualification.rs)
+is the executable form of Section 5, so an operator supplies only the
+operator row — the instance, the buckets, the credentials, the machine.
+What no shipped artifact can hold is unchanged: the live binding and the
+physical observation stay the operator's (SP-001).
 
 ## 2. What a run executes — the suite, no subset waived
 
@@ -186,9 +193,29 @@ Isolation and hygiene:
 
 ## 5. The execution path and the expected report shape
 
-The workspace already carries every seam a live run needs; the driver
-composes them and adds only the two things project automation cannot
-hold: the live binding and the physical observation.
+The workspace already carries every seam a live run needs, and it ships
+the driver. [`archivist_storage_s3::qualify`](../../crates/archivist-storage-s3/src/qualify.rs)
+is the engine that executes the three legs in the order below over the
+public seams — every leg and every scenario lands in the report as one
+closed outcome (matched, contradicted, errored, not reached), so no
+subset can be waived and a partial run qualifies nothing — and
+[`crates/archivist-storage-s3/examples/community_qualification.rs`](../../crates/archivist-storage-s3/examples/community_qualification.rs)
+is its executable form: it reads the run's settings from
+`ARCHIVIST_QUALIFY_*` environment variables (the profile key, the suite
+revision, endpoint, region, both buckets, the encryption policy, the
+three per-role `env:`/`file:` credential references, and whether the
+write grant is read-capable), composes the three bindings the
+deployment's serve path composes (`S3RequestBackend::probe_write`,
+`::raw_write`, `::version_audit`), executes the run, and prints the
+transcript only after the SP-006 redaction pass finds no forbidden
+field. Exit `0` whatever the verdict — an honest negative is a
+successful run — `1` when the redaction pass refuses the transcript,
+`64` on configuration misuse. The engine's outcome model — complete,
+failed, not-executable, unknown — is tested over synthetic seams in the
+module, so the honest-negative paths are proven without a live backend.
+The steps below remain the normative description of what the shipped
+driver does; a contributor replacing it with their own driver implements
+exactly these.
 
 1. **Probe (Section 3):** implement `CapabilitySource` over the live
    backend; `probe::observe` yields the `CapabilityReport` — canonical
