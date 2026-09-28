@@ -37,13 +37,17 @@ use archivist_storage::blob::BlobEncoder;
 use archivist_storage::error::{StorageError, StorageErrorKind};
 use archivist_storage::metadata::Observation;
 use archivist_storage::scoped_write::{
-    CatalogCheckpointKey, CatalogListPrefix, CatalogWriteStore, DerivedListPrefix,
-    DerivedObjectKey, DerivedWriteStore,
+    CatalogCheckpointKey, CatalogListPrefix, DerivedListPrefix, DerivedObjectKey,
 };
 use archivist_storage::zstd_v1::ZstdV1Encoder;
+use archivist_storage_s3::config::ScopedWritersConfig;
+use archivist_storage_s3::scoped_write::{
+    CatalogWriteBackend, DerivedWriteBackend, S3CatalogWriteStore, S3DerivedWriteStore,
+};
 
 const SCENARIO_ENV: &str = "CATALOG_REBUILD_E2E_SCENARIO";
 const TENANT: &str = "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b";
+const OTHER_TENANT: &str = "1a2b3c4d-5e6f-4a1b-9c2d-3e4f5a6b7c8d";
 const OBSERVED_AT: &str = "2026-09-28T12:00:00Z";
 const WITNESS: &str = "catalog-rebuild-e2e-transcript-witness";
 #[derive(Clone, Copy, Debug)]
@@ -55,6 +59,7 @@ enum Scenario {
     MissingCredential,
     SharedWriterIdentity,
     IngestIdentityReuse,
+    WrongPrefixCredential,
 }
 
 const SCENARIOS: &[Scenario] = &[
@@ -65,6 +70,7 @@ const SCENARIOS: &[Scenario] = &[
     Scenario::MissingCredential,
     Scenario::SharedWriterIdentity,
     Scenario::IngestIdentityReuse,
+    Scenario::WrongPrefixCredential,
 ];
 
 impl Scenario {
@@ -77,6 +83,7 @@ impl Scenario {
             Self::MissingCredential => "missing-credential",
             Self::SharedWriterIdentity => "shared-writer-identity",
             Self::IngestIdentityReuse => "ingest-identity-reuse",
+            Self::WrongPrefixCredential => "wrong-prefix-credential",
         }
     }
 
@@ -91,12 +98,20 @@ impl Scenario {
         matches!(self, Self::GoldenBare | Self::GoldenJson | Self::Retry)
     }
 
+    fn uses_fixture_handler(self) -> bool {
+        self.is_success() || matches!(self, Self::WrongPrefixCredential)
+    }
+
     fn is_json(self) -> bool {
         matches!(self, Self::GoldenJson)
     }
 
     fn expected_exit(self) -> i32 {
-        if self.is_success() { 0 } else { 64 }
+        match self {
+            Self::GoldenBare | Self::GoldenJson | Self::Retry => 0,
+            Self::WrongPrefixCredential => 70,
+            _ => 64,
+        }
     }
 
     fn expected_diagnostic(self) -> Option<&'static str> {
@@ -105,6 +120,7 @@ impl Scenario {
             Self::MissingConfiguration => Some("cli.decision_missing"),
             Self::MissingCredential => Some("client.secret_ref_refused"),
             Self::SharedWriterIdentity | Self::IngestIdentityReuse => Some("cli.usage_error"),
+            Self::WrongPrefixCredential => Some("client.internal_error"),
         }
     }
 
@@ -176,7 +192,7 @@ fn run_parent() {
 
 fn run_child(scenario: Scenario) {
     let mut router = Router::new();
-    if scenario.is_success() {
+    if scenario.uses_fixture_handler() {
         router
             .register_handler("catalog rebuild", e2e_handler)
             .expect("the catalog result schema accepts the seam handler");
@@ -195,6 +211,20 @@ fn run_child(scenario: Scenario) {
 }
 
 fn e2e_handler(invocation: &Invocation) -> Result<Value, CliError> {
+    if matches!(current_scenario(), Scenario::WrongPrefixCredential) {
+        let store = FixtureStore::with_grants(OTHER_TENANT, OTHER_TENANT);
+        let error = archivist_cli::catalog::rebuild_over(
+            invocation,
+            &tenant(),
+            &store.audit,
+            &store.catalog,
+            &store.derived,
+        )
+        .expect_err("a credential granted a different tenant prefix is refused");
+        assert_eq!(error.code(), "client.internal_error");
+        assert_eq!(store.backend.counters(), BackendCounters::default());
+        return Err(error);
+    }
     let store = store();
     let tenant = tenant();
     let first = archivist_cli::catalog::rebuild_over(
@@ -317,35 +347,38 @@ fn assert_catalog_result(story: &str, result: &Value) {
 fn verify_landed_state(scenario: Scenario) {
     let store = store();
     assert_eq!(
-        store.catalog.put_count(),
-        1,
-        "one content-addressed checkpoint put"
+        store.backend.counters().puts,
+        2,
+        "one content-addressed put per scoped writer"
     );
-    assert_eq!(store.derived.put_count(), 1, "one derived row put");
     assert_eq!(
         store.audit.checkpoint_reads(),
         usize::from(matches!(scenario, Scenario::Retry)),
         "retry reads the prior checkpoint through the audit identity",
     );
     assert_eq!(
-        store.catalog.list_count(),
+        store.backend.counters().lists,
         1 + usize::from(matches!(scenario, Scenario::Retry)),
         "each pass lists the checkpoint namespace through the catalog identity",
     );
 
-    for key in store.catalog.keys() {
-        let parsed = CatalogCheckpointKey::parse(&key).expect("catalog key grammar");
-        let bytes = store.catalog.bytes(&key).expect("checkpoint bytes");
-        assert_eq!(parsed.checkpoint(), &blob_digest(&bytes));
+    let objects = store
+        .backend
+        .objects
+        .lock()
+        .expect("scoped backend object lock")
+        .clone();
+    for (key, bytes) in objects.iter().filter(|(key, _)| key.contains("/catalog/")) {
+        let parsed = CatalogCheckpointKey::parse(key).expect("catalog key grammar");
+        assert_eq!(parsed.checkpoint(), &blob_digest(bytes));
     }
-    for key in store.derived.keys() {
+    for (key, bytes) in objects.iter().filter(|(key, _)| key.contains("/derived/")) {
         assert!(
             key.starts_with(&format!("tenants/{TENANT}/v1/derived/")),
             "derived writer stayed in its namespace: {key}",
         );
-        let bytes = store.derived.bytes(&key).expect("derived row bytes");
-        assert!(!String::from_utf8_lossy(&bytes).contains(WITNESS));
-        let Value::Object(row) = json::parse(&bytes).expect("derived row JSON") else {
+        assert!(!String::from_utf8_lossy(bytes).contains(WITNESS));
+        let Value::Object(row) = json::parse(bytes).expect("derived row JSON") else {
             panic!("derived row is an object");
         };
         assert_eq!(
@@ -408,15 +441,133 @@ fn composition_environment(scenario: Scenario) -> Vec<(&'static str, String)> {
 // Role-separated rebuild seam.
 // ---------------------------------------------------------------------------
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct BackendCounters {
+    puts: usize,
+    lists: usize,
+}
+
+/// A small object-store policy double. Its two grants stand in for the
+/// credentials the concrete S3 stores sign with: the catalog and derived
+/// identities may each put and list only below their provisioned tenant
+/// prefix. Keeping the policy below the real store adapters makes this test
+/// exercise both the typed scope checks and the edge's prefix decision.
+#[derive(Clone)]
+struct ScopedBackend {
+    catalog_grant: String,
+    derived_grant: String,
+    objects: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+    counters: Arc<Mutex<BackendCounters>>,
+}
+
+impl ScopedBackend {
+    fn new(catalog_tenant: &str, derived_tenant: &str) -> Self {
+        Self {
+            catalog_grant: format!("tenants/{catalog_tenant}/v1/catalog/"),
+            derived_grant: format!("tenants/{derived_tenant}/v1/derived/"),
+            objects: Arc::new(Mutex::new(BTreeMap::new())),
+            counters: Arc::new(Mutex::new(BackendCounters::default())),
+        }
+    }
+
+    fn objects(&self) -> Arc<Mutex<BTreeMap<String, Vec<u8>>>> {
+        Arc::clone(&self.objects)
+    }
+
+    fn counters(&self) -> BackendCounters {
+        *self.counters.lock().expect("scoped backend counter lock")
+    }
+
+    fn put(&self, grant: &str, key: &str, bytes: &[u8]) -> Result<(), StorageError> {
+        if !key.starts_with(grant) {
+            return Err(StorageError::new(
+                StorageErrorKind::ScopeViolation,
+                "credential grant is outside the requested prefix",
+            ));
+        }
+        self.objects
+            .lock()
+            .expect("scoped backend object lock")
+            .insert(key.to_owned(), bytes.to_vec());
+        self.counters
+            .lock()
+            .expect("scoped backend counter lock")
+            .puts += 1;
+        Ok(())
+    }
+
+    fn list(&self, grant: &str, prefix: &str) -> Result<Vec<String>, StorageError> {
+        if !prefix.starts_with(grant) {
+            return Err(StorageError::new(
+                StorageErrorKind::ScopeViolation,
+                "credential grant is outside the requested prefix",
+            ));
+        }
+        let keys = self
+            .objects
+            .lock()
+            .expect("scoped backend object lock")
+            .keys()
+            .filter(|key| key.starts_with(prefix))
+            .cloned()
+            .collect();
+        self.counters
+            .lock()
+            .expect("scoped backend counter lock")
+            .lists += 1;
+        Ok(keys)
+    }
+}
+
+impl CatalogWriteBackend for ScopedBackend {
+    async fn put_catalog_object(
+        &self,
+        key: &CatalogCheckpointKey,
+        bytes: &[u8],
+    ) -> Result<(), StorageError> {
+        self.put(&self.catalog_grant, key.as_str(), bytes)
+    }
+
+    async fn list_catalog_objects(
+        &self,
+        prefix: &CatalogListPrefix,
+    ) -> Result<Vec<String>, StorageError> {
+        self.list(&self.catalog_grant, prefix.as_str())
+    }
+}
+
+impl DerivedWriteBackend for ScopedBackend {
+    async fn put_derived_object(
+        &self,
+        key: &DerivedObjectKey,
+        bytes: &[u8],
+    ) -> Result<(), StorageError> {
+        self.put(&self.derived_grant, key.as_str(), bytes)
+    }
+
+    async fn list_derived_objects(
+        &self,
+        prefix: &DerivedListPrefix,
+    ) -> Result<Vec<String>, StorageError> {
+        self.list(&self.derived_grant, prefix.as_str())
+    }
+}
+
 struct FixtureStore {
     audit: FakeAudit,
-    catalog: FakeCatalog,
-    derived: FakeDerived,
+    catalog: S3CatalogWriteStore<ScopedBackend>,
+    derived: S3DerivedWriteStore<ScopedBackend>,
+    backend: ScopedBackend,
 }
 
 impl FixtureStore {
     fn new(tenant: &TenantId) -> Self {
-        let fixture = fixture(tenant);
+        Self::with_grants(tenant.as_str(), tenant.as_str())
+    }
+
+    fn with_grants(catalog_grant_tenant: &str, derived_grant_tenant: &str) -> Self {
+        let tenant = tenant();
+        let fixture = fixture(&tenant);
         let mut raw = BTreeMap::new();
         raw.insert(
             fixture.occurrence_key.as_str().to_owned(),
@@ -441,8 +592,17 @@ impl FixtureStore {
         let inventory =
             FrozenInventory::from_pages(&scope, vec![Ok(InventoryPage::new(entries, None))])
                 .expect("fixture inventory freezes");
-        let checkpoints = Arc::new(Mutex::new(BTreeMap::new()));
-        let derived = Arc::new(Mutex::new(BTreeMap::new()));
+        let backend = ScopedBackend::new(catalog_grant_tenant, derived_grant_tenant);
+        let checkpoints = backend.objects();
+        let writers = ScopedWritersConfig::builder()
+            .endpoint_url("https://s3.example.invalid")
+            .region("us-east-1")
+            .tenant_bucket("tenant-bucket")
+            .tenant(TENANT)
+            .catalog_write_credentials("file:/tmp/catalog-writer-credentials")
+            .derived_write_credentials("file:/tmp/derived-writer-credentials")
+            .build()
+            .expect("dedicated writer configuration");
         Self {
             audit: FakeAudit {
                 raw: Arc::new(Mutex::new(raw)),
@@ -450,15 +610,9 @@ impl FixtureStore {
                 inventory,
                 checkpoint_reads: Arc::new(AtomicUsize::new(0)),
             },
-            catalog: FakeCatalog {
-                objects: checkpoints,
-                puts: Arc::new(AtomicUsize::new(0)),
-                lists: Arc::new(AtomicUsize::new(0)),
-            },
-            derived: FakeDerived {
-                objects: derived,
-                puts: Arc::new(AtomicUsize::new(0)),
-            },
+            catalog: S3CatalogWriteStore::new(writers.catalog().clone(), backend.clone()),
+            derived: S3DerivedWriteStore::new(writers.derived().clone(), backend.clone()),
+            backend,
         }
     }
 }
@@ -539,106 +693,6 @@ impl AuditRestoreStore for FakeAudit {
                 .map(|bytes| ObjectBody::new(bytes, Observation::new(None, None, observed_at())))
                 .ok_or_else(|| StorageError::of_kind(StorageErrorKind::Unavailable))
         }
-    }
-}
-
-struct FakeCatalog {
-    objects: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
-    puts: Arc<AtomicUsize>,
-    lists: Arc<AtomicUsize>,
-}
-
-impl FakeCatalog {
-    fn put_count(&self) -> usize {
-        self.puts.load(Ordering::Relaxed)
-    }
-
-    fn list_count(&self) -> usize {
-        self.lists.load(Ordering::Relaxed)
-    }
-
-    fn keys(&self) -> Vec<String> {
-        self.objects
-            .lock()
-            .expect("catalog lock")
-            .keys()
-            .cloned()
-            .collect()
-    }
-
-    fn bytes(&self, key: &str) -> Option<Vec<u8>> {
-        self.objects.lock().expect("catalog lock").get(key).cloned()
-    }
-}
-
-impl CatalogWriteStore for FakeCatalog {
-    fn put_checkpoint(
-        &self,
-        key: &CatalogCheckpointKey,
-        bytes: &[u8],
-    ) -> impl Future<Output = Result<(), StorageError>> + Send {
-        self.puts.fetch_add(1, Ordering::Relaxed);
-        self.objects
-            .lock()
-            .expect("catalog lock")
-            .insert(key.as_str().to_owned(), bytes.to_vec());
-        async { Ok(()) }
-    }
-
-    fn list_checkpoints(
-        &self,
-        _prefix: &CatalogListPrefix,
-    ) -> impl Future<Output = Result<Vec<String>, StorageError>> + Send {
-        self.lists.fetch_add(1, Ordering::Relaxed);
-        let keys = self.keys();
-        async move { Ok(keys) }
-    }
-}
-
-struct FakeDerived {
-    objects: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
-    puts: Arc<AtomicUsize>,
-}
-
-impl FakeDerived {
-    fn put_count(&self) -> usize {
-        self.puts.load(Ordering::Relaxed)
-    }
-
-    fn keys(&self) -> Vec<String> {
-        self.objects
-            .lock()
-            .expect("derived lock")
-            .keys()
-            .cloned()
-            .collect()
-    }
-
-    fn bytes(&self, key: &str) -> Option<Vec<u8>> {
-        self.objects.lock().expect("derived lock").get(key).cloned()
-    }
-}
-
-impl DerivedWriteStore for FakeDerived {
-    fn put_object(
-        &self,
-        key: &DerivedObjectKey,
-        bytes: &[u8],
-    ) -> impl Future<Output = Result<(), StorageError>> + Send {
-        self.puts.fetch_add(1, Ordering::Relaxed);
-        self.objects
-            .lock()
-            .expect("derived lock")
-            .insert(key.as_str().to_owned(), bytes.to_vec());
-        async { Ok(()) }
-    }
-
-    fn list_objects(
-        &self,
-        _prefix: &DerivedListPrefix,
-    ) -> impl Future<Output = Result<Vec<String>, StorageError>> + Send {
-        let keys = self.keys();
-        async move { Ok(keys) }
     }
 }
 
