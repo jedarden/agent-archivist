@@ -215,7 +215,7 @@ type = "string"
 tiers = ["flag", "env", "file"]
 secret = false
 optional = true
-description = "The tenant bucket the Phase 10 catalog and derived scoped writers provision: catalog checkpoints and derived rows land below its tenant prefixes. Registry-optional: only the catalog rebuild composition consumes it."
+description = "The tenant bucket for the Phase 10 catalog and derived scoped writers; checkpoints and rows land below its tenant prefixes. Optional: only catalog rebuild consumes it."
 example = "archivist-tenant-example"
 
 [keys."storage.tenant"]
