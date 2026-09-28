@@ -340,6 +340,13 @@ python3 tools/check-storage-profiles.py --self-test   # the record gate
 scripts/definition-of-done.sh --fast                  # the full fast lane
 ```
 
+The complete CI/release verification command is
+`scripts/definition-of-done.sh --all --outcomes FILE`. Its fast lane includes
+the same storage-profile self-test, so qualification standing, outcome-specific
+evidence, append-only ordering, sensitive-field restrictions, and the explicit
+unqualified AWS S3 and Garage dispositions remain release-gated rather than
+being only a run-kit checklist.
+
 Acceptance is the maintainer's confirmation that the transcript shows
 SP-003 completeness (all three legs, no waived subset), that
 `multipart_commit_abort = "verified"` is earned rather than declared

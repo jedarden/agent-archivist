@@ -179,7 +179,12 @@ rejected against another. It runs in the fast lane.
    evaluated commit from that file, adds the non-outcomes sections as the
    lanes produce them, and runs `check --manifest` as the release gate
    (plan Section 10: a gate fails if evidence comes from a different commit
-   or any required entry is missing).
+   or any required entry is missing). Because `--all` includes the fast lane,
+   this full run also executes
+   `python3 tools/check-storage-profiles.py --self-test`; that gate checks
+   qualification standing, outcome-specific evidence, append-only records,
+   sensitive-field restrictions, and the explicit unqualified AWS S3 and
+   Garage records before the release manifest can pass.
 4. `sync` is idempotent and refuses to proceed over an inconsistent
    register; repair the register first.
 

@@ -62,8 +62,10 @@ checking), byte-exact regeneration and a content scan of the synthetic
 fixture, exact-inference, and usage-summary example corpora, the
 requirement-verification register gate, the README status-coherence gate,
 the release container baseline gate (version equality, digest-pinned bases,
-the
-mtime-pinned reproducible install layer, the same-commit version rule),
+the mtime-pinned reproducible install layer, the same-commit version rule), the
+ storage-profile registry gate (qualification standing, required evidence,
+ append-only records, sensitive-field restrictions, and the explicit
+ unqualified AWS S3 and Garage dispositions),
 a redacted secret scan of the working tree and the git history, the isolated
 MinIO storage-compatibility lane, and a `cargo audit` dependency audit. The
 MinIO lane runs only
