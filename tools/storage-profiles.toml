@@ -5,15 +5,14 @@
 # (fast lane of scripts/definition-of-done.sh) rejects any entry that violates
 # them.
 #
-# Nothing here claims a capability. A record states what one compatibility
-# suite run observed, or why no run could qualify the profile; an unknown
-# result is never strengthened into a guarantee (plan Section 10). Reference
-# and target profiles carry no records in this file: their qualification
-# happens in the suite's own lanes (every full verification run for the
-# reference profile, before compatible releases and before deployment for the
-# target profiles), so recording it here would be a second, weaker bookkeeping
-# of the same fact. Community profiles are qualified only by the records
-# below.
+# Nothing here claims a capability by implication. A record states what one
+# compatibility run observed, or why it failed; an unknown result is never
+# strengthened into a guarantee (plan Section 10). The reference profile
+# carries no record because its suite lane runs in project verification.
+# Target profiles may carry only explicitly marked `evidence = "live"` records:
+# the synthetic target lane is a prerequisite, while the release gate consumes
+# the redacted live result. Community profiles are qualified only by the
+# records below.
 #
 # Records are append-only. A record is never edited or deleted, only
 # superseded by a newer record on the same profile; a profile's standing is
@@ -34,7 +33,7 @@ description = "MinIO, the local reference S3 implementation the storage compatib
 
 [profiles.backblaze-b2]
 class = "target"
-description = "Backblaze B2's S3-compatible API, a target deployment profile qualified on an isolated synthetic prefix before each compatible release."
+description = "Backblaze B2's S3-compatible API, a target deployment profile whose isolated synthetic lane is followed by a redacted live run before each compatible release."
 
 [profiles.armor]
 class = "target"
@@ -98,3 +97,17 @@ release = "1.0.0"
 outcome = "unqualified"
 submitted_by = "maintainer"
 reason = "Unsupported and excluded from the 1.0.0 support claims: no qualification run executed. The storage compatibility suite and the community run kit exist (the reference and target profiles' lanes exercise them), but SP-001 puts community evidence outside project automation — the credential-free verification baseline holds no Garage instance or credential — and no community operator run has been submitted against any Garage deployment. A later release changes this disposition only by citing a complete kit run per docs/notes/storage-profiles.md Section 2."
+
+# Target release evidence is a separate, append-only record shape. This is the
+# redacted live B2 run from bead aa-c4a549c6; the transcript stays with that
+# bead and the registry carries only its release-safe outcome and tokens.
+[[records]]
+profile = "backblaze-b2"
+date = "2026-09-27"
+release = "0.1.0"
+evidence = "live"
+outcome = "qualified"
+submitted_by = "maintainer"
+suite_revision = "bd89a48"
+operator = "maintainer"
+capability = { conditional_create = "unavailable", multipart_commit_abort = "verified", stored_checksum = "provider_specific", versioning = "enabled", server_side_encryption = "verified" }

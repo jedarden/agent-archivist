@@ -37,11 +37,12 @@ differs, because one adapter serves every class
   credentials or services, and that rule is what keeps the reference
   profile honest — no other backend can quietly inherit its qualification.
 - **target** — Backblaze B2 and ARMOR's S3 path: the deployment profiles
-  the plan commits to. Qualified on an isolated synthetic prefix before
-  each compatible release (B2) and before deployment there (ARMOR), with
-  per-profile operator configuration — verified capabilities, credential
-  roles, encryption, lifecycle cleanup, backup or versioning, restore
-  identity, logical versus physical deduplication — owned by the
+  the plan commits to. The isolated synthetic lane is a prerequisite, not
+  release evidence. B2 additionally requires a redacted live run before
+  each compatible release; ARMOR has its deployment gate. Per-profile
+  operator configuration — verified capabilities, credential roles,
+  encryption, lifecycle cleanup, backup or versioning, restore identity,
+  logical versus physical deduplication — remains owned by the
   deployment-profiles documentation (Section 6).
 - **community** — every other compatible implementation; today AWS S3 and
   Garage, both standing unqualified. No deployment profile, no operator
@@ -108,7 +109,8 @@ makes "no record" impossible for community profiles. Fields:
 | --- | --- | --- |
 | `profile` | always | registry key of the profile the run targeted |
 | `date` | always | ISO 8601 calendar date of the run; per-profile dates never decrease |
-| `release` | `unqualified` only | SemVer release whose negative support disposition this record governs |
+| `release` | target live or `unqualified` | SemVer release whose live support evidence or negative disposition this record governs |
+| `evidence` | target records only | must be `live`; distinguishes release-time evidence from the synthetic lane |
 | `outcome` | always | `qualified` or `unqualified` — a closed set |
 | `submitted_by` | always | public contributor handle, or `maintainer` |
 | `reason` | `unqualified` only | why no capability claim exists (a failed run, or no run possible) |
@@ -121,6 +123,27 @@ makes "no record" impossible for community profiles. Fields:
   The suite output backing a qualified record is attached to the
   contribution that adds it, not committed; the gate scans for the obvious
   identifier shapes, and the rule binds even where a shape evades the scan.
+
+Target release evidence uses the same append-only array but must identify the
+live handoff explicitly. The B2 shape is:
+
+```toml
+[[records]]
+profile = "backblaze-b2"
+date = "<run date>"
+release = "<SemVer release being qualified>"
+evidence = "live"
+outcome = "qualified"
+submitted_by = "<maintainer handle>"
+suite_revision = "<revision that built the live driver>"
+operator = "<operator handle>"
+capability = { conditional_create = "supported|unavailable", multipart_commit_abort = "verified", stored_checksum = "sha256|md5|provider_specific|unavailable", versioning = "enabled|disabled|unknown", server_side_encryption = "verified|unavailable" }
+```
+
+If the live run is unavailable or fails, append the same shape with
+`outcome = "unqualified"`, the release, `evidence = "live"`, and a
+non-empty `reason`; omit the capability fields. The release gate treats that
+record, and a missing record, as a hard stop for the B2 support claim.
 - **SP-007** — A `qualified` record's `capability` table **MUST** report
   every axis of the plan Section 7.7 model with its closed tokens —
   `conditional_create`, `multipart_commit_abort` (SP-004),
@@ -139,6 +162,16 @@ makes "no record" impossible for community profiles. Fields:
   only to state that it is unqualified and deferred for that release, with
   no deployment profile, capability claim, or support claim. A later release
   keeps that disposition until a complete kit run appends a new record.
+- **SP-010** — A target profile's synthetic lane **MUST NOT** be treated as
+  live release evidence. A target record is allowed only with
+  `evidence = "live"`, a release SemVer, and the same redaction and
+  capability rules as a qualified or unqualified record. A missing or
+  unqualified live record is an honest negative, never a support claim.
+- **SP-011** — Before a release claims Backblaze B2 support, the release
+  gate **MUST** be run with that release's SemVer. It rejects when no B2
+  `evidence = "live"` record exists for the requested release or when the
+  latest such record is `unqualified`; a prior release's record and the
+  synthetic lane do not satisfy the gate.
 
 ## 4. What qualification creates — and what it does not
 
@@ -170,7 +203,7 @@ maintained by hand.
 | Profile | Class | Standing | Qualification evidence |
 | --- | --- | --- | --- |
 | `minio` | reference | qualified by the suite on every full verification run | plan Section 7.7 |
-| `backblaze-b2` | target | qualified before each compatible release | plan Section 10; live run recorded 2026-09-27 (the [B2 qualification note](b2-storage-qualification.md) Section 9) |
+| `backblaze-b2` | target | release-gated | plan Section 10; live record 2026-09-27 (the [B2 qualification note](b2-storage-qualification.md) Section 9) |
 | `armor` | target | qualified before deployment on the ARMOR path | plan Section 10; live run recorded 2026-09-27 (the [ARMOR qualification note](armor-storage-qualification.md) Section 11) |
 | `aws-s3` | community | unqualified | record 2026-09-27 (release 1.0.0) |
 | `garage` | community | unqualified | record 2026-09-27 (release 1.0.0) |
@@ -190,15 +223,14 @@ the record — and `unqualified` here means "no evidence", not "known
 broken".
 
 The two target rows carry their live release-time run state, recorded
-where the deployment-profile documentation owns it: the B2 profile's
-live run executed on 2026-09-27 against a real B2 instance with the
-five axes observed (its note's Section 9), and the ARMOR profile's live
-run executed the same day at the deployment's tailnet S3 edge — its
-note's Section 11 records the run, including the morning the staged
-edge was blocked, which was written down with the same SP-005
-seriousness a failed run gets before it recovered. Target profiles
-still carry no registry `[[records]]`; their qualification is the
-release gate these runs feed.
+where the deployment-profile documentation owns it. The B2 profile's
+successful live run on 2026-09-27 is also a redacted `[[records]]` entry
+with `evidence = "live"`; `tools/check-storage-profiles.py --release
+<SemVer>` consumes that entry. A synthetic result, a note-only claim, or a
+live record for another release cannot pass the B2 gate. The ARMOR profile's
+live run executed the same day at the deployment's tailnet S3 edge — its
+note's Section 11 records the run, including the morning the staged edge was
+blocked, with the same SP-005 seriousness a failed run gets.
 
 For a later release, a contributor either runs the complete kit and appends
 a `qualified` record with its suite revision and capability matrix, or

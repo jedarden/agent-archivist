@@ -267,9 +267,13 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # registry/note/README/release/support coherence including the retirement
   # of the unevidenced usability claim and the prohibition on
   # deployment-profile or support claims for a community profile while its
-  # latest record is unqualified; `--self-test` proves the rejection
-  # paths.
+  # latest record is unqualified; target live-record and release-gate rules
+  # are also covered by `--self-test`.
   run_check "storage profiles"  python3 tools/check-storage-profiles.py --self-test
+  # The live lane's handoff is evidence, not a request dump. Its self-test
+  # rejects keys, prefixes, bodies, upload ids, and authorization-shaped
+  # fields while requiring the complete instrument set and final tokens.
+  run_check "live storage evidence redaction" python3 tools/check-live-storage-evidence.py --self-test
   # Adapter compatibility matrix (docs/notes/compatibility-matrix.md): the
   # published per-adapter fingerprint allowlists, projection versions,
   # artifact kinds, and known gaps, reconciled row-for-row against the

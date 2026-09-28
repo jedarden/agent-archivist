@@ -16,11 +16,11 @@ Policy, one rule per check below:
 1. the registry declares exactly the pinned schema, and every profile's
    class comes from the closed set {reference, target, community} with
    MinIO pinned as the one reference profile (plan Section 7.7);
-2. reference and target profiles carry no qualification records — their
-   qualification lives in the compatibility suite's own lanes — while
-   every community profile carries at least one, so no community profile
-   is ever silently claimable (an absent record is not a soft "probably
-   works"; it is a gate failure);
+2. reference profiles carry no qualification records, while target records
+   are reserved for redacted release-live evidence and every community
+   profile carries at least one record, so no profile is silently claimable;
+   the B2 release gate separately requires a qualified live record for the
+   requested release (an absent record is a gate failure);
 3. a record's outcome is ``qualified`` or ``unqualified`` and its shape is
    the outcome's: ``unqualified`` states a non-empty reason, a SemVer
    release, and offers no capability fields, ``qualified`` states the suite
@@ -57,7 +57,7 @@ and exits 0; any failure prints a report on stderr and exits 2.
 
 Usage::
 
-    tools/check-storage-profiles.py [--self-test]
+    tools/check-storage-profiles.py [--self-test | --release SEMVER]
 
 The script is standard-library only.
 """
@@ -90,6 +90,18 @@ RECORD_OUTCOMES = ("qualified", "unqualified")
 RECORD_KEYS_COMMON = frozenset({"profile", "date", "outcome", "submitted_by", "note"})
 RECORD_KEYS_UNQUALIFIED = RECORD_KEYS_COMMON | {"reason", "release"}
 RECORD_KEYS_QUALIFIED = RECORD_KEYS_COMMON | {"suite_revision", "operator", "capability"}
+TARGET_RECORD_KEYS_COMMON = RECORD_KEYS_COMMON | {"evidence", "release"}
+TARGET_RECORD_KEYS_UNQUALIFIED = TARGET_RECORD_KEYS_COMMON | {"reason"}
+TARGET_RECORD_KEYS_QUALIFIED = TARGET_RECORD_KEYS_COMMON | {
+    "suite_revision", "operator", "capability"
+}
+
+# A target's synthetic lane is a prerequisite, not release evidence. Target
+# records are therefore a separate, explicitly live shape. B2 is the target
+# whose release-support claim this gate currently protects; ARMOR has its own
+# deployment gate and may use the same record shape when that gate is wired.
+LIVE_EVIDENCE = "live"
+LIVE_RELEASE_PROFILES = ("backblaze-b2",)
 
 # The capability model of plan Section 7.7 / crates' `capability` module.
 # `multipart_commit_abort` has one qualified value: a backend without
@@ -282,10 +294,17 @@ def validate_registry(registry: dict) -> list[str]:
         elif profile_key is not None:
             per_profile_dates.setdefault(profile_key, []).append(date)
 
+        profile_class = (
+            profiles.get(profile_key, {}).get("class")
+            if profile_key is not None else None
+        )
+        target_record = profile_class == "target"
         allowed = (
-            RECORD_KEYS_QUALIFIED if outcome == "qualified"
+            TARGET_RECORD_KEYS_QUALIFIED if target_record and outcome == "qualified"
+            else TARGET_RECORD_KEYS_UNQUALIFIED if target_record and outcome == "unqualified"
+            else RECORD_KEYS_QUALIFIED if outcome == "qualified"
             else RECORD_KEYS_UNQUALIFIED if outcome == "unqualified"
-            else RECORD_KEYS_COMMON
+            else TARGET_RECORD_KEYS_COMMON if target_record else RECORD_KEYS_COMMON
         )
         unknown = set(record) - allowed
         if unknown:
@@ -301,6 +320,19 @@ def validate_registry(registry: dict) -> list[str]:
                     violations.append(f"{where}.{field} must be a non-empty string")
                 else:
                     violations.extend(identifier_violations(f"{where}.{field}", value))
+
+        if target_record:
+            evidence = record.get("evidence")
+            if evidence != LIVE_EVIDENCE:
+                violations.append(
+                    f"{where}.evidence must be {LIVE_EVIDENCE!r} on a target record"
+                )
+            release = record.get("release")
+            if not isinstance(release, str) or not RELEASE_RE.match(release):
+                violations.append(
+                    f"{where}.release is required on a target live record and "
+                    "must be a SemVer release"
+                )
 
         if outcome == "unqualified":
             if "reason" not in record:
@@ -355,10 +387,10 @@ def validate_registry(registry: dict) -> list[str]:
                 "silent claim this registry exists to prevent — record an "
                 "explicit qualified or unqualified standing"
             )
-        if profile.get("class") in ("reference", "target") and profile_records:
+        if profile.get("class") == "reference" and profile_records:
             violations.append(
-                f"profiles.{key}: {profile['class']}-class profiles are "
-                "qualified by the suite's own lanes, not by records here"
+                "profiles.minio: the reference profile is qualified by the "
+                "suite's own lane, not by records here"
             )
 
     for key, dates in per_profile_dates.items():
@@ -398,6 +430,59 @@ def latest_record(registry: dict, profile_key: str) -> tuple[dt.date, dict] | No
     if not dated:
         return None
     return max(dated, key=lambda item: item[0])
+
+
+def latest_live_record_for_release(
+    registry: dict, profile_key: str, release: str
+) -> dict | None:
+    """Return the newest live record for one target release.
+
+    Equal-day records are resolved in append order, so a later failed rerun
+    cannot be hidden by an earlier pass on the same day.
+    """
+    candidates = [
+        (index, record)
+        for index, record in enumerate(registry.get("records", []))
+        if isinstance(record, dict)
+        and record.get("profile") == profile_key
+        and record.get("evidence") == LIVE_EVIDENCE
+        and record.get("release") == release
+        and parse_date(record.get("date", "")) is not None
+    ]
+    if not candidates:
+        return None
+    _, record = max(
+        candidates,
+        key=lambda item: (parse_date(item[1]["date"]), item[0]),
+    )
+    return record
+
+
+def validate_release_live(registry: dict, release: str) -> list[str]:
+    """Require release-live evidence before a protected target is claimable."""
+    violations: list[str] = []
+    if not isinstance(release, str) or not RELEASE_RE.match(release):
+        return [f"release gate requires a SemVer release, found {release!r}"]
+
+    for profile_key in LIVE_RELEASE_PROFILES:
+        profile = registry.get("profiles", {}).get(profile_key)
+        if not isinstance(profile, dict) or profile.get("class") != "target":
+            violations.append(
+                f"release gate profile {profile_key!r} is not a target profile"
+            )
+            continue
+        record = latest_live_record_for_release(registry, profile_key, release)
+        if record is None:
+            violations.append(
+                f"release {release}: {profile_key} has no live qualification "
+                "record; synthetic evidence cannot support the release claim"
+            )
+        elif record.get("outcome") != "qualified":
+            violations.append(
+                f"release {release}: {profile_key} live qualification is "
+                f"{record.get('outcome')!r}; B2 support claims are blocked"
+            )
+    return violations
 
 
 def unqualified_community_profiles(registry: dict) -> dict[str, dict]:
@@ -452,7 +537,7 @@ def validate_coherence(registry: dict, readme: str, note: str) -> list[str]:
                 )
             expected_evidence = f"record {date}"
             if outcome == "unqualified":
-                latest_record = max(
+                latest_community_record = max(
                     (
                         record for record in registry.get("records", [])
                         if isinstance(record, dict)
@@ -461,7 +546,7 @@ def validate_coherence(registry: dict, readme: str, note: str) -> list[str]:
                     ),
                     key=lambda record: parse_date(record["date"]),
                 )
-                record_release = latest_record.get("release")
+                record_release = latest_community_record.get("release")
                 if isinstance(record_release, str) and RELEASE_RE.match(record_release):
                     expected_evidence += f" (release {record_release})"
             if row["evidence"].strip() != expected_evidence:
@@ -470,6 +555,21 @@ def validate_coherence(registry: dict, readme: str, note: str) -> list[str]:
                     f"record as {expected_evidence!r}, found "
                     f"{row['evidence'].strip()!r}"
                 )
+        elif key in LIVE_RELEASE_PROFILES:
+            latest = latest_record(registry, key)
+            if latest is not None:
+                date, record = latest
+                expected_evidence = f"record {date.isoformat()}"
+                if expected_evidence not in row["evidence"]:
+                    violations.append(
+                        f"{NOTE_PATH}: live evidence for {key!r} must cite "
+                        f"{expected_evidence!r}"
+                    )
+                if row["standing"].strip() != "release-gated":
+                    violations.append(
+                        f"{NOTE_PATH}: target {key!r} must be marked "
+                        "release-gated rather than unconditionally qualified"
+                    )
 
     if str(NOTE_PATH).rsplit("/", 1)[-1] not in readme and "docs/notes/storage-profiles.md" not in readme:
         violations.append(
@@ -754,6 +854,48 @@ SELF_TEST_POLICY_CASES = [
          "AWS S3 passed the full suite.")),
 ]
 
+LIVE_RELEASE = "0.1.0"
+
+
+def b2_live_records(registry: dict) -> list[dict]:
+    return [
+        record for record in registry["records"]
+        if isinstance(record, dict)
+        and record.get("profile") == "backblaze-b2"
+        and record.get("evidence") == LIVE_EVIDENCE
+    ]
+
+
+def remove_b2_live_record(registry: dict) -> None:
+    registry["records"] = [
+        record for record in registry["records"]
+        if not (
+            isinstance(record, dict)
+            and record.get("profile") == "backblaze-b2"
+            and record.get("evidence") == LIVE_EVIDENCE
+        )
+    ]
+
+
+def fail_b2_live_record(registry: dict) -> None:
+    records = b2_live_records(registry)
+    if records:
+        records[-1].update(
+            outcome="unqualified",
+            reason="live run failed before all instruments completed",
+        )
+        for field in ("suite_revision", "operator", "capability"):
+            records[-1].pop(field, None)
+
+
+SELF_TEST_LIVE_RELEASE_CASES = [
+    ("the committed B2 live release record", False, lambda r: None),
+    ("B2 live evidence missing for the release", True, remove_b2_live_record),
+    ("B2 live run failed for the release", True, fail_b2_live_record),
+    ("B2 live evidence belongs to another release", True,
+     lambda r: b2_live_records(r)[-1].update(release="9.9.9")),
+]
+
 
 def run_self_test(base_registry: dict, base_readme: str, base_note: str,
                   base_release: str, base_support: str) -> int:
@@ -825,12 +967,26 @@ def run_self_test(base_registry: dict, base_readme: str, base_note: str,
             for violation in violations:
                 print(f"       violation: {violation}")
 
+    for label, must_reject, mutation in SELF_TEST_LIVE_RELEASE_CASES:
+        registry = apply_mutation(base_registry, mutation)
+        violations = validate_release_live(registry, LIVE_RELEASE)
+        rejected = bool(violations)
+        if rejected == must_reject:
+            passed += 1
+            print(f"  ok  {'rejects' if rejected else 'accepts'}: {label}")
+        else:
+            failed += 1
+            print(f"  FAIL {'should reject' if must_reject else 'should accept'}: "
+                  f"{label}")
+            for violation in violations:
+                print(f"       violation: {violation}")
+
     print(f"self-test: {passed} passed, {failed} failed")
     return 0 if failed == 0 else 2
 
 
 def main(argv: list[str]) -> int:
-    if "--self-test" in argv[1:]:
+    if argv[1:] == ["--self-test"]:
         registry = load_registry(ROOT / REGISTRY_PATH)
         readme = load_text(ROOT / README_PATH)
         note = load_text(ROOT / NOTE_PATH)
@@ -845,7 +1001,10 @@ def main(argv: list[str]) -> int:
             fail("self-test base: the committed registry itself is invalid")
             return 2
         return run_self_test(registry, readme, note, release, support)
-    if argv[1:]:
+    requested_release = None
+    if len(argv) == 3 and argv[1] == "--release":
+        requested_release = argv[2]
+    elif argv[1:]:
         fail(f"unknown arguments: {' '.join(argv[1:])}")
         return 2
 
@@ -861,6 +1020,8 @@ def main(argv: list[str]) -> int:
     violations = (validate_all(registry, readme, note)
                   + validate_release_support(registry, release, support,
                                              readme, note))
+    if requested_release is not None:
+        violations += validate_release_live(registry, requested_release)
     for violation in violations:
         fail(violation)
     if violations:
@@ -874,6 +1035,11 @@ def main(argv: list[str]) -> int:
         if profile["class"] == "community":
             outcome, date = standing(registry, key) or ("no record", "")
             line += f"{outcome} ({date})"
+        elif key in LIVE_RELEASE_PROFILES:
+            if requested_release is None:
+                line += "release-live evidence required (use --release SEMVER)"
+            else:
+                line += f"live-qualified ({requested_release})"
         else:
             line += "qualified by the suite's own lanes"
         print(line)

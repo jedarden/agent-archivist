@@ -174,8 +174,9 @@ deployment:
    transcript bodies or mutate control records.
 7. **Record the outcome honestly**: a run that could not execute or that
    fails is recorded as such; a partial or inconclusive run qualifies
-   nothing (SP-005). Target profiles carry no registry `[[records]]` —
-   their qualification is the release gate this run feeds.
+   nothing (SP-005). The B2 release record is the redacted live handoff,
+   not this synthetic result; a missing or failed live run blocks the B2
+   support claim.
 
 ## 8. Acceptance: logical identity preservation
 
@@ -268,3 +269,68 @@ error behavior under load, account-level controls outside the bucket,
 the ARMOR path's own layer over this backing store — the
 [ARMOR qualification note](armor-storage-qualification.md) Section 11
 records that layer's own live run, executed the same day.
+
+## 10. Release-time operator workflow and evidence handoff
+
+The Section 9 run is a qualification input, not a standing promise that can
+be copied into a later release. For every release that claims B2 support, the
+maintainer performs this sequence against the exact candidate revision:
+
+1. Run the synthetic B2 lane and the complete fast verification on the
+   candidate. This establishes that the release's code still follows the
+   B2 branches; it does not satisfy the live gate.
+2. Provision a fresh, isolated run prefix containing synthetic fixtures only.
+   Load the two scoped live credentials into the process environment from the
+   operator's secret store. They **MUST NOT** appear in command arguments,
+   shell history, logs, or the repository.
+3. Run `tools/live-storage-lane.py` at the candidate revision, with the
+   endpoint, bucket, region, and prefix supplied as operator-only arguments,
+   and write the transcript outside the checkout with mode `0600`:
+
+   ```sh
+   umask 077
+   python3 tools/live-storage-lane.py \
+     --endpoint <operator-only-endpoint> \
+     --bucket <operator-only-bucket> \
+     --region <operator-only-region> \
+     --prefix <fresh-synthetic-prefix>/ \
+     --profile-tag 'backblaze-b2[live,direct]' \
+     --transcript /operator-evidence/b2-<release>.jsonl
+   ```
+
+   The lane's transcript is redacted at write time: it retains operation
+   names, statuses, safe response metadata, counts, capability tokens, and
+   latency, but never keys, prefixes, upload ids, endpoint values, response
+   bodies, or authorization material. The stdout summary is redacted by the
+   same function. A run is not handed off until this check passes:
+
+   ```sh
+   python3 tools/check-live-storage-evidence.py \
+     --transcript /operator-evidence/b2-<release>.jsonl
+   ```
+
+4. Give the maintainer the redacted transcript and its lane-complete report
+   through the bead or other review channel. Keep any private provider audit
+   separately; it is not repository evidence and is never copied into the
+   record. The handoff must identify the candidate revision, the run date,
+   all instrument statuses, the five reduced tokens, cleanup result, and
+   whether the run completed. A missing lane-complete record is a failed
+   handoff.
+5. Append one target live record to
+   [`tools/storage-profiles.toml`](../../tools/storage-profiles.toml), using
+   `evidence = "live"`, the release SemVer, the exact driver revision, and
+   the observed capability matrix. If the run is unavailable, partial, or
+   fails, append `outcome = "unqualified"` with a reason and no capability
+   fields instead. Never edit an older record to hide a failed rerun.
+6. Run the ordinary registry checks, then the release-specific hard gate:
+
+   ```sh
+   python3 tools/check-storage-profiles.py --self-test
+   python3 tools/check-storage-profiles.py --release <SemVer>
+   ```
+
+   The second command rejects a missing B2 live record, a record for another
+   release, or an `unqualified` latest rerun. Only its exit `0`, together
+   with the full release verification, permits B2 to appear in release and
+   support claims. A synthetic report or the note's Section 9 prose cannot
+   bypass this check.

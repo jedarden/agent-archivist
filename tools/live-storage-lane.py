@@ -207,22 +207,16 @@ class Lane:
         interesting = {
             k: v
             for k, v in resp_headers.items()
-            if k
-            in (
-                "etag",
-                "x-amz-version-id",
-                "x-amz-server-side-encryption",
-                "x-amz-request-id",
-                "x-amz-bucket-region",
-                "content-type",
-            )
+            if k in ("etag", "x-amz-version-id", "x-amz-server-side-encryption", "content-type")
         }
         entry = {
             "op": op,
             "role": role,
             "method": method,
-            "key": key,
-            "query": query,
+            # The handoff transcript is evidence, not a private request dump.
+            # Keep operation shape while never serializing the bucket key,
+            # prefix, upload id, or query values.
+            "query_names": sorted(name for name, _ in query),
             "request_headers_logged": {
                 k: v
                 for k, v in (headers or {}).items()
@@ -232,10 +226,15 @@ class Lane:
                 n for n in signed if n.lower() not in ("authorization", "host")
             ),
             "status": status,
-            "response_headers": interesting,
+            "response_headers": {
+                name: value
+                for name, value in interesting.items()
+                if name not in ("etag", "x-amz-version-id")
+            },
+            "etag_present": "etag" in interesting,
+            "version_id_present": "x-amz-version-id" in interesting,
             "error_code": error_code(resp_body),
             "body_len": len(resp_body),
-            "body_head": resp_body[:240].decode("utf-8", errors="replace"),
             "body_sha256": _sha256_hex(resp_body),
             "latency_ms": elapsed_ms,
         }
@@ -517,6 +516,92 @@ def report_line(profile_tag: str, tokens: dict) -> str:
     )
 
 
+def redacted_observations(results: dict) -> dict:
+    """Retain qualification facts without retaining infrastructure names.
+
+    The reducer needs status and presence/count facts, but a handoff must not
+    carry the live bucket's keys, prefixes, upload ids, or response bodies.
+    This shape is deliberately explicit so a newly added instrument cannot
+    accidentally inherit a raw recursive serializer.
+    """
+    calibration = results["calibration"]
+    conditional = results["conditional_create"]
+    checksum = results["checksum"]
+    versioning = results["versioning"]
+    sse = results["sse"]
+    multipart_commit = results["multipart_commit"]
+    multipart_abort = results["multipart_abort"]
+    read_back = results["read_back"]
+    teardown = results["teardown"]
+    return {
+        "calibration": {
+            "status": calibration.get("status"),
+            "key_count": calibration.get("key_count"),
+            "parse_failed": calibration.get("parse_failed"),
+        },
+        "conditional_create": {
+            "fresh": conditional.get("fresh"),
+            "repeat": conditional.get("repeat"),
+            "repeat_error": conditional.get("repeat_error"),
+        },
+        "checksum": {
+            "status": checksum.get("status"),
+            "etag_present": checksum.get("etag") is not None,
+            "version_id_present": checksum.get("version_id") is not None,
+        },
+        "versioning": {
+            "put_1": versioning.get("put_1"),
+            "put_2": versioning.get("put_2"),
+            "put_1_version_id_present": versioning.get("put_1_version_id") is not None,
+            "put_2_version_id_present": versioning.get("put_2_version_id") is not None,
+            "list_status": versioning.get("list_status"),
+            "versions_count": len(versioning.get("versions") or []),
+            "versions_parse_failed": versioning.get("versions_parse_failed"),
+        },
+        "sse": {
+            "sse_put_status": sse.get("sse_put_status"),
+            "sse_echo_present": sse.get("sse_echo") is not None,
+            "plain_put_status": sse.get("plain_put_status"),
+            "plain_echo_present": sse.get("plain_echo") is not None,
+            "bucket_encryption_status": sse.get("bucket_encryption_status"),
+            "bucket_encryption_error": sse.get("bucket_encryption_error"),
+        },
+        "multipart_commit": {
+            "create": multipart_commit.get("create"),
+            "part": multipart_commit.get("part"),
+            "complete": multipart_commit.get("complete"),
+            "complete_etag_present": multipart_commit.get("complete_etag") is not None,
+            "complete_version_id_present": multipart_commit.get("complete_version_id") is not None,
+        },
+        "multipart_abort": {
+            "create": multipart_abort.get("create"),
+            "part": multipart_abort.get("part"),
+            "abort": multipart_abort.get("abort"),
+            "abort_error": multipart_abort.get("abort_error"),
+            "abort_repeat": multipart_abort.get("abort_repeat"),
+            "abort_repeat_error": multipart_abort.get("abort_repeat_error"),
+            "open_uploads_after": multipart_abort.get("open_uploads_after"),
+        },
+        "read_back": {
+            "list_status": read_back.get("list_status"),
+            "current_count": len(read_back.get("current_keys") or []),
+            "versions_status": read_back.get("versions_status"),
+            "version_count": read_back.get("version_count"),
+            "version_detail_count": len(read_back.get("version_detail") or []),
+            "parse_failed": read_back.get("parse_failed"),
+        },
+        "teardown": {
+            "open_before": teardown.get("open_before"),
+            "aborted_count": len(teardown.get("aborted") or []),
+            "aborted_success_count": sum(
+                1 for item in teardown.get("aborted") or []
+                if item.get("idempotent_success")
+            ),
+            "open_after": teardown.get("open_after"),
+        },
+    }
+
+
 def reduce_from_transcript(path: str, profile_tag: str) -> int:
     """Re-reduce a retained transcript's lane-complete record without a new
     live run: the observations are the evidence, the reductions are
@@ -531,7 +616,10 @@ def reduce_from_transcript(path: str, profile_tag: str) -> int:
         print("no lane-complete record in transcript", file=sys.stderr)
         return 2
     results = record["observations"]
-    tokens = tokens_from_observations(results)
+    # New handoffs contain the already-reduced tokens because their
+    # observations are intentionally redacted. Retain compatibility with
+    # older private transcripts that carried the reducer inputs.
+    tokens = record.get("tokens") or tokens_from_observations(results)
     print(json.dumps({"observations": results, "tokens": tokens}, indent=2, sort_keys=True))
     print(report_line(profile_tag, tokens))
     return 0
@@ -598,10 +686,11 @@ def main() -> int:
 
     tokens = tokens_from_observations(results)
 
+    safe_results = redacted_observations(results)
     with open(args.transcript, "a") as handle:
-        handle.write(json.dumps({"op": "lane-complete", "observations": results,
+        handle.write(json.dumps({"op": "lane-complete", "observations": safe_results,
                                  "tokens": tokens}, sort_keys=True) + "\n")
-    print(json.dumps({"observations": results, "tokens": tokens}, indent=2, sort_keys=True))
+    print(json.dumps({"observations": safe_results, "tokens": tokens}, indent=2, sort_keys=True))
     print(report_line(args.profile_tag, tokens))
     return 0
 

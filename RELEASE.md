@@ -59,6 +59,20 @@ disposition only by citing a new registry record produced by the complete
 [community qualification run kit](docs/notes/community-qualification-kit.md);
 S3 compatibility alone is not a support claim.
 
+Backblaze B2 has a separate positive release gate because its synthetic lane
+cannot establish live-provider behavior. Before a release names B2 as
+supported, the maintainer must append the redacted `evidence = "live"` record
+for that release and run:
+
+```sh
+python3 tools/check-storage-profiles.py --release <SemVer>
+```
+
+The command fails when the B2 live record is missing, belongs to another
+release, or is the latest `unqualified` result. A synthetic report, a prior
+release's live record, or prose in the B2 qualification note cannot satisfy
+this gate.
+
 ## Release steps
 
 1. **Qualify the commit.** The full verification baseline (see
@@ -69,6 +83,9 @@ S3 compatibility alone is not a support claim.
    capability reports, and SBOM and artifact digests (plan Section 10). A
    release gate fails if any required entry is missing or its evidence comes
    from a different commit.
+   Run the storage-profile release gate for the exact version being released;
+   in particular, `python3 tools/check-storage-profiles.py --release <SemVer>`
+   must exit 0 before B2 appears in the support claims.
 2. **Bump the version** in `Cargo.toml` and
    `containers/agent-archivist/VERSION` together, and commit.
 3. **Tag** the release commit with the annotated `vX.Y.Z` matching the version
