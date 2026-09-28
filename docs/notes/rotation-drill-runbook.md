@@ -1,6 +1,6 @@
 # ARMOR storage-identity rotation drill runbook
 
-Status: accepted baseline · Last updated: 2026-09-27
+Status: accepted baseline · Last updated: 2026-09-28
 
 Authority: [ARMOR storage provisioning](armor-storage-provisioning.md),
 "Rotation procedure" and "Rotation propagation" (bead `aa-d0c81e9e`; the
@@ -150,7 +150,120 @@ mode `600`).
    bead, then update the provisioning note's interval table (new anchor
    version and date) in the same commit as the drill record.
 
-## 4. Evidence handling
+## 4. Rolling back a rotation
+
+A rollback is the six-step procedure run in reverse: the pair that was
+serving before the bad write goes back into both copies, CAS-guarded, and
+the same drill stages prove the recovery. It is the documented response to
+a rotation that must be undone — a pair written with a wrong value, a
+transform staged against the wrong role's block, a drill `verify` failing
+on rows attributable to the new pair, a rotation executed in error. It is
+**not** the response to a suspected compromise of the new pair: a rollback
+puts a previously-live credential back into service, so it presumes that
+credential is still good — compromise re-rotates *forward* (the
+provisioning note's "Revocation" section), never back.
+
+Three properties make it safe to run under the same rules as the forward
+rotation:
+
+- **Nothing is deleted.** KV v2 history is the safety net
+  (`max_versions=20`; `delete` left every agent-reachable policy
+  2026-08-31). A rollback write is a CAS-guarded create of a new version
+  whose content is the known-good pair.
+- **The Deployment spec never changes.** There is no `kubectl rollout
+  undo` to reach for — mutating kubectl is prohibited fleet-wide, and it
+  would be beside the point: the credential arrives through the Secret
+  mount, so the fix is entirely on the OpenBao side and the preflight
+  sees no drift.
+- **The version counter is append-only, not a stack.** After a rollback
+  the newest version's content equals an older version's, so naive
+  "current − 1" arithmetic points at the bad pair. Always target the
+  version the rotation record names, never one less than current.
+
+### The propagation window is the cheap rollback
+
+The ExternalSecret reads the merged document at its refresh tick (1 h,
+phase-uniform), so a bad write has a head start before it can reach the
+cluster at all — the recorded rotation's write landed 27 minutes ahead of
+its tick. If **both** copies are restored before the next tick, the
+Secret's content never changes, Reloader never fires, and no pod ever
+rolls: the bad write never becomes live, and the drill record is the two
+CAS writes plus a positive pin (the restored pair never stopped being the
+serving pair, so the pin stays 2xx throughout). The merged document is
+the copy the ExternalSecret reads
+(`secret/rs-manager/iad-ci/armor/credentials`, property
+`credentials.yaml`); the per-role path is the mirror whose match the
+invariant asserts — a rollback is only complete when both are back, and
+only the merged document's restore is time-critical.
+
+### Rolling back after propagation
+
+Once the tick has passed, the bad pair is live and the rollback is a full
+rotation in reverse, budgeted like one (one refresh phase plus the
+Reloader rollout; the standing `--timeout 95m`):
+
+1. **Pin the restore point.** From the rotation record, name the version
+   of both paths that was serving and verified before the bad write; `bao
+   kv metadata get -format=json` confirms both paths' current versions
+   (metadata only — no value read).
+2. **Restore the merged document (CAS+1).** Read the current document via
+   the read identity into a mode-600 tmpfs file, then run the same scoped
+   transform as procedure step 3, writing the restored values into the
+   role's `access_key`/`secret_key` lines — asserting exactly two
+   line-level replacements, the entry count unchanged, and every other
+   line byte-identical **against the current document**, never a
+   wholesale restore of the old file (any other role that rotated onto it
+   in the meantime must survive).
+3. **Restore the per-role path (CAS+1)** with the same pair; match the
+   copies by comparison of fingerprints, never by printing.
+4. **Pin the inverse** (stage 4 above): against the then-serving pod, the
+   pair being restored → refused and the live (bad) pair → 2xx — the
+   mirror image of a forward rotation's pin, and what attributes the
+   later flip to the rollback propagation. (If the bad pair is
+   shape-invalid it cannot produce a calibrated refusal; record what the
+   probe reported — that report is itself evidence of the fault.)
+5. **`watch`** the rollback rollout (stage 5 above): ESO refresh bump,
+   new pod Ready, baseline pods gone, per-sample ready counts.
+6. **`flip` + `verify`** (stages 6–7 above) with the pairs swapped:
+   `current` = the restored pair (must go positive), `retired` = the bad
+   pair. Two verdict shapes are possible, and the record must say which
+   it ran:
+   - bad pair **shape-valid but wrong**: its refusal is the calibrated
+     `403 InvalidAccessKeyId` and the verdict is a normal PASS;
+   - bad pair **shape-invalid**: the probe fails client-side before any
+     HTTP exchange, the `retired_pair_rejected` row records `?` and
+     fails. That single named failure is the expected rollback verdict in
+     this case — every other check must pass. A verdict failing anything
+     else is not a rollback that worked.
+   The fingerprint checks scope correctly on their own: the bad pair's
+   fingerprint belongs in this drill's *baseline* dumps (it was serving
+   when they were taken) and must be absent from the replacement dumps.
+   For the same reason the baseline positive pin is expected to be
+   refused when the drill starts against a bad-serving edge — `baseline`
+   records it and exits 0, and `verify`'s step-1 check recovers through
+   the replacement dump's restored fingerprint.
+7. **Record** which versions were restored and why. The interval table's
+   anchor keeps the restored pair's fingerprint but takes the rollback's
+   version number — write it as `v<N> (restore of v<M>)` so the next
+   reader's version arithmetic starts from the right place.
+
+### Availability during a rollback
+
+The same property that makes a forward rotation safe makes the rollback
+safe: the edge keeps answering with the credential the serving pod
+started with until Reloader replaces it, and the rollout is 1 replica
+with `maxUnavailable: 25%` — which rounds to zero unavailable, so the
+prior pod serves until the replacement is Ready (the propagation
+measurements agree: neither recorded drill sampled a ready gap). If the
+bad pair was merely unwanted, it serves like any other credential and
+readiness never dips. If it is malformed enough that ARMOR cannot serve
+from it, the replacement pod stalls the rollout instead — the prior pod
+keeps serving while the startupProbe budget (~10 min) runs — and the
+rollback write heals the deployment on the next propagation. What no
+rollback can shorten is the ESO refresh phase: plan on the same 0–60
+minutes, or catch the write before the tick and spend none of it.
+
+## 5. Evidence handling
 
 The evidence file is JSON, mode `600`, schema
 `rotation-drill-evidence/v1`, written to a tmpfs path
@@ -164,7 +277,7 @@ refuses the write (exit 5) rather than redacting, because a hit is a tool
 bug. The file never enters a repository; keep it out of `$HOME` globs and
 shred it when the drill record is written.
 
-## 5. Exit codes
+## 6. Exit codes
 
 | Code | Meaning |
 |---|---|
@@ -175,9 +288,10 @@ shred it when the drill record is written.
 | 4 | stage or evidence error (watch without baseline, watch timeout, verify on an incomplete drill) |
 | 5 | evidence write refused — a supplied pair value reached the evidence text |
 
-## 6. Deliberately not automated
+## 7. Deliberately not automated
 
-- **The OpenBao writes.** Procedure steps 2–4 stay manual, under the
+- **The OpenBao writes.** Procedure steps 2–4 — and their rollback
+  counterparts in "Rolling back a rotation" — stay manual, under the
   write-only provisioning identity, by pipe — the drill observes and
   verifies, it never holds a credential.
 - **The live drill is not a DoD gate.** It needs a reachable serving edge

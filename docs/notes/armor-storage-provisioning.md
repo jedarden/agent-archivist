@@ -611,7 +611,12 @@ a supplied pair value reaching its text refuses the write.
 [`docs/notes/rotation-drill-runbook.md`](rotation-drill-runbook.md) is
 the operating guide; the orchestrator's `--self-test` (scripted fake
 cluster with a real rollout timeline, no network, no credentials) is
-wired into the DoD fast lane beside the probe's.
+wired into the DoD fast lane beside the probe's. The runbook also carries
+the rollback procedure: a rotation that must be undone is reversed by
+restoring the previous KV version into both copies under the same
+CAS/pipe rules, with the drill stages proving the recovery — and the
+window before the next ESO refresh tick is the cheap rollback, where a
+restore lands before the bad pair ever reaches the cluster.
 
 ### Intended rotation interval per role
 
@@ -649,6 +654,13 @@ channel. Both drills to date (control-reader, `aa-51a272be`; raw writer,
   resurrect an old version). ARMOR drops the identity at the next
   propagation. Per-role paths are append-only under agent policy;
   history is retained (`max_versions=20`) by design.
+- **A rotation that must be undone** (bad pair written, wrong role, drill
+  verdict failing on the new pair) is a rollback, not a revocation: the
+  previous KV version is restored into both copies under the same
+  CAS/pipe rules and the drill stages prove the recovery — see the
+  runbook's "Rolling back a rotation". A rollback presumes the restored
+  credential is still good; suspected compromise re-rotates forward
+  instead.
 - **The control-admin identity is break-glass:** its revocation or
   deregistration is an operator decision, never an agent action.
 
