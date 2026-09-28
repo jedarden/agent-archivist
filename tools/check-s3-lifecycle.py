@@ -95,6 +95,7 @@ OVERWRITES = frozenset({"convergent", "epoch-replacement"})
 PROFILE_CLASSES = frozenset({"reference", "target"})
 VERSIONING_SHAPES = frozenset({"enabled", "raw-bucket-only"})
 CURRENT_VERSION_POLICIES = frozenset({"protected", "expirable"})
+EXPIRABLE_FAMILIES = frozenset({"probe"})
 
 # The reserved scopes outside the profile/family registries: the
 # bucket-wide multipart row.
@@ -186,10 +187,18 @@ def check_registry_shape(registry: dict) -> bool:
         if not isinstance(family.get("source_of_truth"), bool):
             fail(f"{label}: source_of_truth must be a boolean")
             ok = False
-        if family.get("current_versions") not in CURRENT_VERSION_POLICIES:
+        current_policy = family.get("current_versions")
+        if current_policy not in CURRENT_VERSION_POLICIES:
             fail(f"{label}: current_versions "
-                 f"{family.get('current_versions')!r} is not one of "
+                 f"{current_policy!r} is not one of "
                  f"{sorted(CURRENT_VERSION_POLICIES)}")
+            ok = False
+        expected_policy = ("expirable" if fid in EXPIRABLE_FAMILIES
+                           else "protected")
+        if current_policy != expected_policy:
+            fail(f"{label}: current_versions must be {expected_policy!r}; "
+                 "only the reserved probe family may expire current "
+                 "objects")
             ok = False
         subprefixes = family.get("subprefixes")
         if not isinstance(subprefixes, list) or not subprefixes or \
@@ -583,6 +592,10 @@ def self_test(registry: dict, note: str, script: str, audit_source: str) -> bool
              r for r in reg["rule"]
              if (r["profile"], r["family"]) == ("minio", "raw")
          ).update({"days": 45})),
+        ("registry shape (make catalog current expirable)",
+         "shape",
+         lambda reg, note_t, script_t: reg["family"][3].update(
+             {"current_versions": "expirable"})),
     )
 
     ok = True
