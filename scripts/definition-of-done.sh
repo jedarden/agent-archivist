@@ -356,7 +356,7 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   require_modules jsonschema referencing \
     && run_check "inference corpus"  python3 tools/inferencegen.py --verify
   # Usage-summary example corpus (docs/notes/usage-summary-schema.md):
-  # byte-exact regeneration of the five golden records, schema validation
+  # byte-exact regeneration of the eight golden records, schema validation
   # of every record plus the reserved-name negative matrix, and the
   # digest/object-key/unknown-never-zero invariants recomputed from the
   # pinned bytes. The committed corpus is additionally replayed against
