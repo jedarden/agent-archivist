@@ -39,9 +39,15 @@ Policy, one rule per check below:
    profile and its unqualified standing when any profile stands
    unqualified, and the retired unevidenced claim ("expected to be
    usable") appears nowhere it can creep back from.
-7. release and support policy explicitly scope AWS S3 and Garage's current
-   unqualified/deferred disposition and deny support, deployment, and
-   capability claims for them.
+7. while a community profile's latest record is ``unqualified``, the
+   release and support policy states that record's versioned negative
+   disposition — the record's release, the unqualified standing, the
+   deferral or exclusion, and the no-support / no-deployment /
+   no-capability denials — and no sentence of the README, RELEASE.md,
+   SUPPORT.md, or the registry note names the profile without carrying
+   that disposition: a deployment-profile or support claim for an
+   unqualified profile is a gate failure (SP-009), derived from the
+   records rather than pinned to any one release.
 
 ``--self-test`` runs the same validators against the committed registry
 with embedded mutations (plus README, note, release, and support edits in memory) and
@@ -380,6 +386,34 @@ def standing(registry: dict, profile_key: str) -> tuple[str, str] | None:
     return dated[-1][1], dated[-1][0].isoformat()
 
 
+def latest_record(registry: dict, profile_key: str) -> tuple[dt.date, dict] | None:
+    """The (date, record) of a profile's latest record, or ``None``."""
+    dated: list[tuple[dt.date, dict]] = []
+    for record in registry.get("records", []):
+        if not isinstance(record, dict) or record.get("profile") != profile_key:
+            continue
+        date = parse_date(record.get("date", ""))
+        if date is not None:
+            dated.append((date, record))
+    if not dated:
+        return None
+    return max(dated, key=lambda item: item[0])
+
+
+def unqualified_community_profiles(registry: dict) -> dict[str, dict]:
+    """Community profiles whose latest record is ``unqualified``, keyed by
+    profile, each carrying the governing record (the versioned deferral a
+    later release must supersede before any claim can exist)."""
+    governing: dict[str, dict] = {}
+    for key, profile in registry.get("profiles", {}).items():
+        if profile.get("class") != "community":
+            continue
+        latest = latest_record(registry, key)
+        if latest is not None and latest[1].get("outcome") == "unqualified":
+            governing[key] = latest[1]
+    return governing
+
+
 # --- document coherence -----------------------------------------------------
 
 
@@ -469,25 +503,98 @@ def validate_all(registry: dict, readme: str, note: str) -> list[str]:
     return validate_registry(registry) + validate_coherence(registry, readme, note)
 
 
-def validate_release_support(release: str, support: str) -> list[str]:
-    """Require explicit negative claims for community profiles in policy docs."""
+# SP-009's claims prohibition at sentence level: a sentence of a policy
+# document that names an unqualified community profile must carry one of
+# these markers, so an affirmative mention cannot stand in for the negative
+# disposition. Sentences split on a period or semicolon followed by
+# whitespace — a version number's internal periods never split, and each
+# sentence is whitespace-normalized so a name wrapped across source lines
+# still matches.
+CLAIM_SENTENCE_SPLIT = re.compile(r"(?<=[.;])\s+")
+
+DISPOSITION_MARKERS = (
+    "unqualified",
+    "unsupported",
+    "not supported",
+    "no deployment",
+    "no capability",
+    "no support",
+    "deferred",
+    "excluded",
+    "neither is supported",
+)
+
+
+def claim_sentences(text: str) -> list[str]:
+    """Whitespace-normalized sentences of a policy document."""
+    return [
+        " ".join(sentence.split())
+        for sentence in CLAIM_SENTENCE_SPLIT.split(text or "")
+        if sentence.strip()
+    ]
+
+
+def validate_release_support(
+    registry: dict, release: str, support: str, readme: str, note: str
+) -> list[str]:
+    """SP-009 at gate strength, derived from the records rather than pinned:
+    while a community profile's latest record is ``unqualified``, the release
+    and support policy must state that record's versioned negative
+    disposition, and no sentence of the policy documents may name the
+    profile without carrying the disposition — a deployment-profile or
+    support claim for an unqualified profile is a gate failure, not
+    documentation."""
     violations: list[str] = []
-    required = ("AWS S3", "Garage", "0.1.0", "unqualified", "deferred")
+    unqualified = unqualified_community_profiles(registry)
+
     for label, text in ((str(RELEASE_PATH), release), (str(SUPPORT_PATH), support)):
         normalized = " ".join(text.split())
-        for term in required:
-            if term not in normalized:
-                violations.append(
-                    f"{label} must explicitly name AWS S3 and Garage as "
-                    f"unqualified/deferred for release 0.1.0 (missing {term!r})"
-                )
-        if "not supported" not in normalized:
-            violations.append(f"{label} must not imply support for AWS S3 or Garage")
-        if "no deployment" not in normalized or "no capability claim" not in normalized:
-            violations.append(
-                f"{label} must deny deployment and capability claims for "
-                "unqualified community profiles"
+        for key, record in sorted(unqualified.items()):
+            display = COMMUNITY_DISPLAY_NAMES.get(key, key)
+            governing_release = record.get("release", "")
+            required = (
+                display,
+                "unqualified",
+                "not supported",
+                "no deployment",
+                "no capability claim",
+                governing_release,
             )
+            for term in required:
+                if term and term not in normalized:
+                    violations.append(
+                        f"{label} must explicitly name {display} ({key}) as "
+                        f"unqualified with no deployment or capability claim "
+                        f"for release {governing_release} (missing {term!r})"
+                    )
+            if not any(term in normalized for term in ("deferred", "excluded")):
+                violations.append(
+                    f"{label} must state the versioned deferral or exclusion "
+                    f"of {display} ({key}) for release {governing_release}"
+                )
+
+    policy_docs = {
+        "README.md": readme,
+        str(RELEASE_PATH): release,
+        str(SUPPORT_PATH): support,
+        str(NOTE_PATH): note,
+    }
+    for key, record in sorted(unqualified.items()):
+        display = COMMUNITY_DISPLAY_NAMES.get(key, key)
+        names = (display, key)
+        for label, text in policy_docs.items():
+            for sentence in claim_sentences(text):
+                if not any(name in sentence for name in names):
+                    continue
+                lowered = sentence.lower()
+                if not any(marker in lowered for marker in DISPOSITION_MARKERS):
+                    violations.append(
+                        f"{label}: a sentence names {display} ({key}) without "
+                        f"its unqualified disposition — no deployment-profile "
+                        f"or support claim may exist while the latest record "
+                        f"(release {record.get('release', 'n/a')}) says "
+                        "unqualified (SP-009)"
+                    )
     return violations
 
 
@@ -588,7 +695,7 @@ SELF_TEST_COMBINED_CASES = [
     ("a well-formed qualified community record", False,
      add_qualified_garage_record,
      lambda note: note.replace(
-         "| `garage` | community | unqualified | record 2026-09-15 (release 0.1.0) |",
+         "| `garage` | community | unqualified | record 2026-09-27 (release 1.0.0) |",
          "| `garage` | community | qualified | record 2026-10-01 |", 1)),
     ("a qualified record the note's table still calls unqualified", True,
      add_qualified_garage_record,
@@ -607,7 +714,7 @@ SELF_TEST_TEXT_CASES = [
     ("the note evidence citing a stale record date", True,
      lambda readme, note: (
          readme,
-         note.replace("record 2026-09-15 (release 0.1.0) |",
+         note.replace("record 2026-09-27 (release 1.0.0) |",
                       "record 2026-08-01 |", 1))),
     ("the README dropping the note link", True,
      lambda readme, note: (
@@ -617,13 +724,34 @@ SELF_TEST_TEXT_CASES = [
      lambda readme, note: (readme.replace("unqualified", "untested"), note)),
 ]
 
+# Policy-document cases mutate whichever of the four policy documents the
+# claims prohibition reads (release, support, README, note); the committed
+# registry and the unmutated siblings stay in scope, because the validator
+# derives the unqualified set from the records.
 SELF_TEST_POLICY_CASES = [
-    ("the committed release and support policy", False,
-     lambda release, support: (release, support)),
+    ("the committed policy documents", False, lambda docs: None),
     ("release policy omits the negative disposition", True,
-     lambda release, support: (release.replace("not supported", "supported", 1), support)),
+     lambda docs: docs.update(
+         release=re.sub(r"not\s+supported", "supported", docs["release"]))),
     ("support policy omits the no-support claim", True,
-     lambda release, support: (release, support.replace("unqualified", "qualified", 1))),
+     lambda docs: docs.update(
+         support=docs["support"].replace("unqualified", "qualified", 1))),
+    ("the release policy dropping the governing release", True,
+     lambda docs: docs.update(
+         release=docs["release"].replace("1.0.0", "9.9.9"))),
+    ("a release note claiming AWS S3 support", True,
+     lambda docs: docs.update(release=docs["release"] + "\n"
+         "AWS S3 is a supported storage profile for production deployments.")),
+    ("a deployment-profile claim for Garage in the support policy", True,
+     lambda docs: docs.update(support=docs["support"] + "\n"
+         "Garage deployment profile: point the endpoint at the instance "
+         "and deploy.")),
+    ("a README sentence naming Garage without its disposition", True,
+     lambda docs: docs.update(readme=docs["readme"] + "\n"
+         "Garage works today.")),
+    ("a note sentence claiming AWS S3 was tested", True,
+     lambda docs: docs.update(note=docs["note"] + "\n"
+         "AWS S3 passed the full suite.")),
 ]
 
 
@@ -676,8 +804,16 @@ def run_self_test(base_registry: dict, base_readme: str, base_note: str,
                 print(f"       violation: {violation}")
 
     for label, must_reject, mutation in SELF_TEST_POLICY_CASES:
-        release, support = mutation(base_release, base_support)
-        violations = validate_release_support(release, support)
+        docs = {
+            "release": base_release,
+            "support": base_support,
+            "readme": base_readme,
+            "note": base_note,
+        }
+        mutation(docs)
+        violations = validate_release_support(
+            base_registry, docs["release"], docs["support"],
+            docs["readme"], docs["note"])
         rejected = bool(violations)
         if rejected == must_reject:
             passed += 1
@@ -704,7 +840,8 @@ def main(argv: list[str]) -> int:
                 or release is None or support is None):
             return 2
         if (validate_all(registry, readme, note)
-                or validate_release_support(release, support)):
+                or validate_release_support(registry, release, support,
+                                            readme, note)):
             fail("self-test base: the committed registry itself is invalid")
             return 2
         return run_self_test(registry, readme, note, release, support)
@@ -722,7 +859,8 @@ def main(argv: list[str]) -> int:
         return 2
 
     violations = (validate_all(registry, readme, note)
-                  + validate_release_support(release, support))
+                  + validate_release_support(registry, release, support,
+                                             readme, note))
     for violation in violations:
         fail(violation)
     if violations:

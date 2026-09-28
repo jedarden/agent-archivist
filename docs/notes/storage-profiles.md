@@ -44,7 +44,8 @@ differs, because one adapter serves every class
   identity, logical versus physical deduplication — owned by the
   deployment-profiles documentation (Section 6).
 - **community** — every other compatible implementation; today AWS S3 and
-  Garage. No deployment profile, no operator documentation, and no
+  Garage, both standing unqualified. No deployment profile, no operator
+  documentation, and no
   capability claim until a recorded qualification run says otherwise;
   SP-002 makes "no record" a gate failure rather than a soft default.
 
@@ -82,11 +83,13 @@ differs, because one adapter serves every class
   record never strengthens: unknown stays unknown, and a partial or
   inconclusive run qualifies nothing (plan Section 10).
 
-Until the suite itself lands (plan Phase 2; register verification
-T-OPS-006, status `planned`), no community qualification run is possible
-at all — the procedure's first precondition is the harness — and
-Section 5's records say exactly that rather than leaving the profiles
-claimable.
+The harness precondition is met — the storage compatibility suite landed
+with plan Phase 2, and its reference and target lanes run on every full
+verification and release-qualification path — but a harness alone
+qualifies nothing: until a community operator executes the complete kit
+against a real instance, no qualification exists for either community
+profile, and Section 5's records say exactly that rather than leaving the
+profiles claimable.
 
 The procedure's self-service half — the fixture inputs a run consumes,
 the suite's expected outcome branches, the capability-probe entry point,
@@ -169,17 +172,22 @@ maintained by hand.
 | `minio` | reference | qualified by the suite on every full verification run | plan Section 7.7 |
 | `backblaze-b2` | target | qualified before each compatible release | plan Section 10; live run recorded 2026-09-27 (the [B2 qualification note](b2-storage-qualification.md) Section 9) |
 | `armor` | target | qualified before deployment on the ARMOR path | plan Section 10; live run recorded 2026-09-27 (the [ARMOR qualification note](armor-storage-qualification.md) Section 11) |
-| `aws-s3` | community | unqualified | record 2026-09-15 (release 0.1.0) |
-| `garage` | community | unqualified | record 2026-09-15 (release 0.1.0) |
+| `aws-s3` | community | unqualified | record 2026-09-27 (release 1.0.0) |
+| `garage` | community | unqualified | record 2026-09-27 (release 1.0.0) |
 
-Both community records state the same fact from the same cause: no suite
-run has been executed against either implementation, because the suite is
-itself a planned Phase 2 deliverable and no community operator run has
-been submitted. For release `0.1.0`, each record is therefore an explicit
-unqualified/deferred disposition: neither AWS S3 nor Garage is a supported
-storage profile, deployment profile, or capability claim. Where the README
-previously carried an expectation, this table carries the record — and
-`unqualified` here means "no evidence", not "known broken".
+Each community profile's latest record states the same fact: no suite run
+has been executed against either implementation. The release `0.1.0`
+records (2026-09-15) predate the suite itself; the release `1.0.0`
+records (2026-09-27) keep both profiles unqualified with the suite and
+the run kit in hand — SP-001 puts community evidence outside project
+automation, the credential-free baseline holds no AWS S3 or Garage
+instance, and no community operator run has been submitted. Each record
+is an explicit unqualified disposition for its release: AWS S3 and
+Garage are unsupported and excluded from that release's claims — no
+supported storage profile, no deployment profile, no capability claim.
+Where the README previously carried an expectation, this table carries
+the record — and `unqualified` here means "no evidence", not "known
+broken".
 
 The two target rows carry their live release-time run state, recorded
 where the deployment-profile documentation owns it: the B2 profile's

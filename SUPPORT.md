@@ -46,7 +46,9 @@ These are the targets fixed by the plan, not yet-shipped guarantees:
   adapter names the exact source fingerprints it supports.
 - **Storage profiles:** the local reference S3 implementation (MinIO), Backblaze
   B2, and the ARMOR S3 path are the plan's reference and target profiles. AWS
-  S3 and Garage are unqualified and deferred for `0.1.0`; they are not
+  S3 and Garage are unqualified and deferred for `0.1.0` and for `1.0.0` —
+  the records dated 2026-09-27 leave both excluded from the stable release's
+  support claims; they are not
   supported storage profiles and carry no deployment profile and no capability
   claim.
   Other S3-compatible implementations are outside the support matrix until a

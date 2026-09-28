@@ -231,7 +231,9 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # five-axis capability matrix with closed tokens and multipart
   # commit/abort verified, the release-scoped negative record, and
   # registry/note/README/release/support coherence including the retirement
-  # of the unevidenced usability claim; `--self-test` proves the rejection
+  # of the unevidenced usability claim and the prohibition on
+  # deployment-profile or support claims for a community profile while its
+  # latest record is unqualified; `--self-test` proves the rejection
   # paths.
   run_check "storage profiles"  python3 tools/check-storage-profiles.py --self-test
   # Adapter compatibility matrix (docs/notes/compatibility-matrix.md): the

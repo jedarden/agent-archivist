@@ -50,9 +50,11 @@ stable raw archive. Each release's notes must state:
 - the deduplication guarantees actually provided (logical versus physical).
 
 The storage-profile registry is also the negative-claim gate for release
-notes. For the current `0.1.0` preview, AWS S3 and Garage are explicitly
-unqualified and deferred; they are not supported storage profiles and carry
-no deployment profile and no capability claim. A later release may change either
+notes. AWS S3 and Garage are explicitly unqualified and deferred, and
+excluded from the `1.0.0` claims: the records dated 2026-09-27 supersede
+the `0.1.0` deferrals and govern the stable release. They are not
+supported storage profiles and carry no deployment profile and no
+capability claim in `1.0.0`. A later release may change either
 disposition only by citing a new registry record produced by the complete
 [community qualification run kit](docs/notes/community-qualification-kit.md);
 S3 compatibility alone is not a support claim.

@@ -49,10 +49,12 @@ class = "community"
 description = "Garage, the Deuxfleurs self-hosted S3-compatible object store, a community profile qualified only by a recorded community run of the compatibility suite."
 
 # ---------------------------------------------------------------------------
-# Qualification records. The two below close the gap the README used to paper
-# over with "expected to be usable": neither community profile has evidence,
-# so both stand explicitly unqualified and deferred for the versioned release
-# disposition below until a complete community run exists.
+# Qualification records. These close the gap the README used to paper over
+# with "expected to be usable": neither community profile has evidence, so
+# both stand explicitly unqualified and excluded from the versioned release
+# dispositions below until a complete community run exists. Records are
+# never edited or deleted; a later release's deferral appends a new record
+# and supersedes the earlier one by date.
 # ---------------------------------------------------------------------------
 
 [[records]]
@@ -70,3 +72,29 @@ release = "0.1.0"
 outcome = "unqualified"
 submitted_by = "maintainer"
 reason = "Deferred for release 0.1.0: no qualification run executed. The storage compatibility suite is itself a planned Phase 2 deliverable (register verification T-OPS-006, status planned), so no suite harness exists to run against any Garage instance, and no community run has been submitted. Qualification awaits a complete community operator run under docs/notes/storage-profiles.md Section 2."
+
+# The 1.0.0 stable-release disposition: AWS S3 and Garage are unsupported and
+# excluded from the stable release's support claims. Unlike the 0.1.0 records
+# above, these were filed with the suite and the run kit in hand — the
+# reference and target profiles' lanes exercise both — so the reason is no
+# longer a missing harness: SP-001 puts community evidence outside project
+# automation (the credential-free baseline holds no AWS S3 or Garage instance
+# or credential), and no community operator run has been submitted. The
+# disposition changes only when a complete kit run appends a qualified record
+# (SP-009).
+
+[[records]]
+profile = "aws-s3"
+date = "2026-09-27"
+release = "1.0.0"
+outcome = "unqualified"
+submitted_by = "maintainer"
+reason = "Unsupported and excluded from the 1.0.0 support claims: no qualification run executed. The storage compatibility suite and the community run kit exist (the reference and target profiles' lanes exercise them), but SP-001 puts community evidence outside project automation — the credential-free verification baseline holds no AWS S3 instance or credential — and no community operator run has been submitted. A later release changes this disposition only by citing a complete kit run per docs/notes/storage-profiles.md Section 2."
+
+[[records]]
+profile = "garage"
+date = "2026-09-27"
+release = "1.0.0"
+outcome = "unqualified"
+submitted_by = "maintainer"
+reason = "Unsupported and excluded from the 1.0.0 support claims: no qualification run executed. The storage compatibility suite and the community run kit exist (the reference and target profiles' lanes exercise them), but SP-001 puts community evidence outside project automation — the credential-free verification baseline holds no Garage instance or credential — and no community operator run has been submitted against any Garage deployment. A later release changes this disposition only by citing a complete kit run per docs/notes/storage-profiles.md Section 2."
