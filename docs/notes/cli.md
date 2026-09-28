@@ -113,6 +113,10 @@ through the registered error surface.
   identity and the two dedicated scoped writers. Its result is pinned to
   `schemas/v1/cli-catalog-rebuild.json`, and configuration/transport refusals
   remain registered errors with no partial stdout.
+  Coverage in `crates/archivist-cli/src/catalog.rs` proves the successful
+  result/envelope shape, the unbound-router refusal, and the registered
+  integrity, transport, and internal mappings for storage failures; the
+  client-core registry test also pins the shipped result-schema attachment.
 - **CLI-007** — The state-lock field states the command's relationship to
   the plan Section 7.9 single-mutator contract: `exclusive` commands take
   the advisory lock and a second mutator exits 75 with `client.lock_held`;

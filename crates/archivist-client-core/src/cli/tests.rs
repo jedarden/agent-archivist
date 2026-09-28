@@ -141,12 +141,15 @@ fn router_refuses_document_commands_without_result_schemas() {
 }
 
 #[test]
-fn phase10_catalog_command_stays_gated_until_its_binding_ships() {
+fn phase10_catalog_command_accepts_its_bound_schema_but_stays_gated_without_a_handler() {
     let registry = Registry::pinned();
     let catalog = registry
         .command(&["catalog".into(), "rebuild".into()])
-        .expect("the Phase 10 reservation remains in the registry");
-    assert_eq!(catalog.result_schema(), None);
+        .expect("the Phase 10 command remains in the registry");
+    assert_eq!(
+        catalog.result_schema(),
+        Some("schemas/v1/cli-catalog-rebuild.json")
+    );
 
     let mut router = Router::new();
     assert!(
@@ -154,12 +157,14 @@ fn phase10_catalog_command_stays_gated_until_its_binding_ships() {
             .register_handler("catalog rebuild", |_invocation| {
                 Ok(json::Value::Object(json::Object::new()))
             })
-            .is_err(),
-        "a Phase 10 command cannot attach without a result schema"
+            .is_ok(),
+        "the bound Phase 10 command accepts a result-producing handler"
     );
+
+    let unbound_router = Router::new();
     assert_eq!(
-        router.run(&args(&["catalog", "rebuild", "--from-occurrences"])),
+        unbound_router.run(&args(&["catalog", "rebuild", "--from-occurrences"])),
         CliError::usage().exit_code(),
-        "an unbound Phase 10 invocation stays a usage refusal"
+        "a command without its production handler stays a usage refusal"
     );
 }

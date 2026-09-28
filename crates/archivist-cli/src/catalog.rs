@@ -378,7 +378,7 @@ mod tests {
         DerivedObjectKey, DerivedWriteStore,
     };
 
-    use super::{handlers, rebuild_over};
+    use super::{INTEGRITY_CONFLICT, INTERNAL, TRANSPORT_FAILED, handlers, rebuild_over};
 
     #[allow(clippy::unnecessary_wraps)]
     fn empty_result(_: &Invocation) -> Result<Value, CliError> {
@@ -456,6 +456,42 @@ mod tests {
             _prefix: &DerivedListPrefix,
         ) -> impl Future<Output = Result<Vec<String>, StorageError>> + Send {
             async { Ok(Vec::new()) }
+        }
+    }
+
+    struct FailingAudit {
+        kind: StorageErrorKind,
+    }
+
+    impl AuditRestoreStore for FailingAudit {
+        fn list_page(
+            &self,
+            _scope: &InventoryScope,
+            _after: Option<&ContinuationToken>,
+        ) -> impl Future<Output = Result<InventoryPage, StorageError>> + Send {
+            async { Err(StorageError::of_kind(StorageErrorKind::Unavailable)) }
+        }
+
+        fn freeze_inventory(
+            &self,
+            _scope: &InventoryScope,
+        ) -> impl Future<Output = Result<FrozenInventory, StorageError>> + Send {
+            let error = StorageError::of_kind(self.kind);
+            async move { Err(error) }
+        }
+
+        fn inspect_object(
+            &self,
+            _key: &InventoryKey,
+        ) -> impl Future<Output = Result<ObjectMetadata, StorageError>> + Send {
+            async { Err(StorageError::of_kind(StorageErrorKind::Unavailable)) }
+        }
+
+        fn read_object(
+            &self,
+            _key: &InventoryKey,
+        ) -> impl Future<Output = Result<ObjectBody, StorageError>> + Send {
+            async { Err(StorageError::of_kind(StorageErrorKind::Unavailable)) }
         }
     }
 
@@ -567,5 +603,34 @@ mod tests {
             Some(&Value::Text("catalog-rebuild".to_owned()))
         );
         assert_eq!(envelope_record.get("result"), Some(&Value::Object(record)));
+    }
+
+    #[test]
+    fn rebuild_maps_storage_failures_to_registered_cli_codes() {
+        let tenant = "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b"
+            .parse::<archivist_protocol::vocabulary::TenantId>()
+            .expect("tenant grammar");
+        let cases = [
+            (StorageErrorKind::IntegrityConflict, INTEGRITY_CONFLICT),
+            (StorageErrorKind::InventoryFault, INTEGRITY_CONFLICT),
+            (StorageErrorKind::Unavailable, TRANSPORT_FAILED),
+            (StorageErrorKind::CapabilityUnavailable, TRANSPORT_FAILED),
+            (StorageErrorKind::ScopeViolation, INTERNAL),
+            (StorageErrorKind::MalformedInput, INTERNAL),
+            (StorageErrorKind::StaleEpoch, INTERNAL),
+        ];
+
+        for (kind, expected) in cases {
+            let error = rebuild_over(
+                &empty_invocation(),
+                &tenant,
+                &FailingAudit { kind },
+                &EmptyCatalog,
+                &EmptyDerived,
+            )
+            .expect_err("the injected storage failure is rejected");
+            assert_eq!(error.code(), expected, "mapping for {kind:?}");
+            assert!(error.exit_code() > 0, "{expected} is registered");
+        }
     }
 }
