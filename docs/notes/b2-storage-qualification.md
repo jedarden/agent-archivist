@@ -90,7 +90,9 @@ key, with one logical object throughout.
 
 [Requirements](requirements.md) STO-009 makes the remedy a deployment
 action: **configure lifecycle expiration for redundant noncurrent
-versions**, subject to retention policy. Without it the duplicate traffic
+versions**, subject to retention policy. The rule MUST be noncurrent-only
+for raw, both control families, catalog, and derived; only the synthetic
+probe namespace may use whole-object expiration. Without it the duplicate traffic
 the idempotency contract invites becomes unbounded storage growth; with
 it, the noncurrent copies age out while the current version — always the
 same canonical bytes — is untouched. This disclosure is normative for B2
@@ -158,8 +160,11 @@ deployment:
    content — and the observed report, not the backend's documentation, is
    what the store believes. Pin the report the run observed; unknown
    facts reduce fail-closed to weaker model values.
-3. **Versioning enabled, with a noncurrent-version lifecycle rule**
-   (STO-009; Section 4's disclosure).
+3. **Versioning enabled, with noncurrent-only lifecycle rules**
+   (STO-009; Section 4's disclosure) for raw, both control families,
+   catalog, and derived; current objects in those namespaces MUST remain
+   outside lifecycle cleanup. The reserved probe namespace is the only
+   whole-object-expiration exception.
 4. **A 24-hour incomplete-multipart abort rule** (Section 6).
 5. **Server-side encryption configured and named** in the deployment
    configuration — validation refuses to build the store without it.

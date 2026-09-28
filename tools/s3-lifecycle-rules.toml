@@ -2,7 +2,8 @@
 #
 # The machine-readable record behind docs/notes/s3-noncurrent-lifecycle.md
 # ("The retention matrix"): one rule per profile and prefix family, the
-# prefix families with their source-of-truth class, and the profile shapes
+# prefix families with their source-of-truth class and current-version
+# protection policy, and the profile shapes
 # the rules sit inside. The gate that keeps the registry, the note's
 # matrix table, the control-records registry's write classes, the audit's
 # guidance constant, and the MinIO reference provisioning script agreeing
@@ -15,7 +16,7 @@
 #                               unique history (L-002); no `days`
 #   expire-objects              expire whole objects, current included;
 #                               legal only for a family with
-#                               source_of_truth = false (L-003)
+#                               current_versions = "expirable" (L-003)
 #   not-applicable              the profile's shape has no such versions;
 #                               requires `reason`
 #   abort-incomplete-multipart  bucket-wide session reaping at `days`
@@ -32,9 +33,11 @@ note = "docs/notes/s3-noncurrent-lifecycle.md"
 guidance_id = "sto-009-noncurrent-version-expiration"
 
 # The plan Section 7.5 tenant tree's prefix families. `source_of_truth`
-# marks the families whose CURRENT versions are the archive's claim about
-# the key and are never a lifecycle target (L-001); `overwrite` is the
-# family's write shape — "convergent" overwrites rewrite the same
+# marks the semantic authority of the family. The separate
+# `current_versions` policy marks whether whole-object expiration may touch
+# its CURRENT version: every tenant family is `protected`; only the synthetic
+# probe family is `expirable` (L-001/L-003). `overwrite` is the family's
+# write shape — "convergent" overwrites rewrite the same
 # canonical bytes, so a noncurrent copy is redundant; "epoch-replacement"
 # overwrites carry different bytes (a higher signed epoch), so the
 # noncurrent copy is the previous trust state's only copy at that key.
@@ -46,6 +49,7 @@ guidance_id = "sto-009-noncurrent-version-expiration"
 id = "raw"
 purpose = "content-addressed blobs, occurrence manifests, upload attestations"
 source_of_truth = true
+current_versions = "protected"
 overwrite = "convergent"
 subprefixes = ["raw"]
 
@@ -53,6 +57,7 @@ subprefixes = ["raw"]
 id = "control-current-pointer"
 purpose = "current-pointer signed trust records"
 source_of_truth = true
+current_versions = "protected"
 overwrite = "epoch-replacement"
 subprefixes = ["control/clients", "control/delegations"]
 
@@ -60,6 +65,7 @@ subprefixes = ["control/clients", "control/delegations"]
 id = "control-immutable"
 purpose = "immutable epoch-addressed trust records"
 source_of_truth = true
+current_versions = "protected"
 overwrite = "convergent"
 subprefixes = [
   "control/revocations",
@@ -73,6 +79,7 @@ subprefixes = [
 id = "catalog"
 purpose = "catalog checkpoints — deterministic rebuild output"
 source_of_truth = false
+current_versions = "protected"
 overwrite = "convergent"
 subprefixes = ["catalog"]
 
@@ -80,6 +87,7 @@ subprefixes = ["catalog"]
 id = "derived"
 purpose = "derived projections — pipeline-versioned rebuild output"
 source_of_truth = false
+current_versions = "protected"
 overwrite = "convergent"
 subprefixes = ["derived"]
 
@@ -87,6 +95,7 @@ subprefixes = ["derived"]
 id = "probe"
 purpose = "the reserved probe/<label> namespace — synthetic, content-free capability-probe writes outside the four tenant prefixes"
 source_of_truth = false
+current_versions = "expirable"
 overwrite = "convergent"
 subprefixes = ["probe"]
 

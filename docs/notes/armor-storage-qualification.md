@@ -102,7 +102,9 @@ backing store's because the backing store keeps the versions.
 [Requirements](requirements.md) STO-009 makes the remedy a deployment
 action — **configure lifecycle expiration for redundant noncurrent
 versions** — and Section 7 says where that configuration lives when the
-path is ARMOR. Without it the duplicate traffic the idempotency contract
+path is ARMOR. The rule MUST be noncurrent-only for raw, both control
+families, catalog, and derived; only the synthetic probe namespace may use
+whole-object expiration. Without it the duplicate traffic the idempotency contract
 invites becomes unbounded storage growth; with it, the noncurrent copies
 age out while the current version — always the same canonical bytes — is
 untouched. The disclosure is normative for ARMOR operators too, not
@@ -168,9 +170,10 @@ Two rules, both living on the B2 backing bucket, because that is where
 the physical versions and the incomplete sessions are:
 
 1. **Expiration of noncurrent versions** (STO-009; Section 4). Scope it
-   to noncurrent copies only — the current version at a derived key is
-   the archive's content address; expiring current objects destroys the
-   archive while every logical claim still holds. The per-prefix
+   to noncurrent copies only — current versions under raw, control,
+   catalog, and derived are protected claims; the current version at a
+   derived key is the archive's content address, and expiring current
+   objects destroys the archive while every logical claim still holds. The per-prefix
    baselines the rule takes — and the exception that the control
    current-pointer families' noncurrent copies are the previous signed
    trust epoch's only copy and are retained, not expired — are the

@@ -321,9 +321,10 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # S3 noncurrent-version lifecycle (docs/notes/s3-noncurrent-lifecycle.md
   # and tools/s3-lifecycle-rules.toml): the per-prefix, per-profile
   # retention matrix for the noncurrent versions deterministic overwrite
-  # leaves behind — every rule aimed at a source-of-truth family is
-  # noncurrent-only, the control current-pointer families' history is
-  # retained, the control families' split matches the control-records
+  # leaves behind — every tenant family whose current versions are marked
+  # protected is noncurrent-only (raw, both control families, catalog, and
+  # derived), the control current-pointer families' history is retained, the
+  # control families' split matches the control-records
   # registry's write classes, and the note, registry, audit guidance
   # constant, and the MinIO reference script's owned rule cannot drift
   # apart; `--self-test` proves the rejection paths.

@@ -14,17 +14,18 @@ invariant fails:
 
 1. registry shape — the pinned schema and guidance id, six closed
    prefix families with unique ids, partitioning ``subprefixes``, a
-   closed overwrite vocabulary, three profiles with their versioning
+   closed overwrite vocabulary, six prefix-family current-version policies,
+   three profiles with their versioning
    shape, and one rule per (profile, family) cell plus the reserved
    bucket-wide multipart row; rule actions are the closed five-token set,
    ``days`` is present exactly for the actions that take one, and every
    ``not-applicable`` cell carries its profile-shape reason;
 2. the protection invariant (L-001) — a rule aimed at a family whose
-   current versions are source-of-truth may only ``expire-noncurrent``,
+   current versions are protected may only ``expire-noncurrent``,
    ``retain-noncurrent``, or declare itself ``not-applicable``;
-   ``expire-objects`` (current versions included) is legal only for a
-   family that is not source-of-truth, which today means the probe
-   namespace alone;
+   ``expire-objects`` (current versions included) is legal only for an
+   explicitly expirable family, which today means the probe namespace
+   alone;
 3. the current-pointer pin (L-002) — for every profile whose versioning
    is enabled, the ``control-current-pointer`` cell is exactly
    ``retain-noncurrent`` and no other family carries that action;
@@ -93,6 +94,7 @@ ACTIONS = ACTION_DAYS | ACTION_NO_DAYS
 OVERWRITES = frozenset({"convergent", "epoch-replacement"})
 PROFILE_CLASSES = frozenset({"reference", "target"})
 VERSIONING_SHAPES = frozenset({"enabled", "raw-bucket-only"})
+CURRENT_VERSION_POLICIES = frozenset({"protected", "expirable"})
 
 # The reserved scopes outside the profile/family registries: the
 # bucket-wide multipart row.
@@ -183,6 +185,11 @@ def check_registry_shape(registry: dict) -> bool:
             ok = False
         if not isinstance(family.get("source_of_truth"), bool):
             fail(f"{label}: source_of_truth must be a boolean")
+            ok = False
+        if family.get("current_versions") not in CURRENT_VERSION_POLICIES:
+            fail(f"{label}: current_versions "
+                 f"{family.get('current_versions')!r} is not one of "
+                 f"{sorted(CURRENT_VERSION_POLICIES)}")
             ok = False
         subprefixes = family.get("subprefixes")
         if not isinstance(subprefixes, list) or not subprefixes or \
@@ -284,7 +291,9 @@ def rules_by_cell(registry: dict) -> dict[tuple[str, str], dict]:
 
 
 def check_protection_invariant(registry: dict) -> bool:
-    """Rule 2 (L-001): source-of-truth current versions are untouchable."""
+    """Rule 2 (L-001): tenant current versions are untouchable."""
+    current_versions = {family["id"]: family.get("current_versions")
+                        for family in registry.get("family", [])}
     source_of_truth = {family["id"]: family.get("source_of_truth", False)
                        for family in registry.get("family", [])}
     ok = True
@@ -294,11 +303,12 @@ def check_protection_invariant(registry: dict) -> bool:
         cell = (rule.get("profile", ""), family)
         if family == RESERVED_FAMILY:
             continue
-        if source_of_truth.get(family) and action == "expire-objects":
+        if current_versions.get(family, "protected") != "expirable" \
+                and action == "expire-objects":
             fail(f"rule {cell}: expire-objects would expire CURRENT versions "
-                 f"of a source-of-truth family ({family!r}); the current "
-                 "version at a tenant key is the archive's claim about that "
-                 "key and is never a lifecycle target (L-001)")
+                 f"of protected tenant family ({family!r}); current versions "
+                 "under raw, control, catalog, and derived are never a "
+                 "lifecycle target (L-001)")
             ok = False
         if not source_of_truth.get(family, True) and \
                 action not in ("expire-objects", "expire-noncurrent",
@@ -508,7 +518,7 @@ def self_test(registry: dict, note: str, script: str, audit_source: str) -> bool
     note_row_drop = note.replace(
         "| armor | derived | expire-noncurrent | 7 | STO-011, STO-012 |\n",
         "", 1)
-    text_mutations = {7: note_days_drift, 8: note_row_drop}
+    text_mutations = {11: note_days_drift, 12: note_row_drop}
 
     # Rule indices: 0-5 minio, 6-11 backblaze-b2, 12-17 armor in family
     # order raw / control-current-pointer / control-immutable / catalog /
@@ -518,6 +528,22 @@ def self_test(registry: dict, note: str, script: str, audit_source: str) -> bool
         ("protection invariant (expire-objects on raw)",
          "protection",
          lambda reg, note_t, script_t: reg["rule"][12].update(
+             {"action": "expire-objects"})),
+        ("protection invariant (expire-objects on control current-pointer)",
+         "protection",
+         lambda reg, note_t, script_t: reg["rule"][13].update(
+             {"action": "expire-objects"})),
+        ("protection invariant (expire-objects on control immutable)",
+         "protection",
+         lambda reg, note_t, script_t: reg["rule"][14].update(
+             {"action": "expire-objects"})),
+        ("protection invariant (expire-objects on catalog)",
+         "protection",
+         lambda reg, note_t, script_t: reg["rule"][15].update(
+             {"action": "expire-objects"})),
+        ("protection invariant (expire-objects on derived)",
+         "protection",
+         lambda reg, note_t, script_t: reg["rule"][16].update(
              {"action": "expire-objects"})),
         ("protection invariant (retain on a rebuildable family)",
          "protection",
@@ -599,7 +625,7 @@ def main() -> int:
     expiring = sum(1 for r in rules
                    if r["action"] in ("expire-noncurrent", "expire-objects"))
     print(f"s3 lifecycle gate: {len(rules)} rule cells, {expiring} expiring, "
-          "current source-of-truth versions unreachable by every rule; "
+          "current tenant versions unreachable by every rule; "
           "registry, note, control records, audit constant, and reference "
           "script agree")
     return 0

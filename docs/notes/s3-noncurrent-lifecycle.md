@@ -139,9 +139,10 @@ bucket-wide scope for the multipart rule, which knows no prefix.
 The rule tokens are a closed set: `expire-noncurrent` (age out
 noncurrent copies after N days; the current version is out of reach by
 L-001), `retain-noncurrent` (never expire; L-002), `expire-objects`
-(expire whole objects, current included; legal only where the family is
-not source-of-truth — the probe namespace), `not-applicable` (no rule,
-with the profile-shape reason), and `abort-incomplete-multipart`
+(expire whole objects, current included; legal only for a family explicitly
+marked `current_versions = "expirable"` — today, the probe namespace),
+`not-applicable` (no rule, with the profile-shape reason), and
+`abort-incomplete-multipart`
 (bucket-wide session reaping, L-004).
 
 ## 4. Who owns the configuration
@@ -180,9 +181,10 @@ bucket:
 
 1. **The gate** (`tools/check-s3-lifecycle.py --self-test`, fast lane).
    Proves, offline and on committed files only: every rule aimed at a
-   source-of-truth family selects a noncurrent-only action (L-001 as a
-   rejected mutation, not a prose promise); the current-pointer family is
-   the one `retain-noncurrent` cell per target profile (L-002); the
+   tenant family marked `current_versions = "protected"` selects a
+   noncurrent-only action (L-001 as rejected mutations on raw, both control
+   families, catalog, and derived — not a prose promise); the current-pointer
+   family is the one `retain-noncurrent` cell per target profile (L-002); the
    control families' split matches the control-records registry's write
    classes exactly — a new or reclassified control record fails this gate
    until the matrix says how its versions age; the note's matrix table
