@@ -50,6 +50,19 @@ const OCCURRENCE_CONCURRENT: &str =
 const OCCURRENCE_CONFLICT: &str =
     "4444444444444444444444444444444444444444444444444444444444444444";
 
+const EXPECTED_MINIO_REPORT: &str = concat!(
+    "storage-compatibility profile=minio conditional_create=supported ",
+    "stored_checksum=sha256 versioning=enabled server_side_encryption=verified ",
+    "physical_versions=[concurrent-writers:1:[\"v3\"],duplicate-request:1:[\"v1\"],",
+    "equivalent-overwrite:1:[\"v2\"],multipart-commit:1:[\"v5\"],",
+    "origin-attestation:1:[\"v6\"],read-capable-conflict:1:[\"v4\"],",
+    "relay-attestation:1:[\"v7\"]] ",
+    "noncurrent_audit=[noncurrent-version-audit ",
+    "scope=tenants/0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b/v1/raw/ ",
+    "keys=7 versions=7 noncurrent=0 retained_bytes=0 ",
+    "guidance=sto-009-noncurrent-version-expiration]"
+);
+
 /// The five profiles named by the storage registry.  These are synthetic
 /// lanes: a real qualification run supplies the same profile description to a
 /// live S3 request seam, while this credential-free gate checks the portable
@@ -1029,4 +1042,16 @@ fn the_same_suite_passes_for_every_supported_profile_and_records_versions() {
         }
         println!("{}", report.render());
     }
+}
+
+#[test]
+fn minio_reference_profile_reports_expected_capabilities() {
+    let profile = PROFILES
+        .iter()
+        .copied()
+        .find(|profile| profile.name == "minio")
+        .expect("the storage registry carries the MinIO reference profile");
+    let report = run_suite(profile);
+    assert_eq!(report.render(), EXPECTED_MINIO_REPORT);
+    println!("{}", report.render());
 }

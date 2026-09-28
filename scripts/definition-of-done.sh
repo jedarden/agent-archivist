@@ -24,9 +24,10 @@
 #     verification-register gate, README status-coherence gate,
 #     secret scan of the working
 #     tree (seconds, offline; safe as a gate)
-#   - Slow:  the workspace test suite, plus the #[ignore]d OpenCode
-#     marathon-scale validation — the compatibility matrix's marathon
-#     evidence (the opencode row), re-measured on every full run
+#   - Slow:  the workspace test suite, the isolated MinIO compatibility
+#     suite, plus the #[ignore]d OpenCode marathon-scale validation — the
+#     compatibility matrix's marathon evidence (the opencode row),
+#     re-measured on every full run
 #   - Audit: dependency audit (cargo audit; fetches the public RustSec
 #     advisory database — network, but no credentials) and a secret scan of
 #     the full git history
@@ -145,6 +146,22 @@ require_modules() {
     require_module "$module" || ok=1
   done
   [ "$ok" -eq 0 ]
+}
+
+MINIO_COMPATIBILITY_REPORT='storage-compatibility profile=minio conditional_create=supported stored_checksum=sha256 versioning=enabled server_side_encryption=verified physical_versions=[concurrent-writers:1:["v3"],duplicate-request:1:["v1"],equivalent-overwrite:1:["v2"],multipart-commit:1:["v5"],origin-attestation:1:["v6"],read-capable-conflict:1:["v4"],relay-attestation:1:["v7"]] noncurrent_audit=[noncurrent-version-audit scope=tenants/0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b/v1/raw/ keys=7 versions=7 noncurrent=0 retained_bytes=0 guidance=sto-009-noncurrent-version-expiration]'
+
+minio_compatibility() {
+  local output
+  if ! output="$(cargo test -p archivist-storage-s3 --test storage_compatibility \
+    minio_reference_profile_reports_expected_capabilities -- --exact --nocapture 2>&1)"; then
+    printf '%s\n' "$output"
+    return 1
+  fi
+  if ! grep -Fqx "$MINIO_COMPATIBILITY_REPORT" <<<"$output"; then
+    echo "expected MinIO compatibility report was not emitted"
+    printf '%s\n' "$output"
+    return 1
+  fi
 }
 
 # The stub scan is a grep whose SUCCESS is "no matches", so it cannot go
@@ -434,6 +451,10 @@ fi
 
 if [ "$LANE" = "slow" ] || [ "$LANE" = "all" ]; then
   run_check "cargo test"           cargo test --workspace
+  # Isolated MinIO reference lane (plan Section 10 and README): execute only
+  # the reference profile, require its exact capability/physical-version
+  # report, and treat either a test failure or report drift as a gate failure.
+  run_check "MinIO compatibility" minio_compatibility
   # OpenCode marathon-scale validation (docs/notes/compatibility-matrix.md,
   # the opencode row's marathon evidence; requirement CAP-004 at scale):
   # the #[ignore]d marathon_scale suite runs the production capture path

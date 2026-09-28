@@ -64,9 +64,12 @@ requirement-verification register gate, the README status-coherence gate,
 the release container baseline gate (version equality, digest-pinned bases,
 the
 mtime-pinned reproducible install layer, the same-commit version rule),
-a redacted
-secret scan of the working tree and the git history, and a `cargo audit`
-dependency audit.
+a redacted secret scan of the working tree and the git history, the isolated
+MinIO storage-compatibility lane, and a `cargo audit` dependency audit. The
+MinIO lane runs only
+`minio_reference_profile_reports_expected_capabilities`, requires exit 0, and
+asserts the exact capability and physical-version report recorded in the
+[MinIO reference evidence](docs/notes/minio-reference-profile.md#7-what-the-run-establishes-and-what-it-does-not).
 The fast subset (`--fast`) is what the automation gate runs per change. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for the lane layout and prerequisites.
 

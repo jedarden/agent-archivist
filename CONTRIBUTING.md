@@ -97,7 +97,8 @@ The script's lanes keep per-change gating cheap:
   status-coherence gate,
   working-tree secret scan — seconds, fully offline once the workspace is
   built.
-- `--slow`: the workspace test suite.
+- `--slow`: the workspace test suite, the isolated MinIO compatibility suite,
+  and the OpenCode marathon-scale suite.
 - `--audit`: `cargo audit` and the git-history secret scan. The audit
   downloads the public RustSec advisory database; no credentials are involved.
 - `--all`: every lane.

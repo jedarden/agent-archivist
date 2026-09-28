@@ -252,12 +252,16 @@ suite's reference lane holds its capability report against the same
 expectations a live operator configures:
 
 ```
-storage-compatibility profile=minio conditional_create=supported stored_checksum=sha256 versioning=enabled server_side_encryption=verified physical_versions=[concurrent-writers:1:["v3"],duplicate-request:1:["v1"],equivalent-overwrite:1:["v2"],multipart-commit:1:["v5"],origin-attestation:1:["v6"],read-capable-conflict:1:["v4"],relay-attestation:1:["v7"]]
+storage-compatibility profile=minio conditional_create=supported stored_checksum=sha256 versioning=enabled server_side_encryption=verified physical_versions=[concurrent-writers:1:["v3"],duplicate-request:1:["v1"],equivalent-overwrite:1:["v2"],multipart-commit:1:["v5"],origin-attestation:1:["v6"],read-capable-conflict:1:["v4"],relay-attestation:1:["v7"]] noncurrent_audit=[noncurrent-version-audit scope=tenants/0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b/v1/raw/ keys=7 versions=7 noncurrent=0 retained_bytes=0 guidance=sto-009-noncurrent-version-expiration]
 ```
 
-— exit 0 across all five lanes on a clean `git archive` extraction of the
-run's commit, with no external credentials or services reachable. The
-suite stays credential-free: this note and its script add an operator
+The full verification gate reruns the MinIO lane in isolation with
+`cargo test -p archivist-storage-s3 --test storage_compatibility
+minio_reference_profile_reports_expected_capabilities -- --exact --nocapture`.
+That command exits 0 and requires the report above byte-for-byte; the broader
+workspace test still exercises all five synthetic profiles. The run is a clean
+`git archive` extraction with no external credentials or services reachable.
+The suite stays credential-free: this note and its script add an operator
 instrument; they never move live-backend qualification into automation
 ([storage profiles](storage-profiles.md) Section 1).
 
