@@ -2,7 +2,12 @@
   "corpus": "authentic-pi-jsonl-v1-v2",
   "manifest_version": 1,
   "generated_at": "2026-09-28T14:24:47Z",
+  "fixture_root": "fixtures/contributed/pi-jsonl",
   "read_only": true,
+  "verification": {
+    "integrity_command": "python3 tools/check-pi-jsonl-corpus.py",
+    "adapter_command": "cargo test -p archivist-adapter-pi --test pi_corpus"
+  },
   "review": {
     "reviewed_at": "2026-09-28",
     "scope": "Every byte of every JSONL artifact in this directory",
@@ -18,6 +23,11 @@
       "fingerprint": "pi-jsonl-v1",
       "header_version": 1,
       "header_version_encoding": "omitted legacy version member",
+      "expected_disposition": {
+        "support": "supported",
+        "conformance": "positive",
+        "access": "read-only"
+      },
       "sha256": "665cf8224996464cf6d3d03f7f2d884eee29e2020c6722f60142e070c4fe968a",
       "bytes": 239,
       "jsonl_records": 2,
@@ -38,6 +48,11 @@
       "fingerprint": "pi-jsonl-v2",
       "header_version": 2,
       "header_version_encoding": "explicit version member",
+      "expected_disposition": {
+        "support": "supported",
+        "conformance": "positive",
+        "access": "read-only"
+      },
       "sha256": "a1db13d8c78294dd3f917e592b88503b335f27e937c739cddcbf8a5052cd0957",
       "bytes": 283,
       "jsonl_records": 2,

@@ -11,6 +11,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "contributed" / "pi-jsonl"
 MANIFEST = ROOT / "manifest.json"
+EXPECTED_FINGERPRINTS = {"pi-jsonl-v1", "pi-jsonl-v2"}
+EXPECTED_DISPOSITION = {
+    "support": "supported",
+    "conformance": "positive",
+    "access": "read-only",
+}
 
 # These are deliberately conservative corpus-review indicators, not a claim
 # that a regex can replace human review. The committed corpus is expected to
@@ -30,21 +36,72 @@ def fail(message: str) -> None:
 
 def main() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    if manifest.get("manifest_version") != 1:
+        fail("unsupported manifest version")
+    if manifest.get("fixture_root") != "fixtures/contributed/pi-jsonl":
+        fail("manifest fixture root is not canonical")
     if manifest.get("read_only") is not True:
         fail("manifest does not mark the corpus read-only")
+
+    verification = manifest.get("verification")
+    if not isinstance(verification, dict):
+        fail("manifest has no verification commands")
+    if verification.get("integrity_command") != "python3 tools/check-pi-jsonl-corpus.py":
+        fail("manifest integrity command is not canonical")
+    if verification.get("adapter_command") != "cargo test -p archivist-adapter-pi --test pi_corpus":
+        fail("manifest adapter command is not canonical")
+
+    review = manifest.get("review")
+    if not isinstance(review, dict) or review.get("result") != "pass":
+        fail("manifest does not carry a passing review")
+    if review.get("credentials") != "none present":
+        fail("manifest review does not clear credentials")
+    if not str(review.get("sensitive_transcript_content", "")).startswith("none present"):
+        fail("manifest review does not clear sensitive transcript content")
 
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, list) or not artifacts:
         fail("manifest has no artifacts")
 
+    seen_paths: set[str] = set()
     seen_fingerprints: set[str] = set()
     for record in artifacts:
+        if not isinstance(record, dict):
+            fail("artifact entry is not an object")
         relative = record.get("path")
         if not isinstance(relative, str) or Path(relative).is_absolute():
             fail("artifact path is not a relative path")
+        if relative in seen_paths:
+            fail(f"duplicate artifact path: {relative}")
+        seen_paths.add(relative)
+        if record.get("expected_disposition") != EXPECTED_DISPOSITION:
+            fail(f"unexpected disposition: {relative}")
+        if record.get("fingerprint") not in EXPECTED_FINGERPRINTS:
+            fail(f"unexpected fingerprint: {relative}")
+        if not isinstance(record.get("header_version"), int):
+            fail(f"artifact header version is not an integer: {relative}")
+        provenance = record.get("provenance")
+        required_provenance = (
+            "source",
+            "package",
+            "package_version",
+            "npm_tarball",
+            "npm_sha512_integrity",
+            "upstream_repository",
+            "upstream_tag",
+            "upstream_commit",
+            "writer",
+        )
+        if not isinstance(provenance, dict) or any(
+            not isinstance(provenance.get(key), str) or not provenance[key]
+            for key in required_provenance
+        ):
+            fail(f"incomplete provenance: {relative}")
         path = (ROOT / relative).resolve()
-        if path.parent != ROOT.resolve() or not path.is_file():
+        if Path(relative).suffix != ".jsonl" or path.parent != ROOT.resolve() or not path.is_file():
             fail(f"artifact is missing or escapes corpus root: {relative}")
+        if (ROOT / relative).is_symlink():
+            fail(f"artifact must be a regular checked-in file: {relative}")
 
         raw = path.read_bytes()
         actual_hash = hashlib.sha256(raw).hexdigest()
@@ -90,8 +147,22 @@ def main() -> None:
             fail(f"credential-looking content found: {relative}")
         seen_fingerprints.add(record.get("fingerprint", ""))
 
-    if seen_fingerprints != {"pi-jsonl-v1", "pi-jsonl-v2"}:
+    discovered_jsonl = {
+        path.relative_to(ROOT).as_posix()
+        for path in ROOT.rglob("*.jsonl")
+        if path.is_file() and not path.is_symlink()
+    }
+    if discovered_jsonl != seen_paths:
+        fail(
+            "manifest/artifact discovery mismatch: "
+            f"manifest={sorted(seen_paths)}, discovered={sorted(discovered_jsonl)}"
+        )
+    if seen_fingerprints != EXPECTED_FINGERPRINTS:
         fail(f"expected both header fingerprints, found {sorted(seen_fingerprints)}")
+
+    manifest_text = MANIFEST.read_text(encoding="utf-8")
+    if SENSITIVE.search(manifest_text):
+        fail("credential-looking content found in manifest")
     print(f"pi-jsonl corpus verified: {len(artifacts)} artifacts, checksums and review shape pass")
 
 

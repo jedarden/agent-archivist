@@ -51,4 +51,12 @@ The deterministic check is:
 
 ```text
 python3 tools/check-pi-jsonl-corpus.py
+cargo test -p archivist-adapter-pi --test pi_corpus
 ```
+
+The first command validates manifest discovery, provenance, checksums, both
+header versions, and the sanitization review. The focused adapter test then
+discovers both files from this directory, captures their complete JSONL
+records, and confirms the source bytes are unchanged. Both commands consume
+the corpus read-only; their exact command strings are also pinned in
+`manifest.json`.
