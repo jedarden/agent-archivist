@@ -139,3 +139,27 @@ fn router_refuses_document_commands_without_result_schemas() {
     );
     let _ = CliError::usage();
 }
+
+#[test]
+fn phase10_catalog_command_stays_gated_until_its_binding_ships() {
+    let registry = Registry::pinned();
+    let catalog = registry
+        .command(&["catalog".into(), "rebuild".into()])
+        .expect("the Phase 10 reservation remains in the registry");
+    assert_eq!(catalog.result_schema(), None);
+
+    let mut router = Router::new();
+    assert!(
+        router
+            .register_handler("catalog rebuild", |_invocation| {
+                Ok(json::Value::Object(json::Object::new()))
+            })
+            .is_err(),
+        "a Phase 10 command cannot attach without a result schema"
+    );
+    assert_eq!(
+        router.run(&args(&["catalog", "rebuild", "--from-occurrences"])),
+        CliError::usage().exit_code(),
+        "an unbound Phase 10 invocation stays a usage refusal"
+    );
+}

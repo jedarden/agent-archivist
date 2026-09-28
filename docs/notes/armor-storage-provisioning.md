@@ -264,6 +264,19 @@ references either per-role path; a host becomes resident only when a
 deployment carries the two `*_ref` settings, and none does yet — the
 empty-prefix state this note records is unchanged by code landing alone.
 
+## CLI support boundary
+
+The storage paths and their enforcement tests are implemented, but the
+catalog capability is not yet a supported v1 command. The registry row for
+`catalog rebuild --from-occurrences` is a Phase 10 reservation: it has no
+`result_schema`, and `archivist-cli/src/main.rs` deliberately attaches no
+handler. The shared router rejects an attempted attachment and returns the
+registered `cli.usage_error` (exit 64) for an invocation, so no released binary
+can write either reserved prefix accidentally. A command becomes supported
+only when a Phase 10 deployment supplies the two scoped credential references,
+the production S3 composition, and the versioned result schema in one change;
+the CLI note and this provisioning note must then be updated together.
+
 ## Enforcement notes
 
 - Prefix matching is literal `strings.HasPrefix` after ACL normalization:

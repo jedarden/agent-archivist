@@ -267,11 +267,15 @@ stdin = "none"
 keys = []
 
 # ---------------------------------------------------------------------------
-# Derived catalog (plan Section 7.10, Phase 10) — owner archivist-storage
+# Derived catalog (plan Section 7.10, Phase 10) — owner archivist-storage.
+# This is a reserved registry contract, not a shipped v1 command: it remains
+# without result_schema until the production storage binding and output
+# contract are attached. The router therefore rejects registration and an
+# invocation remains a registered usage refusal (CLI-015).
 # ---------------------------------------------------------------------------
 
 [commands."catalog rebuild"]
-summary = "Rebuild the catalog from raw occurrences, upload attestations, and blobs without touching the ingest data plane."
+summary = "[Phase 10 reserved] Rebuild the catalog from raw occurrences, upload attestations, and blobs without touching the ingest data plane."
 phase = 10
 owner = "archivist-storage"
 state_lock = "none"

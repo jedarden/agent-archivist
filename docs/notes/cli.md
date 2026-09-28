@@ -1,6 +1,6 @@
 # Agent Archivist CLI command conventions
 
-Status: accepted baseline · Last updated: 2026-09-22
+Status: accepted baseline · Last updated: 2026-09-28
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are
 to be interpreted as described by RFC 2119 and RFC 8174 when they appear in bold.
@@ -29,13 +29,27 @@ When this document and the tool disagree, the
 tool's pinned constants decide, and one of the two is wrong and must be fixed
 in the same commit.
 
+The registry also records planned command contracts before their production
+composition lands. A registry row is not by itself a shipped capability:
+under CLI-015, a document command needs a `result_schema`, and the binary must
+attach its handler. The `catalog rebuild` row is the deliberate Phase 10
+reservation. Its catalog-checkpoint and derived-object storage paths are
+implemented and covered by storage boundary tests, but no v1 binary binds
+credentials, emits a result schema, or attaches that handler yet. Until that
+Phase 10 production binding lands, invoking it is rejected with the registered
+usage error (exit 64), and it must not appear in the available-command examples
+or be treated as supported deployment functionality.
+
 ## 1. Scope and authority
 
 - **CLI-001** — The `archivist` binary built from `archivist-cli` is the only
-  published executable of this project in v1. Every capability a user or a
-  service invokes — client, server, linking, administration, catalog — is a
-  command of that binary. Nothing ships a second binary or a `main` function
-  outside `archivist-cli` (crate boundary rule 7).
+  published executable of this project in v1. Every shipped capability a user
+  or a service invokes — client, server, linking, and administration — is a
+  command of that binary. Phase 10 catalog and derived storage paths are a
+  reserved, not-yet-shipped capability under the same binary's registry; they
+  are not a second executable or an implicit deployment surface. Nothing ships
+  a second binary or a `main` function outside `archivist-cli` (crate boundary
+  rule 7).
 - **CLI-002** — Three registries pin the command surface and **MUST** agree:
   the command registry here, the [configuration-key
   registry](../../tools/config-keys.toml) that names every value a command
@@ -46,8 +60,11 @@ in the same commit.
   register-before-implement discipline as CFG-001 and ERR-008.
 - **CLI-003** — A command that is not an entry in the command registry
   **MUST NOT** be implemented, documented as available, or invoked in a
-  committed example. The registry is therefore the complete command surface,
+  committed example. The registry is the complete declared command surface,
   and generated help cites it rather than a second list maintained beside it.
+  A declared command without a `result_schema` is a reservation, not an
+  available command; the router gates it until its implementing phase attaches
+  a handler and output contract.
 
 ## 2. Command grammar
 
@@ -84,7 +101,7 @@ in the same commit.
 | `admin rotate` | 3 | none | document | path | record a key rotation with overlapping epochs |
 | `admin delegate` | 3 | none | document | path | record origin/uploader relay delegation |
 | `admin receipt-key` | 3 | none | document | — | generate and certify a receipt-signing key |
-| `catalog rebuild --from-occurrences` | 10 | none | document | — | rebuild the catalog from raw provenance |
+| `catalog rebuild --from-occurrences` | 10 (reserved) | none | document | — | planned rebuild from raw provenance; not shipped until the Phase 10 binding lands |
 
   The plan's crate-tree sketch of the CLI as "collect, serve, link, admin,
   status" is realized by this table: capture is `run`/`daemon`, and the
@@ -95,6 +112,11 @@ in the same commit.
   authority-signing and control-admin publication path; its registry entry
   names `archivist-auth` as the behavior owner and pins the linked-client
   result to `schemas/v1/control-client.json`.
+  The catalog row is intentionally different: its storage implementation and
+  scoped-prefix tests are landed, but the registry row has no `result_schema`
+  and `main.rs` attaches no handler. It therefore remains a Phase 10
+  reservation and every invocation fails closed with `cli.usage_error` until
+  the production binding and output contract are added.
 - **CLI-007** — The state-lock field states the command's relationship to
   the plan Section 7.9 single-mutator contract: `exclusive` commands take
   the advisory lock and a second mutator exits 75 with `client.lock_held`;
@@ -136,10 +158,11 @@ in the same commit.
   across the registry: one name, one meaning, no command reuses another
   command's flag name. Operational flags **MUST NOT** collide with any mode
   flag name or any key-flag name derivable from the key registry — the
-  three namespaces are disjoint and the gate proves it. The v1 set is
-  exactly two: `run --once` and `catalog rebuild --from-occurrences`, both
-  `required` — invoking the command without its required flag is a usage
-  error, which is why the plan writes both commands with their flag. A
+  three namespaces are disjoint and the gate proves it. The declared registry
+  set is exactly two: `run --once` and the reserved Phase 10
+  `catalog rebuild --from-occurrences`, both `required`. The shipped v1
+  command set currently uses only `run --once`; the catalog flag remains
+  parser- and registry-tested but cannot reach a handler until Phase 10. A
   value-taking operational flag is a registry-format extension (Section 8),
   not a v1 edit.
 - **CLI-012** — Parsing is strict: each flag **MAY** appear at most once —
@@ -334,7 +357,6 @@ archivist --non-interactive --json status
 archivist --non-interactive --json run --once
 archivist --config /etc/archivist/production.toml daemon
 archivist --non-interactive --json doctor
-archivist --json catalog rebuild --from-occurrences
 ```
 
 A deployment's `archivist.toml` carries the secret references the daemon
