@@ -8,13 +8,14 @@
 //! credential type, builds path- or virtual-hosted requests, and keeps the
 //! backend-specific HTTP details below this crate's public seams.
 //!
-//! The binding deliberately has no general object API. Its three
-//! constructors produce an authority-specific instance, and the trait
-//! implementations expose only the verbs that authority is provisioned for:
-//! raw write/multipart, control read/HEAD, or control administration GET/PUT.
-//! Scope is checked again at this boundary before a request exists, so a
-//! composition mistake cannot turn a typed key into a request for another
-//! tenant or prefix.
+//! The binding deliberately has no general object API. Its constructors
+//! produce an authority-specific instance, and the trait implementations
+//! expose only the verbs that authority is provisioned for: raw
+//! write/multipart, control read/HEAD, control administration GET/PUT, the
+//! capability probe's write-shaped instrument, or the audit identity's
+//! versions listing. Scope is checked again at this boundary before a
+//! request exists, so a composition mistake cannot turn a typed key into a
+//! request for another tenant or prefix.
 //!
 //! Response bodies are collected through a fixed cap. This applies to
 //! successful control records, S3 XML responses, and failures alike; a
@@ -29,10 +30,14 @@ use archivist_auth::sigv4::{SigV4Credentials, SigV4Request, SigV4Signer};
 use archivist_protocol::envelope::CANONICAL_MAX_BYTES;
 use archivist_protocol::sha256;
 use archivist_protocol::vocabulary::{TenantId, Timestamp};
-use archivist_storage::audit_restore::{ObjectBody, ObjectMetadata};
+use archivist_storage::audit_restore::{
+    ContinuationToken, InventoryKey, InventoryScope, ObjectBody, ObjectMetadata,
+};
 use archivist_storage::commit::{CreateIfAbsent, ExistingObject};
 use archivist_storage::error::{StorageError, StorageErrorKind};
+use archivist_storage::lifecycle_audit::{VersionedEntry, VersionedPage};
 use archivist_storage::metadata::{ObjectTag, Observation, StorageVersionId};
+use archivist_storage::probe::{ProbeKey, VersioningObservation};
 use archivist_storage::raw_write::{PartCommitment, PartNumber};
 use bytes::{Buf, Bytes};
 use http::header::{CONTENT_LENGTH, ETAG, HOST, HeaderMap, HeaderValue};
@@ -50,6 +55,8 @@ use crate::config::{
 };
 use crate::control_admin::{ControlAdminBackend, ControlObjectKey};
 use crate::control_read::ControlReadBackend;
+use crate::lifecycle_audit::VersionAuditBackend;
+use crate::probe::{ProbeObjectObservation, ProbeReceipt, ProbeWriteBackend};
 use crate::raw_write::{RawObjectKey, RawWriteBackend};
 
 const RESPONSE_MAX_BYTES: usize = CANONICAL_MAX_BYTES;
@@ -66,6 +73,16 @@ const DETAIL_UNAVAILABLE: &str = "S3 backend request failed";
 const DETAIL_COMPLETE_BOUNDS: &str = "multipart completion document exceeds its bound";
 const DETAIL_UPLOAD_ID: &str = "multipart response did not contain a valid upload id";
 const DETAIL_ETAG: &str = "multipart response did not contain a valid etag";
+const DETAIL_VERSIONS_RESPONSE: &str = "versions listing response is malformed";
+/// The sentinel a listing parser adopts for a version the backend did not
+/// name — an object stored before versioning was ever enabled. The token
+/// rounds only through this crate's own listing; a runner reporting
+/// version-id claims filters it out, because an unnamed version is not a
+/// version identity the run may claim.
+const NULL_VERSION_SENTINEL: &str = "null";
+/// The most keys one versions-listing page asks for. The freeze contract
+/// bounds the whole sequence, so a large page only reduces request count.
+const VERSIONS_PAGE_KEYS: usize = 1000;
 
 type HttpBody = Full<Bytes>;
 type HttpConnector = hyper_rustls::HttpsConnector<HyperHttpConnector>;
@@ -135,6 +152,12 @@ enum Authority {
     RawWrite,
     ControlRead,
     ControlAdmin,
+    /// The capability probe's write-shaped instrument: writes, reads, and
+    /// multipart sessions aimed only at the reserved probe namespace.
+    ProbeWrite,
+    /// The audit identity's versions listing: read-only enumeration across
+    /// the tenant prefixes and nothing else.
+    VersionAudit,
 }
 
 /// The validated endpoint pieces needed for request URI construction.
@@ -202,6 +225,10 @@ struct BackendInner {
     endpoint: EndpointParts,
     path_style: PathStyle,
     bucket: Box<str>,
+    /// The audit identity enumerates both tenant buckets, so the versions
+    /// authority carries the control bucket alongside the primary (raw)
+    /// one. Every other authority leaves it unset.
+    alternate_bucket: Option<Box<str>>,
     tenant: Box<str>,
     prefix: Box<str>,
     authority: Authority,
@@ -216,6 +243,7 @@ impl fmt::Debug for BackendInner {
             .field("endpoint", &self.endpoint)
             .field("path_style", &self.path_style)
             .field("bucket", &"REDACTED")
+            .field("alternate_bucket", &"REDACTED")
             .field("tenant", &"REDACTED")
             .field("prefix", &"REDACTED")
             .field("signer", &self.signer)
@@ -260,9 +288,79 @@ impl S3RequestBackend {
             config.path_style(),
             config.region(),
             config.raw_bucket(),
+            None,
             tenant,
             config.identities().raw_write(),
             Authority::RawWrite,
+        )
+    }
+
+    /// Compose the capability probe's request binding for one tenant.
+    ///
+    /// The instrument rides the same write-shaped credential reference the
+    /// raw writer composes with — the configuration's one write-shaped
+    /// role (a qualification run provisions one write-shaped identity for
+    /// the probe instrument and the write path together) — but its scope
+    /// is the reserved probe namespace and nothing else: every request it
+    /// issues targets `tenants/<tenant>/v1/probe/` or the bucket-level
+    /// versioning and encryption configuration surfaces of the raw bucket.
+    /// The returned binding implements [`crate::probe::ProbeWriteBackend`]
+    /// and no other seam.
+    ///
+    /// # Errors
+    ///
+    /// Returns a credential or endpoint composition error when the validated
+    /// configuration cannot produce a usable request binding.
+    pub fn probe_write(
+        config: &S3StorageConfig,
+        tenant: &TenantId,
+    ) -> Result<Self, S3RequestError> {
+        Self::compose(
+            config.endpoint(),
+            config.path_style(),
+            config.region(),
+            config.raw_bucket(),
+            None,
+            tenant,
+            config.identities().raw_write(),
+            Authority::ProbeWrite,
+        )
+    }
+
+    /// Compose the audit identity's versions-listing binding for one
+    /// tenant.
+    ///
+    /// The binding rides the configuration's optional offline-restore
+    /// credential — the one authority with list grants across the tenant
+    /// prefixes — and enumerates the raw and control buckets' versions
+    /// listings over the closed [`InventoryScope`]s. A configuration that
+    /// never granted the offline-restore identity has no such binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`S3RequestErrorKind::CredentialUnavailable`] when the
+    /// configuration did not grant the offline-restore identity, and a
+    /// credential or endpoint composition error when the validated
+    /// configuration cannot otherwise produce a usable request binding.
+    pub fn version_audit(
+        config: &S3StorageConfig,
+        tenant: &TenantId,
+    ) -> Result<Self, S3RequestError> {
+        let control_bucket = config.control_bucket();
+        Self::compose(
+            config.endpoint(),
+            config.path_style(),
+            config.region(),
+            config.raw_bucket(),
+            Some(control_bucket),
+            tenant,
+            config.identities().offline_restore().ok_or_else(|| {
+                S3RequestError::new(
+                    S3RequestErrorKind::CredentialUnavailable,
+                    DETAIL_CREDENTIALS_UNAVAILABLE,
+                )
+            })?,
+            Authority::VersionAudit,
         )
     }
 
@@ -291,6 +389,7 @@ impl S3RequestBackend {
             config.path_style(),
             config.region(),
             config.control_bucket(),
+            None,
             config.tenant(),
             config.control_read_credentials(),
             Authority::ControlRead,
@@ -319,6 +418,7 @@ impl S3RequestBackend {
             config.path_style(),
             config.region(),
             config.control_bucket(),
+            None,
             config.tenant(),
             config.control_admin_credentials(),
             Authority::ControlAdmin,
@@ -336,11 +436,13 @@ impl S3RequestBackend {
         Self::control_admin(config)
     }
 
+    #[allow(clippy::too_many_arguments)] // one authority's full composition, read top to bottom
     fn compose(
         endpoint: &EndpointUrl,
         path_style: PathStyle,
         region: &str,
         bucket: &str,
+        alternate_bucket: Option<&str>,
         tenant: &TenantId,
         reference: &CredentialReference,
         authority: Authority,
@@ -360,6 +462,8 @@ impl S3RequestBackend {
             Authority::ControlRead | Authority::ControlAdmin => {
                 format!("tenants/{tenant}/v1/control/")
             }
+            Authority::ProbeWrite => format!("tenants/{tenant}/v1/probe/"),
+            Authority::VersionAudit => format!("tenants/{tenant}/"),
         };
         Ok(Self {
             inner: Arc::new(BackendInner {
@@ -367,6 +471,7 @@ impl S3RequestBackend {
                 endpoint,
                 path_style,
                 bucket: bucket.into(),
+                alternate_bucket: alternate_bucket.map(Box::from),
                 tenant: tenant.to_string().into_boxed_str(),
                 prefix: prefix.into_boxed_str(),
                 authority,
@@ -402,11 +507,27 @@ impl S3RequestBackend {
         payload: &[u8],
         conditional: bool,
     ) -> Result<HttpResponse, StorageError> {
+        self.request_on_bucket(&self.inner.bucket, method, key, query, payload, conditional)
+            .await
+    }
+
+    /// Issue one signed request against `bucket` — the authority's primary
+    /// bucket for every verb, plus the control bucket for the versions
+    /// authority's control-scope listings.
+    async fn request_on_bucket(
+        &self,
+        bucket: &str,
+        method: Method,
+        key: &str,
+        query: &str,
+        payload: &[u8],
+        conditional: bool,
+    ) -> Result<HttpResponse, StorageError> {
         let authority = self
             .inner
             .endpoint
-            .authority_for(&self.inner.bucket, self.inner.path_style)?;
-        let path = request_path(&self.inner.endpoint.base_path, &self.inner.bucket, key);
+            .authority_for(bucket, self.inner.path_style)?;
+        let path = request_path(&self.inner.endpoint.base_path, bucket, key);
         let payload_hash = sha256::encode_hex(&sha256::digest(payload));
         let (amz_date, _) = request_clock()?;
         let signing_headers = signing_headers(&authority, &payload_hash, &amz_date, conditional);
@@ -728,12 +849,381 @@ impl ControlAdminBackend for S3RequestBackend {
     }
 }
 
+impl ProbeWriteBackend for S3RequestBackend {
+    async fn write_probe_if_absent(
+        &self,
+        key: &ProbeKey,
+        bytes: &[u8],
+    ) -> Result<ProbeReceipt, StorageError> {
+        check_probe_scope(&self.inner, key)?;
+        let response = self
+            .request(Method::PUT, key.as_str(), "", bytes, true)
+            .await?;
+        if response.status == StatusCode::PRECONDITION_FAILED {
+            return Ok(probe_receipt(false, &response.headers));
+        }
+        if response.status.is_success() {
+            return Ok(probe_receipt(true, &response.headers));
+        }
+        Err(status_error(response.status))
+    }
+
+    async fn read_probe_object(
+        &self,
+        key: &ProbeKey,
+    ) -> Result<Option<ProbeObjectObservation>, StorageError> {
+        check_probe_scope(&self.inner, key)?;
+        let response = self
+            .request(Method::HEAD, key.as_str(), "", &[], false)
+            .await?;
+        if response.status == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status.is_success() {
+            return Err(status_error(response.status));
+        }
+        let size = response
+            .content_length
+            .ok_or_else(|| StorageError::new(StorageErrorKind::MalformedInput, DETAIL_RESPONSE))?;
+        Ok(Some(ProbeObjectObservation::new(
+            size,
+            header_text(&response.headers, "x-amz-version-id"),
+            header_text(&response.headers, ETAG.as_str()),
+            response
+                .headers
+                .contains_key("x-amz-server-side-encryption"),
+        )))
+    }
+
+    async fn bucket_versioning(&self) -> Result<Option<VersioningObservation>, StorageError> {
+        let response = self
+            .request(Method::GET, "", "versioning=", &[], false)
+            .await?;
+        if response.status == StatusCode::NOT_FOUND
+            || response.status == StatusCode::NOT_IMPLEMENTED
+        {
+            return Ok(None);
+        }
+        if !response.status.is_success() {
+            return Err(status_error(response.status));
+        }
+        let text = std::str::from_utf8(&response.body)
+            .map_err(|_| StorageError::new(StorageErrorKind::MalformedInput, DETAIL_RESPONSE))?;
+        Ok(Some(match extract_xml_value(text.as_bytes(), "Status") {
+            Some("Enabled") => VersioningObservation::Enabled,
+            _ => VersioningObservation::Disabled,
+        }))
+    }
+
+    async fn bucket_encryption(&self) -> Result<bool, StorageError> {
+        let response = self
+            .request(Method::GET, "", "encryption=", &[], false)
+            .await?;
+        if response.status == StatusCode::NOT_FOUND
+            || response.status == StatusCode::NOT_IMPLEMENTED
+        {
+            return Ok(false);
+        }
+        if !response.status.is_success() {
+            return Err(status_error(response.status));
+        }
+        let text = std::str::from_utf8(&response.body)
+            .map_err(|_| StorageError::new(StorageErrorKind::MalformedInput, DETAIL_RESPONSE))?;
+        Ok(extract_xml_value(text.as_bytes(), "ServerSideEncryptionConfiguration").is_some())
+    }
+
+    async fn create_probe_multipart(&self, key: &ProbeKey) -> Result<String, StorageError> {
+        check_probe_scope(&self.inner, key)?;
+        let response = self
+            .request(Method::POST, key.as_str(), "uploads=", &[], false)
+            .await?;
+        if !response.status.is_success() {
+            return Err(status_error(response.status));
+        }
+        extract_xml_value(&response.body, "UploadId")
+            .filter(|value| !value.is_empty() && value.len() <= 1024)
+            .map(str::to_owned)
+            .ok_or_else(|| StorageError::new(StorageErrorKind::Unavailable, DETAIL_UPLOAD_ID))
+    }
+
+    async fn upload_probe_part(
+        &self,
+        key: &ProbeKey,
+        session: &str,
+        part: PartNumber,
+        bytes: &[u8],
+    ) -> Result<String, StorageError> {
+        check_probe_scope(&self.inner, key)?;
+        let query = format!("partNumber={}&uploadId={}", part, encode_component(session));
+        let response = self
+            .request(Method::PUT, key.as_str(), &query, bytes, false)
+            .await?;
+        if !response.status.is_success() {
+            return Err(status_error(response.status));
+        }
+        response
+            .headers
+            .get(ETAG)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| ObjectTag::parse(value).ok())
+            .map(|tag| tag.to_string())
+            .ok_or_else(|| StorageError::new(StorageErrorKind::Unavailable, DETAIL_ETAG))
+    }
+
+    async fn complete_probe_multipart(
+        &self,
+        key: &ProbeKey,
+        session: &str,
+        parts: &[PartCommitment],
+    ) -> Result<(), StorageError> {
+        check_probe_scope(&self.inner, key)?;
+        let payload = complete_document(parts)?;
+        let query = format!("uploadId={}", encode_component(session));
+        let response = self
+            .request(Method::POST, key.as_str(), &query, &payload, false)
+            .await?;
+        if response.status.is_success() {
+            Ok(())
+        } else {
+            Err(status_error(response.status))
+        }
+    }
+
+    async fn abort_probe_multipart(
+        &self,
+        key: &ProbeKey,
+        session: &str,
+    ) -> Result<(), StorageError> {
+        check_probe_scope(&self.inner, key)?;
+        let query = format!("uploadId={}", encode_component(session));
+        let response = self
+            .request(Method::DELETE, key.as_str(), &query, &[], false)
+            .await?;
+        if response.status.is_success() || response.status == StatusCode::NOT_FOUND {
+            Ok(())
+        } else {
+            Err(status_error(response.status))
+        }
+    }
+}
+
+impl VersionAuditBackend for S3RequestBackend {
+    async fn list_object_versions(
+        &self,
+        scope: &InventoryScope,
+        after: Option<&ContinuationToken>,
+    ) -> Result<VersionedPage, StorageError> {
+        if self.inner.authority != Authority::VersionAudit {
+            return Err(StorageError::new(
+                StorageErrorKind::ScopeViolation,
+                DETAIL_SCOPE,
+            ));
+        }
+        let scope_tenant = match scope {
+            InventoryScope::TenantRaw(tenant)
+            | InventoryScope::TenantControl(tenant)
+            | InventoryScope::TenantCatalog(tenant)
+            | InventoryScope::TenantDerived(tenant) => tenant.as_str(),
+        };
+        if scope_tenant != self.inner.tenant.as_ref() {
+            return Err(StorageError::new(
+                StorageErrorKind::ScopeViolation,
+                DETAIL_SCOPE,
+            ));
+        }
+        // The control bucket is the one reserved namespace on its own
+        // bucket; catalog and derived share the raw bucket's namespace
+        // (plan Section 7.5), so the audit identity lists them there.
+        let bucket = match scope {
+            InventoryScope::TenantRaw(_)
+            | InventoryScope::TenantCatalog(_)
+            | InventoryScope::TenantDerived(_) => self.inner.bucket.as_ref(),
+            InventoryScope::TenantControl(_) => self
+                .inner
+                .alternate_bucket
+                .as_deref()
+                .ok_or_else(unavailable_error)?,
+        };
+        let prefix = scope.prefix();
+        let mut query = format!(
+            "versions=&prefix={}&max-keys={}",
+            encode_component(&prefix),
+            VERSIONS_PAGE_KEYS
+        );
+        if let Some(token) = after {
+            let (key_marker, version_marker) = decode_markers(token.as_str())?;
+            query.push_str("&key-marker=");
+            query.push_str(&encode_component(&key_marker));
+            query.push_str("&version-id-marker=");
+            query.push_str(&encode_component(&version_marker));
+        }
+        let response = self
+            .request_on_bucket(bucket, Method::GET, "", &query, &[], false)
+            .await?;
+        if !response.status.is_success() {
+            return Err(status_error(response.status));
+        }
+        let (_, observed_at) = request_clock()?;
+        parse_versions_page(&response.body, &observed_at)
+    }
+}
+
 /// A bounded response after the body has been drained.
 struct HttpResponse {
     status: StatusCode,
     headers: HeaderMap,
     body: Vec<u8>,
     content_length: Option<u64>,
+}
+
+/// The header `name`'s text, when present and UTF-8.
+fn header_text(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned)
+}
+
+/// Assemble one probe write receipt from a response's headers.
+fn probe_receipt(created: bool, headers: &HeaderMap) -> ProbeReceipt {
+    ProbeReceipt::new(
+        created,
+        header_text(headers, "x-amz-version-id"),
+        header_text(headers, ETAG.as_str()),
+        headers.contains_key("x-amz-server-side-encryption"),
+    )
+}
+
+/// The probe namespace scope check: the key's tenant segment must be the
+/// composed tenant, and the key must sit under the composed probe prefix.
+/// The derived [`ProbeKey`] grammar guarantees the shape; this re-check is
+/// the boundary that keeps a composition mistake from aiming the probe
+/// instrument at content.
+fn check_probe_scope(inner: &BackendInner, key: &ProbeKey) -> Result<(), StorageError> {
+    let tenant = key.as_str().split('/').nth(1).unwrap_or_default();
+    if inner.authority != Authority::ProbeWrite
+        || inner.tenant.as_ref() != tenant
+        || !key.as_str().starts_with(inner.prefix.as_ref())
+    {
+        return Err(StorageError::new(
+            StorageErrorKind::ScopeViolation,
+            DETAIL_SCOPE,
+        ));
+    }
+    Ok(())
+}
+
+/// Decode one versions-continuation token into its two markers. The token
+/// is `percent-encoded-key ":" percent-encoded-version`; the encoded key
+/// never carries a literal colon, so the first colon splits the pair.
+fn decode_markers(token: &str) -> Result<(String, String), StorageError> {
+    let malformed =
+        || StorageError::new(StorageErrorKind::MalformedInput, DETAIL_VERSIONS_RESPONSE);
+    let (key, version) = token.split_once(':').ok_or_else(malformed)?;
+    Ok((
+        decode_component(key).ok_or_else(malformed)?,
+        decode_component(version).ok_or_else(malformed)?,
+    ))
+}
+
+/// Percent-decode one marker component. Inverse of [`encode_component`]
+/// for the ASCII repertoire the components carry; a malformed escape is a
+/// malformed token, never a partially decoded marker.
+fn decode_component(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = hex_value(*bytes.get(index + 1)?)?;
+            let low = hex_value(*bytes.get(index + 2)?)?;
+            output.push(high * 16 + low);
+            index += 3;
+        } else {
+            output.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(output).ok()
+}
+
+/// One hexadecimal digit's value.
+const fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Every `<element>` block's inner text, in document order. The listing
+/// parser's walker: the same string discipline as [`extract_xml_value`],
+/// repeated, so no XML crate enters the dependency tree.
+fn xml_blocks<'a>(text: &'a str, element: &str) -> Vec<&'a str> {
+    let open = format!("<{element}>");
+    let close = format!("</{element}>");
+    let mut blocks = Vec::new();
+    let mut cursor = 0;
+    while let Some(found) = text[cursor..].find(&open) {
+        let start = cursor + found + open.len();
+        let Some(end_offset) = text[start..].find(&close) else {
+            break;
+        };
+        blocks.push(&text[start..start + end_offset]);
+        cursor = start + end_offset + close.len();
+    }
+    blocks
+}
+
+/// Parse one versions-listing page: the `<Version>` entries and the
+/// truncation markers the freeze paginator follows.
+///
+/// A version the backend did not name — an object stored before
+/// versioning was ever enabled — parses under the null-version sentinel,
+/// so the freeze can group and currency-check it like any other version.
+/// `<DeleteMarker>` blocks are skipped: they are deletion records, not
+/// stored versions, and the run's prefixes hold no deletions.
+fn parse_versions_page(
+    body: &[u8],
+    observed_at: &Timestamp,
+) -> Result<VersionedPage, StorageError> {
+    let malformed =
+        || StorageError::new(StorageErrorKind::MalformedInput, DETAIL_VERSIONS_RESPONSE);
+    let text = std::str::from_utf8(body).map_err(|_| malformed())?;
+    let mut entries = Vec::new();
+    for block in xml_blocks(text, "Version") {
+        let key_text = extract_xml_value(block.as_bytes(), "Key").ok_or_else(malformed)?;
+        let size_text = extract_xml_value(block.as_bytes(), "Size").ok_or_else(malformed)?;
+        let size = size_text.parse::<u64>().map_err(|_| malformed())?;
+        let version_text =
+            extract_xml_value(block.as_bytes(), "VersionId").unwrap_or(NULL_VERSION_SENTINEL);
+        let latest =
+            extract_xml_value(block.as_bytes(), "IsLatest").is_some_and(|value| value == "true");
+        let key = InventoryKey::parse(key_text).map_err(|_| malformed())?;
+        let version = StorageVersionId::parse(version_text).map_err(|_| malformed())?;
+        let etag = extract_xml_value(block.as_bytes(), "ETag")
+            .and_then(|value| ObjectTag::parse(value).ok());
+        let observation = Observation::new(etag, Some(version.clone()), observed_at.clone());
+        entries.push(VersionedEntry::new(key, size, version, latest, observation));
+    }
+    let truncated =
+        extract_xml_value(text.as_bytes(), "IsTruncated").is_some_and(|value| value == "true");
+    let next = if truncated {
+        let key_marker =
+            extract_xml_value(text.as_bytes(), "NextKeyMarker").ok_or_else(malformed)?;
+        let version_marker = extract_xml_value(text.as_bytes(), "NextVersionIdMarker")
+            .unwrap_or(NULL_VERSION_SENTINEL);
+        let token_text = format!(
+            "{}:{}",
+            encode_component(key_marker),
+            encode_component(version_marker)
+        );
+        Some(ContinuationToken::parse(&token_text).map_err(|_| malformed())?)
+    } else {
+        None
+    };
+    Ok(VersionedPage::new(entries, next))
 }
 
 fn credential_error(error: CredentialResolutionError) -> S3RequestError {

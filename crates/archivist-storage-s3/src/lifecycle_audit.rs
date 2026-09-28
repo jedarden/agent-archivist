@@ -163,6 +163,25 @@ impl<B> S3LifecycleAuditStore<B> {
         self
     }
 
+    /// The same composition — configuration, tenant, credential, backend
+    /// — carrying the capability report one run's own probe observed: the
+    /// qualification runner's binding step for the audit half, so the
+    /// STO-009 measurement a run files is gated by exactly the versioning
+    /// fact that run's single probe established.
+    #[must_use]
+    pub fn rebased(&self, capabilities: StoreCapabilities) -> Self
+    where
+        B: Clone,
+    {
+        Self {
+            config: self.config.clone(),
+            tenant: self.tenant.clone(),
+            credential: self.credential.clone(),
+            capabilities,
+            backend: self.backend.clone(),
+        }
+    }
+
     /// The ingest configuration this store was composed with.
     #[must_use]
     pub const fn config(&self) -> &S3StorageConfig {

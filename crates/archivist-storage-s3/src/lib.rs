@@ -42,10 +42,15 @@
 //! portable `LifecycleAuditStore` over the optional offline-restore
 //! credential, listing every physical version under the identity's
 //! tenant scopes and reporting the noncurrent accumulation requirements
-//! STO-009 makes a deployment duty. The
-//! remaining adapter behavior arrives with its own deliverables:
-//! capability probing, the synthetic compatibility suite against the
-//! local reference backend, B2, and ARMOR, and the ingest reads.
+//! STO-009 makes a deployment duty. Seventh slice: the live capability
+//! probe ([`probe`]) — the portable `CapabilitySource` over the probe
+//! authority's write-shaped instrument, reserved probe namespace
+//! included, that binds the five-axis report every qualification run
+//! opens with. Eighth slice: the community qualification runner
+//! ([`qualify`]) — the operator-side engine that executes the
+//! community kit's three legs in order over the public seams and files
+//! the honest outcome, no subset waived. The remaining adapter behavior
+//! arrives with its own deliverable: the ingest reads.
 //!
 //! # Dependency boundary
 //!
@@ -57,6 +62,8 @@ pub mod config;
 pub mod control_admin;
 pub mod control_read;
 pub mod lifecycle_audit;
+pub mod probe;
+pub mod qualify;
 pub mod raw_write;
 pub mod request;
 pub mod scoped_write;

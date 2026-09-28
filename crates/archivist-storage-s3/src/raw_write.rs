@@ -364,6 +364,28 @@ impl<B> S3RawWriteStore<B> {
         self
     }
 
+    /// The same composition — configuration, tenant, backend — carrying
+    /// the capability report one run's own probe observed: the
+    /// qualification runner's binding step (the kit's Section 5 step 2,
+    /// the store the deployment would build), for the run that probes
+    /// first and only then knows the capabilities to declare. The probe
+    /// instrument is not idempotent against its own namespace, so the
+    /// report must come from the run's own single probe — never a
+    /// second, staler observe.
+    #[must_use]
+    pub fn rebased(&self, capabilities: StoreCapabilities) -> Self
+    where
+        B: Clone,
+    {
+        Self {
+            config: self.config.clone(),
+            tenant: self.tenant.clone(),
+            capabilities,
+            backend: self.backend.clone(),
+            sessions: Mutex::new(HashMap::new()),
+        }
+    }
+
     /// The ingest configuration this store was composed with.
     #[must_use]
     pub const fn config(&self) -> &S3StorageConfig {
