@@ -38,7 +38,16 @@ Policy, one rule per check below:
    distinguishable and correctly ordered);
 6. **phrase pins** — the note keeps its normative sentences: unknown
    fingerprints fail closed (plan ``EC-08``), allowlist/evidence/note
-   change in the same commit, and the ``AC-11`` claim gate is named.
+   change in the same commit, and the ``AC-11`` claim gate is named;
+7. **marathon evidence** — the opencode row's marathon-scale paragraph
+   (requirement ``CAP-004`` at scale) stays owned: its figures parse from
+   the note and are pinned to the constants of
+   ``crates/archivist-adapter-opencode/tests/marathon_scale.rs`` (sessions,
+   allowlisted rows, growth append, scale multiple over the fleet count,
+   and the bound relationships the recorded observations must respect),
+   and the ``#[ignore]``d suite is invoked by the definition of done's
+   slow lane — so the matrix's marathon evidence is re-measured by a gate
+   and its published numbers cannot drift from what the suite asserts.
 
 ``--self-test`` runs the same validators against the committed sources and
 note with embedded mutations and requires every rejection path to fire and
@@ -64,6 +73,12 @@ ROOT = Path(__file__).resolve().parent.parent
 NOTE_PATH = Path("docs/notes/compatibility-matrix.md")
 INVENTORY_PATH = Path("docs/notes/fleet-source-inventory.md")
 STATUS_SOURCE_PATH = Path("crates/archivist-adapter-sdk/src/status.rs")
+# Rule 7's other two records: the marathon suite whose constants the note's
+# figures are pinned to, and the definition of done whose slow lane
+# re-measures it (the suite is `#[ignore]`d from ordinary lanes).
+MARATHON_TEST_PATH = Path(
+    "crates/archivist-adapter-opencode/tests/marathon_scale.rs")
+DOD_PATH = Path("scripts/definition-of-done.sh")
 
 # One entry per released adapter: where its constants live and which consts
 # hold the identity, projection, fingerprint allowlist, and (when the
@@ -136,6 +151,7 @@ REQUIRED_PHRASES = (
     "fails closed as `unsupported` after the bounded header probe",
     "only in the same commit as the adapter's allowlist constant",
     "rejected (threat `AC-11`)",
+    "re-measured by the definition of done's slow lane",
 )
 
 STRING_CONST_RE = r'pub const {name}: &str = "([^"]+)";'
@@ -550,6 +566,212 @@ def check_phrases(sources: dict[str, str], note: str) -> bool:
     return ok
 
 
+# ---------------------------------------------------------------------------
+# Rule 7: the opencode row's marathon-scale evidence. The suite behind it is
+# `#[ignore]`d from ordinary lanes (it is meaningful only at its own scale),
+# so "owned" means two pinned records: the note's published figures equal
+# what the suite's constants actually produce, and the definition of done's
+# slow lane invokes the suite — the assertions stay a regression gate, not
+# a benchmark someone remembers to run.
+# ---------------------------------------------------------------------------
+
+# The exact slow-lane invocation the definition of done must carry.
+MARATHON_DOD_INVOCATION = (
+    "cargo test -p archivist-adapter-opencode"
+    " --test marathon_scale -- --ignored"
+)
+
+# The note's marathon paragraph (inside the opencode row's gap cell) and the
+# inventory's fleet-count finding, parsed rather than duplicated: a figure
+# that drifts from the suite's constants is a matrix claim the project no
+# longer measures.
+MARATHON_SCALE_RE = re.compile(
+    r"a synthetic ([\d,]+)-session / ([\d,]+)-row / (\d+) MiB store"
+    r" \((\d+)× the fleet session count\)")
+MARATHON_APPEND_RE = re.compile(r"a ([\d,]+)-row append re-captured in full")
+MARATHON_BOUNDS_RE = re.compile(
+    r"observed ≥([\d.]+) MiB/s, peak ≈([\d.]+)× store")
+MARATHON_TEST_TOKEN_RE = re.compile(
+    r"Marathon scale \(\d{4}-\d{2}-\d{2}, `([^`]+)`\)")
+FLEET_OPENCODE_SESSIONS_RE = re.compile(
+    r"\*\*OpenCode is single-host and small\*\* \((\d+) sessions\)")
+
+# The suite's plain (non-`pub`) scale and bound constants; underscores are
+# the Rust digit separator, not part of the value.
+NUMBER_CONST_RE = r"(?:pub )?const {name}: \w+ = ([\d_]+(?:\.[\d_]+)?);"
+
+# The constants the note's figures are derived from (scale) and held under
+# (bounds).
+MARATHON_INT_CONSTS = (
+    "SESSIONS",
+    "MESSAGES_PER_SESSION",
+    "PARTS_PER_MESSAGE",
+    "INPUTS_PER_SESSION",
+    "TODOS_PER_SESSION",
+    "GROWTH_SESSIONS",
+    "MAX_PEAK_RSS_STORE_MULTIPLE",
+    "MAX_PEAK_RSS_ABSOLUTE_MIB",
+)
+MARATHON_FLOAT_CONSTS = ("MIN_CAPTURE_MIB_PER_S",)
+
+
+def parse_number_const(text: str, name: str) -> float | None:
+    match = re.search(NUMBER_CONST_RE.format(name=name), text)
+    if match is None:
+        return None
+    return float(match.group(1).replace("_", ""))
+
+
+def marathon_suite_constants(test_text: str) -> dict[str, float] | None:
+    """The suite's scale and bound constants, keyed by const name."""
+    constants: dict[str, float] = {}
+    for name in MARATHON_INT_CONSTS + MARATHON_FLOAT_CONSTS:
+        value = parse_number_const(test_text, name)
+        if value is None:
+            fail(f"{MARATHON_TEST_PATH}: no `const {name}`")
+            return None
+        constants[name] = value
+    return constants
+
+
+def check_marathon_evidence(sources: dict[str, str], note: str) -> bool:
+    """Rule 7: the marathon figures stay pinned to their suite and lane."""
+    test_text = sources.get(str(MARATHON_TEST_PATH))
+    dod_text = sources.get(str(DOD_PATH))
+    inventory = sources.get(str(INVENTORY_PATH))
+    if test_text is None or dod_text is None or inventory is None:
+        fail("marathon evidence: suite, definition of done, or inventory "
+             "not loaded")
+        return False
+    constants = marathon_suite_constants(test_text)
+    if constants is None:
+        return False
+
+    rows = parse_matrix_rows(note)
+    if rows is None:
+        return False
+    gap_cells = [
+        row["gap"] for row in rows if row["adapter"][0] == "opencode"
+    ]
+    if len(gap_cells) != 1:
+        fail(f"expected exactly one opencode matrix row, found "
+             f"{len(gap_cells)}")
+        return False
+    gap = gap_cells[0]
+
+    fleet = FLEET_OPENCODE_SESSIONS_RE.search(inventory)
+    if fleet is None:
+        fail(f"{INVENTORY_PATH}: no OpenCode fleet session count")
+        return False
+    fleet_sessions = int(fleet.group(1))
+
+    ok = True
+
+    test_token = MARATHON_TEST_TOKEN_RE.search(gap)
+    expected_token = f"tests/{MARATHON_TEST_PATH.name}"
+    if test_token is None:
+        fail("opencode row: no marathon paragraph naming its date and suite")
+        ok = False
+    elif test_token.group(1) != expected_token:
+        fail(f"opencode row names suite {test_token.group(1)!r}, expected "
+             f"{expected_token!r}")
+        ok = False
+
+    scale = MARATHON_SCALE_RE.search(gap)
+    append = MARATHON_APPEND_RE.search(gap)
+    bounds = MARATHON_BOUNDS_RE.search(gap)
+    for label, match in (
+        ("synthetic-store figures", scale),
+        ("append figure", append),
+        ("observed bound figures", bounds),
+    ):
+        if match is None:
+            fail(f"opencode row: marathon paragraph is missing its "
+                 f"{label}")
+            ok = False
+    if not ok:
+        return False
+
+    per_session = (1
+                   + constants["MESSAGES_PER_SESSION"]
+                   + constants["MESSAGES_PER_SESSION"]
+                   * constants["PARTS_PER_MESSAGE"]
+                   + constants["INPUTS_PER_SESSION"]
+                   + constants["TODOS_PER_SESSION"])
+    suite_rows = constants["SESSIONS"] * per_session
+    suite_append = constants["GROWTH_SESSIONS"] * per_session
+    suite_multiple = constants["SESSIONS"] / fleet_sessions
+
+    note_sessions, note_rows, note_store_mib, note_multiple = (
+        int(scale.group(1).replace(",", "")),
+        int(scale.group(2).replace(",", "")),
+        int(scale.group(3)),
+        int(scale.group(4)),
+    )
+    if note_sessions != constants["SESSIONS"]:
+        fail(f"opencode row: marathon store is {note_sessions} sessions, "
+             f"the suite seeds {constants['SESSIONS']:.0f}")
+        ok = False
+    if note_rows != suite_rows:
+        fail(f"opencode row: marathon store is {note_rows} allowlisted "
+             f"rows, the suite's constants produce {suite_rows:.0f}")
+        ok = False
+    if note_multiple != round(suite_multiple):
+        fail(f"opencode row: marathon store is {note_multiple}× the fleet "
+             f"session count, {constants['SESSIONS']:.0f} over "
+             f"{fleet_sessions} is {round(suite_multiple)}×")
+        ok = False
+
+    note_append = int(append.group(1).replace(",", ""))
+    if note_append != suite_append:
+        fail(f"opencode row: marathon append is {note_append} rows, the "
+             f"suite appends {suite_append:.0f}")
+        ok = False
+
+    note_mib_per_s = float(bounds.group(1))
+    note_peak_multiple = float(bounds.group(2))
+    floor = constants["MIN_CAPTURE_MIB_PER_S"]
+    if note_mib_per_s <= floor:
+        fail(f"opencode row: observed marathon throughput "
+             f"{note_mib_per_s} MiB/s does not exceed the suite's "
+             f"{floor} MiB/s floor, so the published evidence would sit "
+             "under its own bound")
+        ok = False
+    peak_bound = constants["MAX_PEAK_RSS_STORE_MULTIPLE"]
+    if note_peak_multiple >= peak_bound:
+        fail(f"opencode row: observed marathon peak ≈{note_peak_multiple}× "
+             f"store is not under the suite's {peak_bound:.0f}× ceiling, "
+             "so the published evidence would sit on its own bound")
+        ok = False
+    absolute_mib = constants["MAX_PEAK_RSS_ABSOLUTE_MIB"]
+    if note_store_mib * peak_bound > absolute_mib:
+        fail(f"opencode row: the suite's {peak_bound:.0f}× multiple over "
+             f"the published {note_store_mib} MiB store exceeds its "
+             f"{absolute_mib:.0f} MiB absolute ceiling, so the relative "
+             "bound alone governs nothing at this scale")
+        ok = False
+
+    # The definition of done must invoke the suite, and in its slow lane:
+    # the assertion set is minutes of work at its own scale, and the
+    # fast-lane block must stay fast.
+    invocation = " ".join(MARATHON_DOD_INVOCATION.split())
+    normalized_dod = " ".join(dod_text.split())
+    invocation_at = normalized_dod.find(invocation)
+    slow_at = normalized_dod.find('[ "$LANE" = "slow" ]')
+    audit_at = normalized_dod.find('[ "$LANE" = "audit" ]')
+    if invocation_at < 0:
+        fail(f"{DOD_PATH}: the marathon suite is not invoked (expected "
+             f"`{MARATHON_DOD_INVOCATION}`), so its assertions gate "
+             "nothing")
+        ok = False
+    elif slow_at < 0 or invocation_at < slow_at or (
+            0 <= audit_at < invocation_at):
+        fail(f"{DOD_PATH}: the marathon suite invocation sits outside the "
+             "slow lane's block")
+        ok = False
+    return ok
+
+
 CHECKS = (
     ("adapter matrix rows", check_adapter_matrix),
     ("artifact kinds and states", check_kinds_states),
@@ -557,15 +779,15 @@ CHECKS = (
     ("pinned versions", check_version_pins),
     ("coverage vocabulary", check_coverage),
     ("phrase pins", check_phrases),
+    ("marathon evidence", check_marathon_evidence),
 )
 
 
 def load_sources() -> dict[str, str] | None:
     sources: dict[str, str] = {}
     ok = True
-    for path in [INVENTORY_PATH, STATUS_SOURCE_PATH] + [
-        spec["source"] for spec in ADAPTERS
-    ]:
+    for path in [INVENTORY_PATH, STATUS_SOURCE_PATH, MARATHON_TEST_PATH,
+                 DOD_PATH] + [spec["source"] for spec in ADAPTERS]:
         text = read_text(path)
         if text is None:
             ok = False
@@ -612,6 +834,24 @@ MUTATIONS = (
      "change one coverage rank", 4),
     ("phrase pins",
      "retract the fail-closed sentence", 5),
+    ("phrase pins (marathon ownership)",
+     "retract the marathon re-measurement sentence", 5),
+    ("marathon evidence (note session figure)",
+     "change the note's marathon session count", 6),
+    ("marathon evidence (note row figure)",
+     "change the note's marathon allowlisted-row count", 6),
+    ("marathon evidence (note append figure)",
+     "change the note's marathon append-row count", 6),
+    ("marathon evidence (note scale multiple)",
+     "change the note's fleet-multiple figure", 6),
+    ("marathon evidence (observed under floor)",
+     "drop the note's observed throughput under the suite's floor", 6),
+    ("marathon evidence (peak over bound)",
+     "raise the note's observed peak over the suite's ceiling", 6),
+    ("marathon evidence (suite constant)",
+     "change the suite's SESSIONS constant under the note", 6),
+    ("marathon evidence (slow-lane wiring)",
+     "strip the slow lane's invocation of the marathon suite", 6),
 )
 
 
@@ -666,6 +906,33 @@ def mutate(index: int, sources: dict[str, str], note: str
         note = note.replace("fails closed as `unsupported` after the bounded",
                             "is parsed anyway as `unsupported` after the "
                             "bounded", 1)
+    elif index == 13:
+        note = note.replace(
+            "re-measured by the definition of done's slow lane",
+            "recounted by the definition of done's slow lane", 1)
+    elif index == 14:
+        note = note.replace("2,048-session", "4,096-session", 1)
+    elif index == 15:
+        note = note.replace("227,328-row", "227,329-row", 1)
+    elif index == 16:
+        note = note.replace("1,776-row append", "1,777-row append", 1)
+    elif index == 17:
+        note = note.replace("(114× the fleet session count)",
+                            "(112× the fleet session count)", 1)
+    elif index == 18:
+        note = note.replace("observed ≥8.7 MiB/s", "observed ≥4.1 MiB/s", 1)
+    elif index == 19:
+        note = note.replace("peak ≈6.4× store", "peak ≈16× store", 1)
+    elif index == 20:
+        marathon_path = str(MARATHON_TEST_PATH)
+        sources[marathon_path] = sources[marathon_path].replace(
+            "const SESSIONS: usize = 2_048;",
+            "const SESSIONS: usize = 4_096;", 1)
+    elif index == 21:
+        dod_path = str(DOD_PATH)
+        sources[dod_path] = sources[dod_path].replace(
+            "--test marathon_scale -- --ignored",
+            "--test marathon_scale", 1)
     return sources, note
 
 
@@ -716,7 +983,8 @@ def main() -> int:
     print(f"compatibility matrix gate: {len(adapters)} adapters, "
           f"{fingerprint_count} supported fingerprints, every observed "
           "fingerprint reconciled; note, adapter sources, and inventory "
-          "agree")
+          "agree; marathon evidence pinned to the suite's constants and "
+          "re-measured by the slow lane")
     for spec in ADAPTERS:
         adapter = adapters[spec["id"]]
         versions = (f", versions {adapter['allowed_versions']}"

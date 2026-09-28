@@ -24,7 +24,9 @@
 #     verification-register gate, README status-coherence gate,
 #     secret scan of the working
 #     tree (seconds, offline; safe as a gate)
-#   - Slow:  the workspace test suite
+#   - Slow:  the workspace test suite, plus the #[ignore]d OpenCode
+#     marathon-scale validation — the compatibility matrix's marathon
+#     evidence (the opencode row), re-measured on every full run
 #   - Audit: dependency audit (cargo audit; fetches the public RustSec
 #     advisory database — network, but no credentials) and a secret scan of
 #     the full git history
@@ -422,6 +424,19 @@ fi
 
 if [ "$LANE" = "slow" ] || [ "$LANE" = "all" ]; then
   run_check "cargo test"           cargo test --workspace
+  # OpenCode marathon-scale validation (docs/notes/compatibility-matrix.md,
+  # the opencode row's marathon evidence; requirement CAP-004 at scale):
+  # the #[ignore]d marathon_scale suite runs the production capture path
+  # over a deterministic synthetic 2,048-session / 227,328-row store —
+  # parity against the SDK's oracle, exact per-session accounting,
+  # byte-identical repeat captures, the full append re-capture, the
+  # excluded-table negative at scale, and the throughput/memory bounds —
+  # and the compatibility-matrix gate pins the note's published figures to
+  # this suite's constants, so the matrix's marathon evidence stays
+  # re-measured by the definition of done's slow lane, never merely
+  # narrated.
+  run_check "opencode marathon scale" \
+    cargo test -p archivist-adapter-opencode --test marathon_scale -- --ignored
 fi
 
 if [ "$LANE" = "audit" ] || [ "$LANE" = "all" ]; then

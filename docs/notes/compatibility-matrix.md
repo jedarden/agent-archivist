@@ -137,3 +137,11 @@ own verdicts enter status as `unsupported` (classification
    `CompatibilityMatrix::matches_published_registry` fails a publication
    whose live matrix does not back every published row (plan Phase 9;
    threat `EC-04`).
+6. The `opencode` row's marathon-scale evidence stays owned: the note's
+   figures are pinned to `tests/marathon_scale.rs`'s constants and
+   re-measured by the definition of done's slow lane
+   (`opencode marathon scale`), and this note's gate fails the fast lane
+   when a figure, a suite constant, or that wiring drifts. The suite is
+   `#[ignore]`d from ordinary lanes because it is meaningful only at its
+   own scale — the slow-lane invocation is what keeps its assertions a
+   regression gate rather than a benchmark someone remembers to run.

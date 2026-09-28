@@ -825,6 +825,7 @@
       ],
       "kind": "test",
       "lane": "slow",
+      "locator": "crates/archivist-adapter-opencode/tests/marathon_scale.rs",
       "owner": "adapter-suites"
     },
     "T-CAP-005": {

@@ -31,10 +31,16 @@
 //!   multiple of the store's own size.
 //!
 //! Like the Phase 4 server resource benchmark, the run is meaningful only
-//! at its own scale, so the test is `#[ignore]`d from the ordinary lanes
-//! and run explicitly; the throughput floor and memory ceiling below leave
-//! wide multiples of headroom over the observed figures so a slower or
-//! busier runner re-proves the bounds rather than the exact timings:
+//! at its own scale, so the test is `#[ignore]`d from the ordinary lanes;
+//! the throughput floor and memory ceiling below leave wide multiples of
+//! headroom over the observed figures so a slower or busier runner
+//! re-proves the bounds rather than the exact timings. It is not run by
+//! hand, though: the definition of done's slow lane invokes it as the
+//! `opencode marathon scale` check, and the compatibility-matrix gate
+//! (`tools/check-compatibility-matrix.py`, the marathon-evidence rule)
+//! pins the published matrix's marathon figures to these constants — the
+//! assertions are a regression gate, not a benchmark someone remembers to
+//! run:
 //!
 //! ```text
 //! cargo test -p archivist-adapter-opencode --test marathon_scale \
