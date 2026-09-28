@@ -9,7 +9,7 @@
 #     graph, license gate, error-code registry gate, metrics registry
 #     gate, config-key registry gate, wire-schema coherence gate, the
 #     protocol-bindings regeneration drift gate, CLI
-#     command registry gate,
+#     command registry gate, the CLI implementation coherence gate,
 #     release container baseline gate, release SBOM determinism gate,
 #     storage-profile registry gate,
 #     adapter compatibility-matrix gate,
@@ -199,6 +199,16 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # named, classified, and derived by a command's registry row);
   # `--self-test` proves the rejection paths.
   run_check "cli command registry"  python3 tools/check-cli.py --self-test
+  # CLI implementation coherence (docs/notes/cli.md CLI-032): the
+  # implementation half of CLI-002's three-registry join, which no other
+  # gate scans end to end — every attached handler names a registered
+  # command with no duplicate attachment and a pinned result schema, the
+  # runtime parser's mode-flag and operand-kind match arms equal the
+  # closed registry vocabularies, every code and configuration key the
+  # CLI's Rust surface names is registered (keys within their command's
+  # row), and the runtime success envelope and error/v1 diagnostic body
+  # agree with their schemas; `--self-test` proves the rejection paths.
+  run_check "cli implementation coherence"  python3 tools/check-cli-implementation.py --self-test
   # Wire-schema coherence (docs/notes/wire-schemas.md): refs, fail-closed
   # enum/version metadata, reserved-name blocks, the construction registry,
   # and the error-message charset; `--self-test` proves the rejection paths.

@@ -22,7 +22,10 @@ envelope is [`schemas/v1/cli-output.json`](../../schemas/v1/cli-output.json);
 `tools/check-cli.py` (fast lane of
 [`scripts/definition-of-done.sh`](../../scripts/definition-of-done.sh))
 rejects a registry, a flag namespace, or an envelope that violates any rule
-marked enforceable below. When this document and the tool disagree, the
+marked enforceable below, and
+[`tools/check-cli-implementation.py`](../../tools/check-cli-implementation.py)
+(CLI-032) holds the implemented command surface to the same registries.
+When this document and the tool disagree, the
 tool's pinned constants decide, and one of the two is wrong and must be fixed
 in the same commit.
 
@@ -296,6 +299,30 @@ in the same commit.
   error class, and the no-secret-argument property under synthetic
   malformed input — closing the loop between these conventions and the
   phases that implement them.
+- **CLI-032** — `tools/check-cli-implementation.py` is the
+  implementation-side enforcing test: the end-to-end half of the CLI-002
+  join that CLI-029's registry-side gate cannot see. It scans the committed
+  Rust command surface — the `archivist-cli` composition modules and the
+  `archivist-client-core::cli` engine — and proves against the same three
+  registries and the two wire schemas (`schemas/v1/cli-output.json`,
+  `schemas/v1/ingest-error.json`): every attached handler names a
+  registered command path with no duplicate attachment and, for a
+  `document` command, a pinned `result_schema` (CLI-003, CLI-015); every
+  `domain.condition`-shaped literal the surface names is a registered
+  error code or a registered configuration key (ERR-008, CFG-001); a
+  behavior module's key literals sit within its commands' registry key
+  lists and a composition module's within some row (CLI-010); the parser's
+  mode-flag and operand-kind match arms equal the closed vocabularies
+  (CLI-009, CLI-025); and the runtime envelope namespace, member set, and
+  command-token grammar agree with the envelope schema (CLI-014). It runs
+  in the fast lane beside CLI-029's gate, and its `--self-test` mode
+  mutates the committed sources — an unregistered or duplicate attachment,
+  a schema-less document command, an unregistered code, an off-row key,
+  mode-flag and operand-kind drift, a lost refusal arm, envelope and
+  error-body drift, an unclassified module — and fails unless every one is
+  rejected. A Rust file under a scan root that the tool has not classified
+  is itself a rejection: a new module joins the coherence proof in the
+  commit that adds it.
 
 ## Examples
 
