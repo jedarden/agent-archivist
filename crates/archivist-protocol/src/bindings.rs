@@ -2,7 +2,8 @@
 
 //! GENERATED FILE - DO NOT EDIT.
 //!
-//! Schema-derived bindings for the `schemas/v1` wire family: the schema URN
+//! Schema-derived bindings for the `schemas/v1` wire family, including the
+//! Phase 10 CLI result contract: the schema URN
 //! space, the closed enum token sets with their bearing and fail-closed
 //! metadata, the pinned version and plan constants, and the reserved-field
 //! and member-name lists. Emitted from the checked-in JSON Schemas by
@@ -25,6 +26,65 @@
 /// The URN prefix every schema of the family shares, derived from the
 /// `$id` values themselves.
 pub(crate) const SCHEMA_URN_PREFIX: &str = "urn:agent-archivist:schema:v1:";
+
+/// The canonical schema URN of `schemas/v1/cli-catalog-rebuild.json`, read from
+/// the schema's own `$id`.
+pub(crate) const SCHEMA_URN_CLI_CATALOG_REBUILD: &str = "urn:agent-archivist:schema:v1:cli-catalog-rebuild";
+
+/// Pinned const of `schema` in `schemas/v1/cli-catalog-rebuild.json`;
+/// an unknown value fails closed on the wire.
+pub(crate) const CLI_CATALOG_REBUILD_SCHEMA: &str = "archivist.cli-result/v1";
+
+/// The `closedShape` metadata of `schemas/v1/cli-catalog-rebuild.json`.
+pub(crate) const CLI_CATALOG_REBUILD_META_CLOSED_SHAPE: bool = true;
+
+/// The `compatibility` metadata of `schemas/v1/cli-catalog-rebuild.json`.
+pub(crate) const CLI_CATALOG_REBUILD_META_COMPATIBILITY: &str = "member additions are additive within v1 per plan Section 7.1 (CLI-015); redefining or removing a member, or a new namespace, is a v2 event";
+
+/// The `floats` metadata of `schemas/v1/cli-catalog-rebuild.json`.
+pub(crate) const CLI_CATALOG_REBUILD_META_FLOATS: bool = false;
+
+/// The `namespace` metadata of `schemas/v1/cli-catalog-rebuild.json`.
+pub(crate) const CLI_CATALOG_REBUILD_META_NAMESPACE: &str = "archivist.cli-result/v1";
+
+/// The `namespaceField` metadata of `schemas/v1/cli-catalog-rebuild.json`.
+pub(crate) const CLI_CATALOG_REBUILD_META_NAMESPACE_FIELD: &str = "schema";
+
+/// The `unknownFields` metadata of `schemas/v1/cli-catalog-rebuild.json`.
+pub(crate) const CLI_CATALOG_REBUILD_META_UNKNOWN_FIELDS: &str = "reject";
+
+/// Every top-level member name `schemas/v1/cli-catalog-rebuild.json` defines,
+/// alphabetical: the known-name set against which unknown members
+/// are recognized.
+pub(crate) const CLI_CATALOG_REBUILD_FIELD_NAMES: [&str; 15] = [
+    "attestations_observed",
+    "catalog_rebuild_version",
+    "chain_digest",
+    "checkpoint_digest",
+    "checkpoint_key",
+    "complete",
+    "inventory_digest",
+    "occurrences_total",
+    "pipeline_id",
+    "pipeline_version",
+    "row_states",
+    "schema",
+    "tenant_id",
+    "usage_projection_version",
+    "usage_summary_version",
+];
+
+/// Closed enum tokens of `pipeline_id` in `schemas/v1/cli-catalog-rebuild.json`.
+/// Bearing `security`; fail-closed: true.
+/// Schema order is wire order; unknown values fail closed on the
+/// wire (plan Section 7.1).
+pub(crate) const ENUM_CLI_CATALOG_REBUILD_PIPELINE_ID_TOKENS: &[&str] = &["usage"];
+
+/// Bearing of the `pipeline_id` enum in `schemas/v1/cli-catalog-rebuild.json`.
+pub(crate) const ENUM_CLI_CATALOG_REBUILD_PIPELINE_ID_BEARING: &str = "security";
+
+/// Whether the `pipeline_id` enum in `schemas/v1/cli-catalog-rebuild.json` is declared fail-closed.
+pub(crate) const ENUM_CLI_CATALOG_REBUILD_PIPELINE_ID_FAIL_CLOSED: bool = true;
 
 /// The canonical schema URN of `schemas/v1/cli-doctor.json`, read from
 /// the schema's own `$id`.

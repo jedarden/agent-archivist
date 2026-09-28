@@ -38,8 +38,8 @@ One tenant-scoped tree under the ARMOR bucket:
 |---|---|---|
 | `agent-archivist/raw/` | blobs, occurrence manifests, upload attestations | active |
 | `agent-archivist/control/` | tenant-authority-signed trust records | active |
-| `agent-archivist/catalog/` | catalog checkpoints | reserved, Phase 10 — writer provisioned 2026-09-15 |
-| `agent-archivist/derived/` | derived projections | reserved, Phase 10 — writer provisioned 2026-09-15 |
+| `agent-archivist/catalog/` | catalog checkpoints | active when the Phase 10 rebuild is configured — writer provisioned 2026-09-15 |
+| `agent-archivist/derived/` | derived projections | active when the Phase 10 rebuild is configured — writer provisioned 2026-09-15 |
 
 Plan §7.5's logical scheme (`tenants/<tenant>/v1/{raw,control,catalog,derived}/…`)
 maps onto this tree per storage profile; the physical ARMOR keys are what the
@@ -64,8 +64,8 @@ provisioning").
 | raw writer | `ARCHIVIST_RAW_WRITER` | `iad-ci:agent-archivist/raw/*:put+list+abort` | ingest replicas | `secret/rs-manager/iad-ci/armor/archivist-raw-writer` |
 | control admin | `ARCHIVIST_CONTROL_ADMIN` | `iad-ci:agent-archivist/control/*:put+list` | offline admin CLI only | `secret/rs-manager/iad-ci/armor/archivist-control-admin` |
 | backup/restore | `ARCHIVIST_BACKUP_RESTORE` | `iad-ci:agent-archivist/{raw,control,catalog,derived}/*:get+list` (four comma-separated entries) | offline backup tooling | `secret/rs-manager/iad-ci/armor/archivist-backup-restore` |
-| catalog writer | `ARCHIVIST_CATALOG_WRITER` | `iad-ci:agent-archivist/catalog/*:put+list` | Phase 10 catalog rebuild (not yet resident) | `secret/rs-manager/iad-ci/armor/archivist-catalog-writer` |
-| derived writer | `ARCHIVIST_DERIVED_WRITER` | `iad-ci:agent-archivist/derived/*:put+list` | Phase 10 derived projections (not yet resident) | `secret/rs-manager/iad-ci/armor/archivist-derived-writer` |
+| catalog writer | `ARCHIVIST_CATALOG_WRITER` | `iad-ci:agent-archivist/catalog/*:put+list` | Phase 10 catalog rebuild | `secret/rs-manager/iad-ci/armor/archivist-catalog-writer` |
+| derived writer | `ARCHIVIST_DERIVED_WRITER` | `iad-ci:agent-archivist/derived/*:put+list` | Phase 10 derived projections | `secret/rs-manager/iad-ci/armor/archivist-derived-writer` |
 
 Per-role paths hold `ACCESS_KEY` / `SECRET_KEY` (the same field convention as
 the `transcripts` path), so a future ingest-replica ExternalSecret references
@@ -266,16 +266,13 @@ empty-prefix state this note records is unchanged by code landing alone.
 
 ## CLI support boundary
 
-The storage paths and their enforcement tests are implemented, but the
-catalog capability is not yet a supported v1 command. The registry row for
-`catalog rebuild --from-occurrences` is a Phase 10 reservation: it has no
-`result_schema`, and `archivist-cli/src/main.rs` deliberately attaches no
-handler. The shared router rejects an attempted attachment and returns the
-registered `cli.usage_error` (exit 64) for an invocation, so no released binary
-can write either reserved prefix accidentally. A command becomes supported
-only when a Phase 10 deployment supplies the two scoped credential references,
-the production S3 composition, and the versioned result schema in one change;
-the CLI note and this provisioning note must then be updated together.
+The storage paths and their enforcement tests are implemented, and
+`catalog rebuild --from-occurrences` is now a supported v1 command when a
+deployment supplies its registered offline-restore, catalog-writer, and
+derived-writer references. `archivist-cli/src/main.rs` attaches the handler,
+which emits `schemas/v1/cli-catalog-rebuild.json`; missing decisions,
+credential-scope violations, and transport failures still fail closed through
+the registered error surface before any partial result is written.
 
 ## Enforcement notes
 

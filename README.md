@@ -184,7 +184,9 @@ work is recorded in the
 [crate ownership map](docs/notes/crate-ownership.md), and the ingestion data
 plane's Phase 4 bootstrap surface — the four routes with the streaming
 `/v1/ingest` commit pipeline, signed receipts, and the serve lifecycle — is
-complete. The
+complete, and the Phase 10 `catalog rebuild --from-occurrences` command is
+bound to its offline audit/restore identity and dedicated catalog/derived
+writers with a versioned result document. The
 [requirement-verification register](tools/verification-register.json) is the
 machine-checked statement of which requirements are implemented and which are
 still planned — 10 of 116 requirements are implemented; most remain planned —

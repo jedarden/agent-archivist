@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:cli-catalog-rebuild",
+  "title": "Agent Archivist catalog rebuild result (archivist.cli-result/v1)",
+  "description": "The result document of the `catalog rebuild --from-occurrences` command (plan Phase 10; CLI-015): the cumulative state one deterministic rebuild fold reached over the tenant's frozen raw prefix — the pipeline and projection identity the derivation ran under, the frozen inventory digest, the occurrence and attestation totals, the four usage-row coverage states, and the checkpoint chain's terminal digests and key. Every member is cumulative rebuild state, not run state: a one-shot and a resumed rebuild of one raw prefix emit the same document bytes, which is why the document carries no timestamp — the wall-clock lives in the CLI output envelope's `generated_at` member (CLI-014), never in the rebuild's own state. Every figure is a content-free counter, a digest of already-stored bytes, or a closed-vocabulary identifier; no member carries a transcript body, a raw object path, a secret value or reference string, or a monetary amount (SEC-004).",
+  "type": "object",
+  "x-archivist": {
+    "namespace": "archivist.cli-result/v1",
+    "namespaceField": "schema",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "compatibility": "member additions are additive within v1 per plan Section 7.1 (CLI-015); redefining or removing a member, or a new namespace, is a v2 event"
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "catalog_rebuild_version",
+    "pipeline_id",
+    "pipeline_version",
+    "usage_summary_version",
+    "usage_projection_version",
+    "tenant_id",
+    "inventory_digest",
+    "occurrences_total",
+    "attestations_observed",
+    "row_states",
+    "chain_digest",
+    "checkpoint_digest",
+    "checkpoint_key",
+    "complete"
+  ],
+  "properties": {
+    "schema": {
+      "const": "archivist.cli-result/v1",
+      "description": "The CLI result namespace. Present in every result document so a consumer always knows which contract it is reading before anything else (VAL-001); an unknown namespace is not this format and fails closed.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "catalog_rebuild_version": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+      "description": "The rebuild checkpoint document's own schema major (plan Section 7.10): the version of the checkpoint state the fold emits and resumes through, independent of the pipeline axis below. Integer, currently 1.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "pipeline_id": {
+      "type": "string",
+      "enum": ["usage"],
+      "description": "The derived pipeline whose fold produced this state (plan Section 7.1 derived-pipeline axis). v1 ships exactly one, the deterministic `usage` projection of the catalog rebuild; a future producer reports its own id and writes under its own derived prefix segment — never by repurposing `usage`'s. Security-bearing: the pipeline names the trust the chain digest rests on, so an unknown value fails closed.",
+      "x-archivist": {
+        "bearing": "security",
+        "compat": "required-v1",
+        "failClosed": true
+      }
+    },
+    "pipeline_version": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/version-token",
+      "description": "The immutable version of that pipeline's mapping (v1 pins `1`): the rules that turn raw usage bytes into coverage states are frozen inside a version, and a changed mapping is a new version, never a silent rewrite of an old chain (plan Section 7.1: rebuildable).",
+      "x-archivist": {
+        "bearing": "identity",
+        "compat": "required-v1"
+      }
+    },
+    "usage_summary_version": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+      "description": "The usage-summary record-shape major the fold emits (plan Section 7.10): the version axis of the rows the rebuild counted, independent of the pipeline axis. Integer, currently 1.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "usage_projection_version": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/version-token",
+      "description": "The immutable version of the adapter projection whose usage reader the fold ran (plan Section 7.1; STO-010). This member makes the counts reproducible: the same raw prefix read by a different projection version is a different derivation, a different chain digest, and a different checkpoint — never a silent reinterpretation of an old state.",
+      "x-archivist": {
+        "bearing": "provenance",
+        "compat": "required-v1"
+      }
+    },
+    "tenant_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "The one tenant whose raw prefix the rebuild folded (plan Section 7.5). The rebuild is tenant-scoped like every derived path: the catalog and derived namespaces it writes are this tenant's, and the checkpoint key below is inside the same scope.",
+      "x-archivist": {
+        "bearing": "identity",
+        "compat": "required-v1"
+      }
+    },
+    "inventory_digest": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "The digest of the frozen inventory-v1 enumeration the fold ran over (plan Section 7.10): the identity of the exact raw prefix the state covers. The chain's genesis binds this digest, so a chain can never be replayed against a different prefix.",
+      "x-archivist": {
+        "bearing": "provenance",
+        "compat": "required-v1"
+      }
+    },
+    "occurrences_total": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+      "description": "The occurrences in the frozen prefix this rebuild covers — the cumulative denominator the fold enumerated, whether it reached them in one pass or through resumed passes.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "attestations_observed": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+      "description": "The upload attestations the fold observed across the covered prefix — the commit-boundary evidence the fold read, counted separately from the occurrences it names.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "row_states": {
+      "$ref": "#/$defs/row-states",
+      "description": "The four usage-row coverage states the fold tallied (plan Phase 10): measured, absent, malformed, and unsupported — always all four, because a zero is an observation here, not an absence, and an incomplete source can never read as free.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "chain_digest": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "The checkpoint chain's terminal digest: the cumulative fold's self-verifying commitment, each checkpoint framing the one before it, so two rebuilds of one raw prefix and pipeline version converge on the same chain and a divergent one is detectable (plan Phase 10 exit gate).",
+      "x-archivist": {
+        "bearing": "provenance",
+        "compat": "required-v1"
+      }
+    },
+    "checkpoint_digest": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "The terminal checkpoint document's own SHA-256 — the content address the checkpoint is written under, so the state a consumer resumes from is verified against its own key before any of it is trusted (VAL-005).",
+      "x-archivist": {
+        "bearing": "provenance",
+        "compat": "required-v1"
+      }
+    },
+    "checkpoint_key": {
+      "type": "string",
+      "pattern": "^tenants/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/v1/catalog/checkpoints/[0-9a-f]{64}\\.json$",
+      "maxLength": 140,
+      "description": "The derived catalog-checkpoint key the terminal state is stored at, inside the tenant's `catalog/` namespace: the resume pointer a later pass lists and re-verifies. The key carries the tenant identifier and the checkpoint's own digest and nothing else — no bucket, no endpoint, no credential material.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    },
+    "complete": {
+      "type": "boolean",
+      "description": "Whether the fold covered the frozen inventory to exhaustion: false is the bounded honest state of a pass that stopped inside the policy's window — the resume pointer above is where the next pass continues, never a silent partial read (plan Section 7.10).",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    }
+  },
+  "$defs": {
+    "row-states": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "measured",
+        "absent",
+        "malformed",
+        "unsupported"
+      ],
+      "properties": {
+        "measured": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Rows whose usage the pinned projection read from the raw bytes."
+        },
+        "absent": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Rows whose source carried no usage at all — the bounded `unknown` state, never zero, so an incomplete source can never read as free (plan Phase 10)."
+        },
+        "malformed": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Rows whose source usage was present but unusable — shapes the pinned reader refuses."
+        },
+        "unsupported": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Rows whose source usage the pinned projection version does not support — a future reader version may, and then this denominator moves under a new projection version, never inside this one."
+        }
+      },
+      "description": "The four usage-row coverage states, all required: the rebuild reports what it measured and, with equal precision, what it could not.",
+      "x-archivist": {
+        "bearing": "structural",
+        "compat": "required-v1"
+      }
+    }
+  }
+}

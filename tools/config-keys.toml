@@ -209,6 +209,15 @@ optional = true
 description = "Optional reference to the derived-writer credential, scoped to put and list below the tenant derived prefix; present only where the Phase 10 usage-summary projection is hosted."
 example = "file:/etc/archivist/storage/derived-writer-credentials"
 
+[keys."storage.tenant_bucket"]
+owner = "archivist-storage-s3"
+type = "string"
+tiers = ["flag", "env", "file"]
+secret = false
+optional = true
+description = "The tenant bucket the Phase 10 catalog and derived scoped writers provision: catalog checkpoints and derived rows land below its tenant prefixes. Registry-optional: only the catalog rebuild composition consumes it."
+example = "archivist-tenant-example"
+
 [keys."storage.tenant"]
 owner = "archivist-storage-s3"
 type = "string"

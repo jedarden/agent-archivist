@@ -31,7 +31,8 @@ use archivist_protocol::envelope::CANONICAL_MAX_BYTES;
 use archivist_protocol::sha256;
 use archivist_protocol::vocabulary::{TenantId, Timestamp};
 use archivist_storage::audit_restore::{
-    ContinuationToken, InventoryKey, InventoryScope, ObjectBody, ObjectMetadata,
+    ContinuationToken, InventoryEntry, InventoryKey, InventoryPage, InventoryScope, ObjectBody,
+    ObjectMetadata,
 };
 use archivist_storage::commit::{CreateIfAbsent, ExistingObject};
 use archivist_storage::error::{StorageError, StorageErrorKind};
@@ -39,6 +40,9 @@ use archivist_storage::lifecycle_audit::{VersionedEntry, VersionedPage};
 use archivist_storage::metadata::{ObjectTag, Observation, StorageVersionId};
 use archivist_storage::probe::{ProbeKey, VersioningObservation};
 use archivist_storage::raw_write::{PartCommitment, PartNumber};
+use archivist_storage::scoped_write::{
+    CatalogCheckpointKey, CatalogListPrefix, DerivedListPrefix, DerivedObjectKey,
+};
 use bytes::{Buf, Bytes};
 use http::header::{CONTENT_LENGTH, ETAG, HOST, HeaderMap, HeaderValue};
 use http::{Method, Request, StatusCode, Uri};
@@ -58,6 +62,9 @@ use crate::control_read::ControlReadBackend;
 use crate::lifecycle_audit::VersionAuditBackend;
 use crate::probe::{ProbeObjectObservation, ProbeReceipt, ProbeWriteBackend};
 use crate::raw_write::{RawObjectKey, RawWriteBackend};
+use crate::scoped_write::{
+    CatalogWriteBackend, CatalogWriterConfig, DerivedWriteBackend, DerivedWriterConfig,
+};
 
 const RESPONSE_MAX_BYTES: usize = CANONICAL_MAX_BYTES;
 const COMPLETE_XML_MAX_BYTES: usize = 8 * 1024 * 1024;
@@ -74,6 +81,7 @@ const DETAIL_COMPLETE_BOUNDS: &str = "multipart completion document exceeds its 
 const DETAIL_UPLOAD_ID: &str = "multipart response did not contain a valid upload id";
 const DETAIL_ETAG: &str = "multipart response did not contain a valid etag";
 const DETAIL_VERSIONS_RESPONSE: &str = "versions listing response is malformed";
+const DETAIL_LIST_RESPONSE: &str = "object listing response is malformed";
 /// The sentinel a listing parser adopts for a version the backend did not
 /// name — an object stored before versioning was ever enabled. The token
 /// rounds only through this crate's own listing; a runner reporting
@@ -158,6 +166,15 @@ enum Authority {
     /// The audit identity's versions listing: read-only enumeration across
     /// the tenant prefixes and nothing else.
     VersionAudit,
+    /// The catalog checkpoint writer: put and list below one tenant catalog
+    /// prefix and nothing else.
+    CatalogWrite,
+    /// The derived projection writer: put and list below one tenant derived
+    /// prefix and nothing else.
+    DerivedWrite,
+    /// The offline audit/restore identity: list, head, and get below the
+    /// tenant's raw, control, catalog, and derived prefixes.
+    AuditRestore,
 }
 
 /// The validated endpoint pieces needed for request URI construction.
@@ -436,6 +453,78 @@ impl S3RequestBackend {
         Self::control_admin(config)
     }
 
+    /// Compose the catalog checkpoint writer's request binding. The
+    /// dedicated credential is resolved here and is never combined with an
+    /// ingest or derived-writer authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns a credential or endpoint composition error when the validated
+    /// configuration cannot produce a usable request binding.
+    pub fn catalog_write(config: &CatalogWriterConfig) -> Result<Self, S3RequestError> {
+        Self::compose(
+            config.endpoint(),
+            config.path_style(),
+            config.region(),
+            config.tenant_bucket(),
+            None,
+            config.tenant(),
+            config.catalog_write_credentials(),
+            Authority::CatalogWrite,
+        )
+    }
+
+    /// Compose the derived projection writer's request binding. The
+    /// dedicated credential is resolved here and is never combined with an
+    /// ingest or catalog-writer authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns a credential or endpoint composition error when the validated
+    /// configuration cannot produce a usable request binding.
+    pub fn derived_write(config: &DerivedWriterConfig) -> Result<Self, S3RequestError> {
+        Self::compose(
+            config.endpoint(),
+            config.path_style(),
+            config.region(),
+            config.tenant_bucket(),
+            None,
+            config.tenant(),
+            config.derived_write_credentials(),
+            Authority::DerivedWrite,
+        )
+    }
+
+    /// Compose the offline audit/restore request binding. It is the only
+    /// binding in this module that can enumerate or read raw objects, and it
+    /// carries the separately provisioned offline-restore credential.
+    ///
+    /// # Errors
+    ///
+    /// Returns a credential or endpoint composition error when the validated
+    /// configuration cannot produce a usable request binding.
+    pub fn audit_restore(
+        config: &S3StorageConfig,
+        tenant: &TenantId,
+    ) -> Result<Self, S3RequestError> {
+        let credential = config.identities().offline_restore().ok_or_else(|| {
+            S3RequestError::new(
+                S3RequestErrorKind::CredentialUnavailable,
+                DETAIL_CREDENTIALS_UNAVAILABLE,
+            )
+        })?;
+        Self::compose(
+            config.endpoint(),
+            config.path_style(),
+            config.region(),
+            config.raw_bucket(),
+            Some(config.control_bucket()),
+            tenant,
+            credential,
+            Authority::AuditRestore,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)] // one authority's full composition, read top to bottom
     fn compose(
         endpoint: &EndpointUrl,
@@ -463,7 +552,9 @@ impl S3RequestBackend {
                 format!("tenants/{tenant}/v1/control/")
             }
             Authority::ProbeWrite => format!("tenants/{tenant}/v1/probe/"),
-            Authority::VersionAudit => format!("tenants/{tenant}/"),
+            Authority::VersionAudit | Authority::AuditRestore => format!("tenants/{tenant}/"),
+            Authority::CatalogWrite => format!("tenants/{tenant}/v1/catalog/"),
+            Authority::DerivedWrite => format!("tenants/{tenant}/v1/derived/"),
         };
         Ok(Self {
             inner: Arc::new(BackendInner {
@@ -745,6 +836,230 @@ impl S3RequestBackend {
         } else {
             Err(status_error(response.status))
         }
+    }
+
+    async fn scoped_put(
+        &self,
+        authority: Authority,
+        key: &str,
+        bytes: &[u8],
+    ) -> Result<(), StorageError> {
+        self.check_scope(authority, &self.inner.tenant, key)?;
+        let response = self.request(Method::PUT, key, "", bytes, false).await?;
+        if response.status.is_success() {
+            Ok(())
+        } else {
+            Err(status_error(response.status))
+        }
+    }
+
+    async fn list_scoped(
+        &self,
+        authority: Authority,
+        prefix: &str,
+    ) -> Result<Vec<String>, StorageError> {
+        if self.inner.authority != authority || !prefix.starts_with(self.inner.prefix.as_ref()) {
+            return Err(StorageError::new(
+                StorageErrorKind::ScopeViolation,
+                DETAIL_SCOPE,
+            ));
+        }
+        let mut keys = Vec::new();
+        let mut after = None;
+        loop {
+            let page = self
+                .list_page(self.inner.bucket.as_ref(), prefix, after.as_ref())
+                .await?;
+            keys.extend(
+                page.entries()
+                    .iter()
+                    .map(|entry| entry.key().as_str().to_owned()),
+            );
+            after = page.next().cloned();
+            if after.is_none() {
+                return Ok(keys);
+            }
+        }
+    }
+
+    async fn list_page(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        after: Option<&ContinuationToken>,
+    ) -> Result<InventoryPage, StorageError> {
+        let mut query = format!(
+            "list-type=2&prefix={}&max-keys={}",
+            encode_component(prefix),
+            VERSIONS_PAGE_KEYS
+        );
+        if let Some(token) = after {
+            query.push_str("&continuation-token=");
+            query.push_str(&encode_component(token.as_str()));
+        }
+        let response = self
+            .request_on_bucket(bucket, Method::GET, "", &query, &[], false)
+            .await?;
+        if !response.status.is_success() {
+            return Err(status_error(response.status));
+        }
+        let (_, observed_at) = request_clock()?;
+        parse_inventory_page(&response.body, &observed_at)
+    }
+
+    /// List one `ListObjectsV2` page for the offline audit/restore identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a scope or backend error when the request is outside the
+    /// provisioned identity or the S3 response cannot be decoded.
+    pub async fn audit_list_page(
+        &self,
+        scope: &InventoryScope,
+        after: Option<&ContinuationToken>,
+    ) -> Result<InventoryPage, StorageError> {
+        if self.inner.authority != Authority::AuditRestore {
+            return Err(StorageError::new(
+                StorageErrorKind::ScopeViolation,
+                DETAIL_SCOPE,
+            ));
+        }
+        let tenant = match scope {
+            InventoryScope::TenantRaw(tenant)
+            | InventoryScope::TenantControl(tenant)
+            | InventoryScope::TenantCatalog(tenant)
+            | InventoryScope::TenantDerived(tenant) => tenant,
+        };
+        if tenant.as_str() != self.inner.tenant.as_ref() {
+            return Err(StorageError::new(
+                StorageErrorKind::ScopeViolation,
+                DETAIL_SCOPE,
+            ));
+        }
+        let bucket = match scope {
+            InventoryScope::TenantControl(_) => self
+                .inner
+                .alternate_bucket
+                .as_deref()
+                .ok_or_else(unavailable_error)?,
+            InventoryScope::TenantRaw(_)
+            | InventoryScope::TenantCatalog(_)
+            | InventoryScope::TenantDerived(_) => self.inner.bucket.as_ref(),
+        };
+        self.list_page(bucket, &scope.prefix(), after).await
+    }
+
+    /// Inspect one object for the offline audit/restore identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a scope or backend error when the request is outside the
+    /// provisioned identity or the S3 response cannot be decoded.
+    pub async fn audit_inspect_object(
+        &self,
+        key: &InventoryKey,
+    ) -> Result<ObjectMetadata, StorageError> {
+        let response = self.audit_object_request(Method::HEAD, key).await?;
+        let size = response
+            .content_length
+            .ok_or_else(|| StorageError::new(StorageErrorKind::MalformedInput, DETAIL_RESPONSE))?;
+        Ok(ObjectMetadata::new(size, observation(&response.headers)?))
+    }
+
+    /// Read one object for the offline audit/restore identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a scope or backend error when the request is outside the
+    /// provisioned identity or the S3 response cannot be decoded.
+    pub async fn audit_read_object(&self, key: &InventoryKey) -> Result<ObjectBody, StorageError> {
+        let response = self.audit_object_request(Method::GET, key).await?;
+        let size = response
+            .content_length
+            .unwrap_or(response.body.len() as u64);
+        if size > RESPONSE_MAX_BYTES as u64 {
+            return Err(StorageError::new(
+                StorageErrorKind::MalformedInput,
+                DETAIL_RESPONSE_TOO_LARGE,
+            ));
+        }
+        Ok(ObjectBody::new(
+            response.body,
+            observation(&response.headers)?,
+        ))
+    }
+
+    async fn audit_object_request(
+        &self,
+        method: Method,
+        key: &InventoryKey,
+    ) -> Result<HttpResponse, StorageError> {
+        if self.inner.authority != Authority::AuditRestore
+            || !key.as_str().starts_with(self.inner.prefix.as_ref())
+            || key.as_str().split('/').nth(1) != Some(self.inner.tenant.as_ref())
+        {
+            return Err(StorageError::new(
+                StorageErrorKind::ScopeViolation,
+                DETAIL_SCOPE,
+            ));
+        }
+        let bucket = if key.as_str().contains("/v1/control/") {
+            self.inner
+                .alternate_bucket
+                .as_deref()
+                .ok_or_else(unavailable_error)?
+        } else {
+            self.inner.bucket.as_ref()
+        };
+        let response = self
+            .request_on_bucket(bucket, method, key.as_str(), "", &[], false)
+            .await?;
+        if response.status == StatusCode::NOT_FOUND {
+            return Err(unavailable_error());
+        }
+        if response.status.is_success() {
+            Ok(response)
+        } else {
+            Err(status_error(response.status))
+        }
+    }
+}
+
+impl CatalogWriteBackend for S3RequestBackend {
+    async fn put_catalog_object(
+        &self,
+        key: &CatalogCheckpointKey,
+        bytes: &[u8],
+    ) -> Result<(), StorageError> {
+        self.scoped_put(Authority::CatalogWrite, key.as_str(), bytes)
+            .await
+    }
+
+    async fn list_catalog_objects(
+        &self,
+        prefix: &CatalogListPrefix,
+    ) -> Result<Vec<String>, StorageError> {
+        self.list_scoped(Authority::CatalogWrite, prefix.as_str())
+            .await
+    }
+}
+
+impl DerivedWriteBackend for S3RequestBackend {
+    async fn put_derived_object(
+        &self,
+        key: &DerivedObjectKey,
+        bytes: &[u8],
+    ) -> Result<(), StorageError> {
+        self.scoped_put(Authority::DerivedWrite, key.as_str(), bytes)
+            .await
+    }
+
+    async fn list_derived_objects(
+        &self,
+        prefix: &DerivedListPrefix,
+    ) -> Result<Vec<String>, StorageError> {
+        self.list_scoped(Authority::DerivedWrite, prefix.as_str())
+            .await
     }
 }
 
@@ -1224,6 +1539,48 @@ fn parse_versions_page(
         None
     };
     Ok(VersionedPage::new(entries, next))
+}
+
+/// Parse one bounded `ListObjectsV2` response into the shared inventory page
+/// contract. The object listing is deliberately converted to opaque
+/// `InventoryEntry` values here; typed raw/catalog/derived consumers perform
+/// their own key-family validation after the audit identity has frozen it.
+fn parse_inventory_page(
+    body: &[u8],
+    observed_at: &Timestamp,
+) -> Result<InventoryPage, StorageError> {
+    let malformed = || StorageError::new(StorageErrorKind::MalformedInput, DETAIL_LIST_RESPONSE);
+    let text = std::str::from_utf8(body).map_err(|_| malformed())?;
+    let mut entries = Vec::new();
+    for block in xml_blocks(text, "Contents") {
+        let key_text = extract_xml_value(block.as_bytes(), "Key").ok_or_else(malformed)?;
+        let key = InventoryKey::parse(key_text).map_err(|_| malformed())?;
+        let size = extract_xml_value(block.as_bytes(), "Size")
+            .ok_or_else(malformed)?
+            .parse::<u64>()
+            .map_err(|_| malformed())?;
+        let etag = extract_xml_value(block.as_bytes(), "ETag")
+            .and_then(|value| ObjectTag::parse(value).ok());
+        let version = extract_xml_value(block.as_bytes(), "VersionId")
+            .map(StorageVersionId::parse)
+            .transpose()
+            .map_err(|_| malformed())?;
+        entries.push(InventoryEntry::new(
+            key,
+            size,
+            Observation::new(etag, version, observed_at.clone()),
+        ));
+    }
+    let truncated =
+        extract_xml_value(text.as_bytes(), "IsTruncated").is_some_and(|value| value == "true");
+    let next = if truncated {
+        let token =
+            extract_xml_value(text.as_bytes(), "NextContinuationToken").ok_or_else(malformed)?;
+        Some(ContinuationToken::parse(token).map_err(|_| malformed())?)
+    } else {
+        None
+    };
+    Ok(InventoryPage::new(entries, next))
 }
 
 fn credential_error(error: CredentialResolutionError) -> S3RequestError {

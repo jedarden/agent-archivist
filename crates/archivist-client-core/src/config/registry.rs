@@ -526,16 +526,13 @@ fn parse_key_entry(name: &str, table: &TomlTable) -> Result<KeyDefinition, &'sta
     if secret && flag_tier {
         return Err("a secret key never exposes a flag tier");
     }
-    // Optionality marks a capability a deployment may omit: a secret
-    // reference naming a credential role it does not hold, the offline
-    // administration surface an ingest replica never configures, or the
-    // two replica-only composition keys — the pinned trust material the
-    // serve command alone consumes, whose requiredness that composition
-    // refuses as a missing decision before any socket exists, because a
-    // plain load of every other command must not demand it (CFG-019,
-    // plan Section 5).
+    // Optionality permits omitted credential/admin/replica-only keys; the
+    // latter include pinned trust material consumed only by serve, so other
+    // commands do not demand them (CFG-019).
     let administration_surface = name.starts_with("admin.");
-    let replica_only = matches!(name, "server.authority_key" | "storage.tenant");
+    let replica_only = name == "server.authority_key"
+        || name == "storage.tenant"
+        || name == "storage.tenant_bucket";
     if optional && !(secret || administration_surface || replica_only) {
         return Err(
             "only a secret reference, an offline-administration key, or a \

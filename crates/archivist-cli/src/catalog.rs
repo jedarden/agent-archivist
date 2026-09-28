@@ -9,17 +9,26 @@
 //! one-shot shape is an Argo `WorkflowTemplate` calling [`rebuild_over`].
 //! Neither shape is a Kubernetes `Job` or `CronJob`.
 
-use archivist_client_core::cli::{CliError, Invocation};
+use std::future::Future;
+
+use archivist_client_core::cli::{CliError, CommandHandler, Invocation};
+use archivist_client_core::config::{ConfigError, ResolvedConfig};
 use archivist_client_core::daemon::{self, Cancel, LoopReport, LoopStop, ScheduleConfig, Sleeper};
 use archivist_client_core::upload::Jitter;
 use archivist_protocol::json::Value;
 use archivist_protocol::vocabulary::{AdapterId, TenantId, VersionToken};
-use archivist_storage::audit_restore::AuditRestoreStore;
+use archivist_storage::audit_restore::{
+    AuditRestoreStore, ContinuationToken, FrozenInventory, InventoryKey, InventoryPage,
+    InventoryScope, ObjectBody, ObjectMetadata,
+};
 use archivist_storage::catalog_rebuild::{
     RebuildPolicy, UsageProjection, latest_checkpoint, rebuild_pass,
 };
 use archivist_storage::error::{StorageError, StorageErrorKind};
 use archivist_storage::scoped_write::{CatalogWriteStore, DerivedWriteStore};
+use archivist_storage_s3::config::{S3ConfigError, S3ConfigErrorKind, ScopedWritersConfig};
+use archivist_storage_s3::request::S3RequestBackend;
+use archivist_storage_s3::scoped_write::{S3CatalogWriteStore, S3DerivedWriteStore};
 
 const INTEGRITY_CONFLICT: &str = "storage.integrity_conflict";
 const TRANSPORT_FAILED: &str = "transport.connection_failed";
@@ -29,6 +38,177 @@ const INTERNAL: &str = "client.internal_error";
 /// member of derived rows; changing the rebuild mapping itself still requires
 /// a new pipeline version in the protocol crate.
 pub const CHECKPOINT_EVERY: u64 = 128;
+
+/// The production composition surface: the binary attaches this handler only
+/// after the registry pins the result schema and all storage decisions.
+#[must_use]
+pub fn handlers() -> [(&'static str, CommandHandler); 1] {
+    [("catalog rebuild", rebuild as CommandHandler)]
+}
+
+/// Bind the Phase 10 command to the offline audit identity and the two
+/// dedicated scoped writers. Configuration is resolved before any request
+/// backend is constructed, and each credential reference is handed to only
+/// the authority whose typed constructor accepts it.
+///
+/// # Errors
+///
+/// Returns a usage, configuration, storage, or protocol error when the
+/// command cannot compose its required identities or complete the rebuild.
+pub fn rebuild(invocation: &Invocation) -> Result<Value, CliError> {
+    if !invocation.has_operational_flag("from-occurrences") {
+        return Err(CliError::usage());
+    }
+    let resolved = resolve(invocation)?;
+    let tenant = tenant(&resolved)?;
+    let ingest = crate::admin::ingest_config(&resolved).map_err(composition_fault)?;
+    let writers = scoped_writers(&resolved).map_err(composition_fault)?;
+    reject_ingest_reuse(&ingest, &writers)?;
+    let audit = AuditBinding(
+        S3RequestBackend::audit_restore(&ingest, &tenant).map_err(|_| CliError::usage())?,
+    );
+    let catalog = S3CatalogWriteStore::new(
+        writers.catalog().clone(),
+        S3RequestBackend::catalog_write(writers.catalog()).map_err(|_| CliError::usage())?,
+    );
+    let derived = S3DerivedWriteStore::new(
+        writers.derived().clone(),
+        S3RequestBackend::derived_write(writers.derived()).map_err(|_| CliError::usage())?,
+    );
+    rebuild_over(invocation, &tenant, &audit, &catalog, &derived)
+}
+
+/// The concrete audit/restore adapter is deliberately a thin wrapper around
+/// the request authority. It exposes the storage crate's four-method trait
+/// and nothing else to the rebuild engine.
+struct AuditBinding(S3RequestBackend);
+
+impl AuditRestoreStore for AuditBinding {
+    fn list_page(
+        &self,
+        scope: &InventoryScope,
+        after: Option<&ContinuationToken>,
+    ) -> impl Future<Output = Result<InventoryPage, StorageError>> + Send {
+        self.0.audit_list_page(scope, after)
+    }
+
+    #[allow(clippy::manual_async_fn)]
+    fn freeze_inventory(
+        &self,
+        scope: &InventoryScope,
+    ) -> impl Future<Output = Result<FrozenInventory, StorageError>> + Send {
+        async move {
+            let mut pages = Vec::new();
+            let mut after = None;
+            loop {
+                let page = self.list_page(scope, after.as_ref()).await?;
+                after = page.next().cloned();
+                let exhausted = after.is_none();
+                pages.push(Ok(page));
+                if exhausted {
+                    break;
+                }
+            }
+            FrozenInventory::from_pages(scope, pages)
+        }
+    }
+
+    fn inspect_object(
+        &self,
+        key: &InventoryKey,
+    ) -> impl Future<Output = Result<ObjectMetadata, StorageError>> + Send {
+        self.0.audit_inspect_object(key)
+    }
+
+    fn read_object(
+        &self,
+        key: &InventoryKey,
+    ) -> impl Future<Output = Result<ObjectBody, StorageError>> + Send {
+        self.0.audit_read_object(key)
+    }
+}
+
+fn resolve(invocation: &Invocation) -> Result<ResolvedConfig, CliError> {
+    invocation
+        .config_sources()
+        .capture_environment()
+        .map_err(|error| config_fault(&error))?
+        .load()
+        .map_err(|error| config_fault(&error))
+}
+
+fn tenant(resolved: &ResolvedConfig) -> Result<TenantId, CliError> {
+    let text = resolved
+        .text("storage.tenant")
+        .ok_or_else(|| CliError::registered(DECISION_MISSING))?;
+    TenantId::parse(text).map_err(|_| CliError::usage())
+}
+
+fn scoped_writers(resolved: &ResolvedConfig) -> Result<ScopedWritersConfig, S3ConfigError> {
+    ScopedWritersConfig::builder()
+        .endpoint_url(required_text(resolved, "storage.endpoint_url")?.to_owned())
+        .region(required_text(resolved, "storage.region")?.to_owned())
+        .path_style(crate::admin::path_style_token(required_text(
+            resolved,
+            "storage.path_style",
+        )?)?)
+        .tenant_bucket(required_text(resolved, "storage.tenant_bucket")?.to_owned())
+        .tenant(required_text(resolved, "storage.tenant")?.to_owned())
+        .catalog_write_credentials(crate::admin::reference_text(
+            crate::admin::required_ingest_reference(
+                resolved,
+                "storage.catalog_write_credentials_ref",
+            )?,
+        ))
+        .derived_write_credentials(crate::admin::reference_text(
+            crate::admin::required_ingest_reference(
+                resolved,
+                "storage.derived_write_credentials_ref",
+            )?,
+        ))
+        .build()
+}
+
+fn required_text<'a>(resolved: &'a ResolvedConfig, key: &str) -> Result<&'a str, S3ConfigError> {
+    resolved.text(key).ok_or_else(|| {
+        S3ConfigError::new(
+            S3ConfigErrorKind::MissingSetting,
+            "a catalog rebuild setting did not resolve from any tier",
+        )
+    })
+}
+
+fn config_fault(error: &ConfigError) -> CliError {
+    CliError::registered(error.code().token())
+}
+
+fn composition_fault(error: S3ConfigError) -> CliError {
+    match error.kind() {
+        S3ConfigErrorKind::MissingSetting => CliError::registered(DECISION_MISSING),
+        S3ConfigErrorKind::MalformedSetting
+        | S3ConfigErrorKind::TransportMismatch
+        | S3ConfigErrorKind::DuplicateIdentity => CliError::usage(),
+    }
+}
+
+fn reject_ingest_reuse(
+    ingest: &archivist_storage_s3::config::S3StorageConfig,
+    writers: &ScopedWritersConfig,
+) -> Result<(), CliError> {
+    for role in archivist_storage_s3::config::StorageRole::all() {
+        let Some(identity) = ingest.identities().role(*role) else {
+            continue;
+        };
+        if identity == writers.catalog().catalog_write_credentials()
+            || identity == writers.derived().derived_write_credentials()
+        {
+            return Err(CliError::usage());
+        }
+    }
+    Ok(())
+}
+
+const DECISION_MISSING: &str = "cli.decision_missing";
 
 type ProjectionReader =
     fn(&AdapterId, &[u8]) -> Vec<archivist_protocol::usage_summary::MessageUsage>;
@@ -175,5 +355,217 @@ fn storage_fault(error: StorageError) -> CliError {
             CliError::registered(TRANSPORT_FAILED)
         }
         _ => CliError::registered(INTERNAL),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::manual_async_fn)]
+
+    use std::ffi::OsString;
+    use std::future::Future;
+
+    use archivist_client_core::cli::registry::Registry;
+    use archivist_client_core::cli::{CliError, Invocation, OutputEnvelope, Router, parse};
+    use archivist_protocol::json::{self, Value};
+    use archivist_storage::audit_restore::{
+        AuditRestoreStore, ContinuationToken, FrozenInventory, InventoryKey, InventoryPage,
+        InventoryScope, ObjectBody, ObjectMetadata,
+    };
+    use archivist_storage::error::{StorageError, StorageErrorKind};
+    use archivist_storage::scoped_write::{
+        CatalogCheckpointKey, CatalogListPrefix, CatalogWriteStore, DerivedListPrefix,
+        DerivedObjectKey, DerivedWriteStore,
+    };
+
+    use super::{handlers, rebuild_over};
+
+    #[allow(clippy::unnecessary_wraps)]
+    fn empty_result(_: &Invocation) -> Result<Value, CliError> {
+        Ok(Value::Object(json::Object::new()))
+    }
+
+    struct EmptyAudit {
+        inventory: FrozenInventory,
+    }
+
+    impl AuditRestoreStore for EmptyAudit {
+        fn list_page(
+            &self,
+            _scope: &InventoryScope,
+            _after: Option<&ContinuationToken>,
+        ) -> impl Future<Output = Result<InventoryPage, StorageError>> + Send {
+            async { Err(StorageError::of_kind(StorageErrorKind::Unavailable)) }
+        }
+
+        fn freeze_inventory(
+            &self,
+            _scope: &InventoryScope,
+        ) -> impl Future<Output = Result<FrozenInventory, StorageError>> + Send {
+            let inventory = self.inventory.clone();
+            async move { Ok(inventory) }
+        }
+
+        fn inspect_object(
+            &self,
+            _key: &InventoryKey,
+        ) -> impl Future<Output = Result<ObjectMetadata, StorageError>> + Send {
+            async { Err(StorageError::of_kind(StorageErrorKind::Unavailable)) }
+        }
+
+        fn read_object(
+            &self,
+            _key: &InventoryKey,
+        ) -> impl Future<Output = Result<ObjectBody, StorageError>> + Send {
+            async { Err(StorageError::of_kind(StorageErrorKind::Unavailable)) }
+        }
+    }
+
+    struct EmptyCatalog;
+
+    impl CatalogWriteStore for EmptyCatalog {
+        fn put_checkpoint(
+            &self,
+            _key: &CatalogCheckpointKey,
+            _bytes: &[u8],
+        ) -> impl Future<Output = Result<(), StorageError>> + Send {
+            async { Ok(()) }
+        }
+
+        fn list_checkpoints(
+            &self,
+            _prefix: &CatalogListPrefix,
+        ) -> impl Future<Output = Result<Vec<String>, StorageError>> + Send {
+            async { Ok(Vec::new()) }
+        }
+    }
+
+    struct EmptyDerived;
+
+    impl DerivedWriteStore for EmptyDerived {
+        fn put_object(
+            &self,
+            _key: &DerivedObjectKey,
+            _bytes: &[u8],
+        ) -> impl Future<Output = Result<(), StorageError>> + Send {
+            async { Ok(()) }
+        }
+
+        fn list_objects(
+            &self,
+            _prefix: &DerivedListPrefix,
+        ) -> impl Future<Output = Result<Vec<String>, StorageError>> + Send {
+            async { Ok(Vec::new()) }
+        }
+    }
+
+    fn empty_invocation() -> Invocation {
+        let args = [
+            OsString::from("--non-interactive"),
+            OsString::from("catalog"),
+            OsString::from("rebuild"),
+            OsString::from("--from-occurrences"),
+        ];
+        match parse::parse(&args, Registry::pinned()).expect("catalog invocation parses") {
+            parse::Parsed::Command(invocation) => invocation,
+            other => panic!("expected a command invocation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn production_handler_attaches_to_the_schema_pinned_registry() {
+        let mut router = Router::new();
+        for (path, handler) in handlers() {
+            router
+                .register_handler(path, handler)
+                .expect("catalog rebuild is result-schema bound");
+        }
+    }
+
+    #[test]
+    fn catalog_refusal_is_removed_only_by_handler_attachment() {
+        let args = [
+            OsString::from("catalog"),
+            OsString::from("rebuild"),
+            OsString::from("--from-occurrences"),
+        ];
+        let gated = Router::new();
+        assert_eq!(gated.run(&args), 64);
+
+        let mut attached = Router::new();
+        attached
+            .register_handler("catalog rebuild", empty_result)
+            .expect("the result schema permits attachment");
+        assert_eq!(attached.run(&args), 0);
+    }
+
+    #[test]
+    fn emitted_result_and_cli_envelope_conform_to_the_registered_schema() {
+        let tenant = "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b"
+            .parse::<archivist_protocol::vocabulary::TenantId>()
+            .expect("tenant grammar");
+        let scope = InventoryScope::TenantRaw(tenant.clone());
+        let inventory =
+            FrozenInventory::from_pages(&scope, vec![Ok(InventoryPage::new(Vec::new(), None))])
+                .expect("empty inventory freezes");
+        let document = rebuild_over(
+            &empty_invocation(),
+            &tenant,
+            &EmptyAudit { inventory },
+            &EmptyCatalog,
+            &EmptyDerived,
+        )
+        .expect("empty catalog rebuild emits a result");
+
+        let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schemas/v1/cli-catalog-rebuild.json");
+        let Value::Object(schema) =
+            json::parse(&std::fs::read(schema_path).expect("catalog schema is committed"))
+                .expect("catalog schema parses")
+        else {
+            panic!("catalog schema is an object");
+        };
+        let Value::Array(required) = schema.get("required").expect("required members") else {
+            panic!("required members are an array");
+        };
+        let Value::Object(properties) = schema.get("properties").expect("schema properties") else {
+            panic!("schema properties are an object");
+        };
+        let Value::Object(record) = document else {
+            panic!("rebuild result is an object");
+        };
+        assert_eq!(record.len(), required.len());
+        for member in required {
+            let Value::Text(member) = member else {
+                panic!("schema member name is text");
+            };
+            assert!(record.get(member).is_some(), "result carries {member}");
+            assert!(properties.get(member).is_some(), "schema pins {member}");
+        }
+        assert_eq!(
+            record.get("schema"),
+            Some(&Value::Text("archivist.cli-result/v1".to_owned()))
+        );
+
+        let envelope = OutputEnvelope::with_timestamp(
+            "catalog-rebuild",
+            "2026-09-28T12:00:00Z",
+            Value::Object(record.clone()),
+        )
+        .expect("result object fits the CLI envelope");
+        let Value::Object(envelope_record) =
+            json::parse(&envelope.canonical_bytes()).expect("envelope is canonical JSON")
+        else {
+            panic!("envelope is an object");
+        };
+        assert_eq!(
+            envelope_record.get("schema"),
+            Some(&Value::Text("archivist.cli-output/v1".to_owned()))
+        );
+        assert_eq!(
+            envelope_record.get("command"),
+            Some(&Value::Text("catalog-rebuild".to_owned()))
+        );
+        assert_eq!(envelope_record.get("result"), Some(&Value::Object(record)));
     }
 }

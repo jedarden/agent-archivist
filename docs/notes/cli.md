@@ -29,26 +29,23 @@ When this document and the tool disagree, the
 tool's pinned constants decide, and one of the two is wrong and must be fixed
 in the same commit.
 
-The registry also records planned command contracts before their production
+The registry can record planned command contracts before their production
 composition lands. A registry row is not by itself a shipped capability:
 under CLI-015, a document command needs a `result_schema`, and the binary must
-attach its handler. The `catalog rebuild` row is the deliberate Phase 10
-reservation. Its catalog-checkpoint and derived-object storage paths are
-implemented and covered by storage boundary tests, but no v1 binary binds
-credentials, emits a result schema, or attaches that handler yet. Until that
-Phase 10 production binding lands, invoking it is rejected with the registered
-usage error (exit 64), and it must not appear in the available-command examples
-or be treated as supported deployment functionality.
+attach its handler. The Phase 10 `catalog rebuild` row now has both: the v1
+binary resolves the offline audit/restore identity and the two dedicated
+catalog/derived scoped writers, and emits the pinned result document. Its
+catalog-checkpoint and derived-object storage paths are therefore an available
+deployment capability; configuration or transport failures still fail closed
+through the registered error surface.
 
 ## 1. Scope and authority
 
 - **CLI-001** — The `archivist` binary built from `archivist-cli` is the only
   published executable of this project in v1. Every shipped capability a user
-  or a service invokes — client, server, linking, and administration — is a
-  command of that binary. Phase 10 catalog and derived storage paths are a
-  reserved, not-yet-shipped capability under the same binary's registry; they
-  are not a second executable or an implicit deployment surface. Nothing ships
-  a second binary or a `main` function outside `archivist-cli` (crate boundary
+  or a service invokes — client, server, linking, administration, and the
+  Phase 10 catalog rebuild — is a command of that binary. Nothing ships a
+  second binary or a `main` function outside `archivist-cli` (crate boundary
   rule 7).
 - **CLI-002** — Three registries pin the command surface and **MUST** agree:
   the command registry here, the [configuration-key
@@ -101,7 +98,7 @@ or be treated as supported deployment functionality.
 | `admin rotate` | 3 | none | document | path | record a key rotation with overlapping epochs |
 | `admin delegate` | 3 | none | document | path | record origin/uploader relay delegation |
 | `admin receipt-key` | 3 | none | document | — | generate and certify a receipt-signing key |
-| `catalog rebuild --from-occurrences` | 10 (reserved) | none | document | — | planned rebuild from raw provenance; not shipped until the Phase 10 binding lands |
+| `catalog rebuild --from-occurrences` | 10 | none | document | — | rebuild the catalog from raw provenance and emit the cumulative result document |
 
   The plan's crate-tree sketch of the CLI as "collect, serve, link, admin,
   status" is realized by this table: capture is `run`/`daemon`, and the
@@ -112,11 +109,10 @@ or be treated as supported deployment functionality.
   authority-signing and control-admin publication path; its registry entry
   names `archivist-auth` as the behavior owner and pins the linked-client
   result to `schemas/v1/control-client.json`.
-  The catalog row is intentionally different: its storage implementation and
-  scoped-prefix tests are landed, but the registry row has no `result_schema`
-  and `main.rs` attaches no handler. It therefore remains a Phase 10
-  reservation and every invocation fails closed with `cli.usage_error` until
-  the production binding and output contract are added.
+  The catalog row is now attached by `main.rs` over the offline restore
+  identity and the two dedicated scoped writers. Its result is pinned to
+  `schemas/v1/cli-catalog-rebuild.json`, and configuration/transport refusals
+  remain registered errors with no partial stdout.
 - **CLI-007** — The state-lock field states the command's relationship to
   the plan Section 7.9 single-mutator contract: `exclusive` commands take
   the advisory lock and a second mutator exits 75 with `client.lock_held`;
@@ -159,10 +155,9 @@ or be treated as supported deployment functionality.
   command's flag name. Operational flags **MUST NOT** collide with any mode
   flag name or any key-flag name derivable from the key registry — the
   three namespaces are disjoint and the gate proves it. The declared registry
-  set is exactly two: `run --once` and the reserved Phase 10
-  `catalog rebuild --from-occurrences`, both `required`. The shipped v1
-  command set currently uses only `run --once`; the catalog flag remains
-  parser- and registry-tested but cannot reach a handler until Phase 10. A
+  set is exactly two: `run --once` and the Phase 10
+  `catalog rebuild --from-occurrences`, both `required`, and both are attached
+  by the v1 binary. A
   value-taking operational flag is a registry-format extension (Section 8),
   not a v1 edit.
 - **CLI-012** — Parsing is strict: each flag **MAY** appear at most once —
@@ -357,6 +352,7 @@ archivist --non-interactive --json status
 archivist --non-interactive --json run --once
 archivist --config /etc/archivist/production.toml daemon
 archivist --non-interactive --json doctor
+archivist --config /etc/archivist/production.toml --json catalog rebuild --from-occurrences
 ```
 
 A deployment's `archivist.toml` carries the secret references the daemon

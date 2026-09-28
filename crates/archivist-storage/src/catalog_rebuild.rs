@@ -136,6 +136,9 @@ use crate::zstd_v1::ZstdV1Decoder;
 /// resumed — the pass rebuilds fresh instead of guessing.
 pub const REBUILD_CHECKPOINT_VERSION: i64 = 1;
 
+/// The CLI result namespace carried by the catalog rebuild result document.
+const CLI_RESULT_SCHEMA: &str = "archivist.cli-result/v1";
+
 /// The self-verifying digest's domain label, the family's exclusion
 /// framing: labeled frame over the document's canonical bytes with the
 /// digest member removed. The checkpoint's storage key carries the plain
@@ -459,6 +462,7 @@ impl RebuildOutcome {
     #[must_use]
     pub fn result_document(&self, tenant: &TenantId, projection_version: &VersionToken) -> Object {
         let mut document = Object::new();
+        document.set("schema", Value::Text(CLI_RESULT_SCHEMA.to_owned()));
         document.set(
             "catalog_rebuild_version",
             Value::Int(REBUILD_CHECKPOINT_VERSION),

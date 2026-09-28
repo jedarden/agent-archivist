@@ -268,29 +268,51 @@ keys = []
 
 # ---------------------------------------------------------------------------
 # Derived catalog (plan Section 7.10, Phase 10) — owner archivist-storage.
-# This is a reserved registry contract, not a shipped v1 command: it remains
-# without result_schema until the production storage binding and output
-# contract are attached. The router therefore rejects registration and an
-# invocation remains a registered usage refusal (CLI-015).
+# The deterministic fold, its two scoped-writer stores, and the result
+# document contract are shipped; the binary's handler registration names
+# the concrete S3 transport identities the moment the catalog and derived
+# write seams and the audit/restore read identity land over the S3
+# request backend (the crates/archivist-cli/src/catalog.rs module doc
+# carries that boundary).
 # ---------------------------------------------------------------------------
 
 [commands."catalog rebuild"]
-summary = "[Phase 10 reserved] Rebuild the catalog from raw occurrences, upload attestations, and blobs without touching the ingest data plane."
+summary = "Rebuild the catalog from raw occurrences, upload attestations, and blobs without touching the ingest data plane."
 phase = 10
 owner = "archivist-storage"
 state_lock = "none"
 stdout = "document"
 operand = "none"
 stdin = "none"
-# The two scoped-writer references the rebuild's production binding
-# resolves (CLI-010): the catalog checkpoints and the usage-summary
-# projection the deterministic fold emits (plan Phase 10). Optional
-# credential roles (CFG-019) — a host running none of the Phase 10
-# pipelines never carries them.
+# The scoped-writer binding (CLI-010): the two credential references the
+# rebuild resolves — the catalog checkpoints and the usage-summary
+# projection the deterministic fold emits (plan Phase 10) — over the
+# transport settings and the tenant bucket both writers provision, and
+# the tenant whose prefixes they are scoped to. Optional credential
+# roles (CFG-019) — a host running none of the Phase 10 pipelines never
+# carries them; the composition refuses absence as a missing decision.
 keys = [
+  "storage.endpoint_url",
+  "storage.region",
+  "storage.path_style",
+  "storage.encryption",
+  "storage.raw_bucket",
+  "storage.control_bucket",
+  "storage.tenant_bucket",
+  "storage.tenant",
+  "storage.raw_write_credentials_ref",
+  "storage.control_read_credentials_ref",
+  "storage.raw_read_credentials_ref",
+  "storage.offline_restore_credentials_ref",
   "storage.catalog_write_credentials_ref",
   "storage.derived_write_credentials_ref",
 ]
+# The emitted document is the rebuild fold's cumulative state (CLI-015):
+# the pipeline and projection identity, the frozen inventory digest, the
+# occurrence and attestation totals, the four usage-row coverage states,
+# and the checkpoint chain's terminal digests and key, pinned by
+# `schemas/v1/cli-catalog-rebuild.json`.
+result_schema = "schemas/v1/cli-catalog-rebuild.json"
 
 [commands."catalog rebuild".flags.from-occurrences]
 summary = "Rebuild from raw S3 occurrences, attestations, and blobs; the only v1 rebuild source."

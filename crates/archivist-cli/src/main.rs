@@ -20,6 +20,8 @@
 //! backend is selected here, at the composition root — and the `probe`
 //! command the probe module composes, the release image's HEALTHCHECK
 //! mechanism (release-container RC-020).
+//! The Phase 10 `catalog rebuild` command is attached over its dedicated
+//! offline audit and catalog/derived scoped-writer identities as well.
 //! A registered command whose phase has not attached a handler is
 //! rejected as not shipped when invoked, rather than being represented
 //! by placeholder behavior.
@@ -44,11 +46,13 @@ fn main() {
     let operator = archivist_cli::operator::handlers();
     let serve = archivist_cli::serve::handlers();
     let probe = archivist_cli::probe::handlers();
+    let catalog = archivist_cli::catalog::handlers();
     for (path, handler) in operator
         .iter()
         .copied()
         .chain(serve.iter().copied())
         .chain(probe.iter().copied())
+        .chain(catalog.iter().copied())
     {
         // Every entry names a registered path whose phase shipped its
         // output kind; the registry gate checked the pair, and a refusal

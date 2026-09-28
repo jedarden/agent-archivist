@@ -16,7 +16,7 @@ Validates ``tools/config-keys.toml`` against the conventions in
    may omit (a secret reference naming a credential role, the offline
    ``admin`` section whose requiredness the administrator commands'
    composition gate enforces, or the replica-only composition keys the
-   serve command alone consumes);
+   serve and the Phase 10 catalog rebuild commands alone consume);
 4. integer keys carry a unit suffix (``_bytes``, ``_seconds``,
    ``_percent``, ``_count``, ``_ratio``) and defaults/examples respect the
    suffix bounds — there are no float values anywhere;
@@ -379,7 +379,11 @@ def validate_registry(registry: dict) -> list[str]:
                               "are required, never defaulted")
             admin_surface = isinstance(name, str) and \
                 name.split(".")[0] == "admin"
-            replica_only = name in ("server.authority_key", "storage.tenant")
+            replica_only = name in (
+                "server.authority_key",
+                "storage.tenant",
+                "storage.tenant_bucket",
+            )
             if has_optional and not (secret or admin_surface or replica_only):
                 errors.append(f"{what} declares optional but is neither a "
                               "secret reference, an offline-administration "

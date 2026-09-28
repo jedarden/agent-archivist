@@ -356,7 +356,8 @@ def render_module(schemas: dict[str, dict]) -> str:
 
 //! GENERATED FILE - DO NOT EDIT.
 //!
-//! Schema-derived bindings for the `schemas/v1` wire family: the schema URN
+//! Schema-derived bindings for the `schemas/v1` wire family, including the
+//! Phase 10 CLI result contract: the schema URN
 //! space, the closed enum token sets with their bearing and fail-closed
 //! metadata, the pinned version and plan constants, and the reserved-field
 //! and member-name lists. Emitted from the checked-in JSON Schemas by

@@ -563,7 +563,7 @@ def self_test(registry: dict, note: str) -> bool:
         "Six credentials, disjoint action-by-prefix policy.",
         "Four credentials, disjoint action-by-prefix policy.", 1)
     note_prefix_revert = note.replace(
-        "reserved, Phase 10 — writer provisioned 2026-09-15",
+        "active when the Phase 10 rebuild is configured — writer provisioned 2026-09-15",
         "reserved, Phase 10", 1)
     note_entry_count = note.replace(
         "twelve 4-line entries", "ten 4-line entries", 1)
