@@ -23,6 +23,13 @@ name = "approve-command-end-to-end"
 path = "tests/approve_command_end_to_end.rs"
 harness = false
 
+# The catalog rebuild acceptance test drives the real registry/router in a
+# child process, then inspects the three role-separated storage seams.
+[[test]]
+name = "catalog-rebuild-end-to-end"
+path = "tests/catalog_rebuild_end_to_end.rs"
+harness = false
+
 [dependencies]
 archivist-adapter-claude = { path = "../archivist-adapter-claude" }
 archivist-adapter-codex = { path = "../archivist-adapter-codex" }
