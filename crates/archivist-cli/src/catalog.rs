@@ -27,11 +27,12 @@ use archivist_storage::catalog_rebuild::{
 use archivist_storage::error::{StorageError, StorageErrorKind};
 use archivist_storage::scoped_write::{CatalogWriteStore, DerivedWriteStore};
 use archivist_storage_s3::config::{S3ConfigError, S3ConfigErrorKind, ScopedWritersConfig};
-use archivist_storage_s3::request::S3RequestBackend;
+use archivist_storage_s3::request::{S3RequestBackend, S3RequestErrorKind};
 use archivist_storage_s3::scoped_write::{S3CatalogWriteStore, S3DerivedWriteStore};
 
 const INTEGRITY_CONFLICT: &str = "storage.integrity_conflict";
 const TRANSPORT_FAILED: &str = "transport.connection_failed";
+const SECRET_REF_REFUSED: &str = "client.secret_ref_refused";
 const INTERNAL: &str = "client.internal_error";
 
 /// The stable catalog checkpoint cadence. It is an operational bound, not a
@@ -64,16 +65,15 @@ pub fn rebuild(invocation: &Invocation) -> Result<Value, CliError> {
     let ingest = crate::admin::ingest_config(&resolved).map_err(composition_fault)?;
     let writers = scoped_writers(&resolved).map_err(composition_fault)?;
     reject_ingest_reuse(&ingest, &writers)?;
-    let audit = AuditBinding(
-        S3RequestBackend::audit_restore(&ingest, &tenant).map_err(|_| CliError::usage())?,
-    );
+    let audit =
+        AuditBinding(S3RequestBackend::audit_restore(&ingest, &tenant).map_err(request_fault)?);
     let catalog = S3CatalogWriteStore::new(
         writers.catalog().clone(),
-        S3RequestBackend::catalog_write(writers.catalog()).map_err(|_| CliError::usage())?,
+        S3RequestBackend::catalog_write(writers.catalog()).map_err(request_fault)?,
     );
     let derived = S3DerivedWriteStore::new(
         writers.derived().clone(),
-        S3RequestBackend::derived_write(writers.derived()).map_err(|_| CliError::usage())?,
+        S3RequestBackend::derived_write(writers.derived()).map_err(request_fault)?,
     );
     rebuild_over(invocation, &tenant, &audit, &catalog, &derived)
 }
@@ -188,6 +188,15 @@ fn composition_fault(error: S3ConfigError) -> CliError {
         S3ConfigErrorKind::MalformedSetting
         | S3ConfigErrorKind::TransportMismatch
         | S3ConfigErrorKind::DuplicateIdentity => CliError::usage(),
+    }
+}
+
+fn request_fault(error: archivist_storage_s3::request::S3RequestError) -> CliError {
+    match error.kind() {
+        S3RequestErrorKind::CredentialUnavailable | S3RequestErrorKind::CredentialMalformed => {
+            CliError::registered(SECRET_REF_REFUSED)
+        }
+        S3RequestErrorKind::EndpointMalformed => CliError::usage(),
     }
 }
 
@@ -378,7 +387,11 @@ mod tests {
         DerivedObjectKey, DerivedWriteStore,
     };
 
-    use super::{INTEGRITY_CONFLICT, INTERNAL, TRANSPORT_FAILED, handlers, rebuild_over};
+    use super::{
+        INTEGRITY_CONFLICT, INTERNAL, SECRET_REF_REFUSED, TRANSPORT_FAILED, handlers, rebuild_over,
+        request_fault,
+    };
+    use archivist_storage_s3::request::{S3RequestError, S3RequestErrorKind};
 
     #[allow(clippy::unnecessary_wraps)]
     fn empty_result(_: &Invocation) -> Result<Value, CliError> {
@@ -632,5 +645,25 @@ mod tests {
             assert_eq!(error.code(), expected, "mapping for {kind:?}");
             assert!(error.exit_code() > 0, "{expected} is registered");
         }
+    }
+
+    #[test]
+    fn rebuild_maps_request_credential_failures_to_the_secret_reference_code() {
+        for kind in [
+            S3RequestErrorKind::CredentialUnavailable,
+            S3RequestErrorKind::CredentialMalformed,
+        ] {
+            let error = request_fault(S3RequestError::new(kind, "content-free test detail"));
+            assert_eq!(error.code(), SECRET_REF_REFUSED);
+            assert!(error.exit_code() > 0);
+        }
+        assert_eq!(
+            request_fault(S3RequestError::new(
+                S3RequestErrorKind::EndpointMalformed,
+                "content-free test detail",
+            ))
+            .code(),
+            "cli.usage_error"
+        );
     }
 }

@@ -226,6 +226,11 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # row), and the runtime success envelope and error/v1 diagnostic body
   # agree with their schemas; `--self-test` proves the rejection paths.
   run_check "cli implementation coherence"  python3 tools/check-cli-implementation.py --self-test
+  # Phase 10's attached command proof: execute the real router in a
+  # non-interactive child-process matrix covering successful rebuilds,
+  # canonical JSON output, retries, missing configuration/credentials, and
+  # both authorization-boundary refusals.
+  run_check "catalog rebuild CLI" cargo test -p archivist-cli --test catalog-rebuild-end-to-end
   # Wire-schema coherence (docs/notes/wire-schemas.md): refs, fail-closed
   # enum/version metadata, reserved-name blocks, the construction registry,
   # and the error-message charset; `--self-test` proves the rejection paths.

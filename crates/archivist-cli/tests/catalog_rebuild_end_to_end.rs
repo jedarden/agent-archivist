@@ -52,6 +52,7 @@ enum Scenario {
     GoldenJson,
     Retry,
     MissingConfiguration,
+    MissingCredential,
     SharedWriterIdentity,
     IngestIdentityReuse,
 }
@@ -61,6 +62,7 @@ const SCENARIOS: &[Scenario] = &[
     Scenario::GoldenJson,
     Scenario::Retry,
     Scenario::MissingConfiguration,
+    Scenario::MissingCredential,
     Scenario::SharedWriterIdentity,
     Scenario::IngestIdentityReuse,
 ];
@@ -72,6 +74,7 @@ impl Scenario {
             Self::GoldenJson => "golden-json",
             Self::Retry => "retry",
             Self::MissingConfiguration => "missing-configuration",
+            Self::MissingCredential => "missing-credential",
             Self::SharedWriterIdentity => "shared-writer-identity",
             Self::IngestIdentityReuse => "ingest-identity-reuse",
         }
@@ -100,6 +103,7 @@ impl Scenario {
         match self {
             Self::GoldenBare | Self::GoldenJson | Self::Retry => None,
             Self::MissingConfiguration => Some("cli.decision_missing"),
+            Self::MissingCredential => Some("client.secret_ref_refused"),
             Self::SharedWriterIdentity | Self::IngestIdentityReuse => Some("cli.usage_error"),
         }
     }
@@ -136,7 +140,9 @@ fn run_parent() {
             .stdin(std::process::Stdio::null());
         if matches!(
             scenario,
-            Scenario::SharedWriterIdentity | Scenario::IngestIdentityReuse
+            Scenario::MissingCredential
+                | Scenario::SharedWriterIdentity
+                | Scenario::IngestIdentityReuse
         ) {
             for (name, value) in composition_environment(*scenario) {
                 command.env(name, value);
