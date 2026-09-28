@@ -43,17 +43,7 @@
 /// one invocation.
 fn main() {
     let mut router = archivist_client_core::cli::router::Router::new();
-    let operator = archivist_cli::operator::handlers();
-    let serve = archivist_cli::serve::handlers();
-    let probe = archivist_cli::probe::handlers();
-    let catalog = archivist_cli::catalog::handlers();
-    for (path, handler) in operator
-        .iter()
-        .copied()
-        .chain(serve.iter().copied())
-        .chain(probe.iter().copied())
-        .chain(catalog.iter().copied())
-    {
+    for (path, handler) in archivist_cli::handlers() {
         // Every entry names a registered path whose phase shipped its
         // output kind; the registry gate checked the pair, and a refusal
         // here is a composition bug, not runtime behavior.

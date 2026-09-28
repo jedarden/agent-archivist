@@ -361,6 +361,25 @@ def validate(texts: dict[str, str]) -> list[str]:
                           "result_schema; a command with no result schema has "
                           "not shipped (CLI-015)")
 
+    # A row is available once it has either shipped a result document or
+    # explicitly declares that it emits no stdout. Those are the commands the
+    # binary advertises as runnable; document rows without a result schema are
+    # phase reservations and remain intentionally unbound. Check the reverse
+    # direction as well as the attachment direction above: a handler can name
+    # a valid row while a newly shipped row silently lacks a production
+    # handler (CLI-002, CLI-003, CLI-015).
+    for command_name, row in commands.items():
+        if not isinstance(row, dict):
+            continue
+        available = row.get("stdout") == "none" or bool(row.get("result_schema"))
+        if available and command_name not in attached:
+            errors.append(f"registry command {command_name!r} is available but "
+                          "has no attached handler (CLI-003, CLI-032)")
+        if available and row.get("stdout") == "document" \
+                and not row.get("result_schema"):
+            errors.append(f"registry command {command_name!r} is available as "
+                          "a document but has no result_schema (CLI-015)")
+
     # --- mode flags and operand kinds in the runtime parser -------------------
     parse_code = production.get(f"{ENGINE_SRC}/parse.rs")
     if parse_code is not None:
@@ -493,6 +512,9 @@ SELF_TEST_CASES: list[tuple[str, str, object]] = [
          '[("serve", serve as CommandHandler)]',
          '[("serve", serve as CommandHandler),\n'
          '         ("serve", serve as CommandHandler)]', 1)),
+    ("an available command without a handler", OPERATOR,
+     lambda t: t.replace(
+         '        ("status", status as CommandHandler),\n', "", 1)),
     ("attached document command with no result schema", CLI_REGISTRY,
      lambda t: t.replace('result_schema = "schemas/v1/cli-status.json"\n',
                          "", 1)),

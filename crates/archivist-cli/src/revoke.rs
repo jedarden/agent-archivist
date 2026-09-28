@@ -100,13 +100,14 @@
 use archivist_auth::authority::PinnedAuthorityRoot;
 use archivist_auth::ed25519;
 use archivist_auth::revocation::{LinkedClientPointer, PublicationError, publish_revocation};
-use archivist_client_core::cli::{CliError, Invocation};
+use archivist_client_core::cli::{CliError, CommandHandler, Invocation};
 use archivist_client_core::config::{ConfigError, ResolvedConfig};
 use archivist_protocol::json::{self, Object, Value};
 use archivist_protocol::vocabulary::{ClientId, Ed25519PublicKey, KeyId, TenantId, Timestamp};
 use archivist_storage::error::{StorageError, StorageErrorKind};
 use archivist_storage_s3::config::{S3ConfigError, S3ConfigErrorKind};
 use archivist_storage_s3::control_admin::{ControlAdminBackend, ControlObjectKey};
+use archivist_storage_s3::request::{S3RequestBackend, S3RequestErrorKind};
 
 /// The registered code for a presented document that is not a revocation
 /// draft the command could act on (`tools/error-codes.toml`, class
@@ -153,6 +154,33 @@ const DECISION_MISSING: &str = "cli.decision_missing";
 /// The registered code for a secret reference that did not resolve to
 /// protected material (`tools/error-codes.toml`, class `usage`, CFG-030).
 const SECRET_REF_REFUSED: &str = "client.secret_ref_refused";
+
+/// The production composition surface for the concrete S3 administration
+/// backend. The seam-driven `run` function remains available to tests and
+/// alternate compositions; this wrapper is the handler attached by the
+/// binary for the registered command.
+#[must_use]
+pub fn handlers() -> [(&'static str, CommandHandler); 1] {
+    [("admin revoke", command as CommandHandler)]
+}
+
+/// Run `admin revoke` through the registered S3 administration identity.
+/// Configuration and protected material are resolved before any request
+/// binding exists.
+///
+/// # Errors
+/// Returns the registered configuration, composition, protected-material,
+/// draft, signing, or publication refusal for the first failing act.
+pub fn command(invocation: &Invocation) -> Result<Value, CliError> {
+    let sources = invocation
+        .config_sources()
+        .capture_environment()
+        .map_err(|error| config_fault(&error))?;
+    let resolved = sources.load().map_err(|error| config_fault(&error))?;
+    let config = crate::admin::admin_config(&resolved).map_err(composition_fault)?;
+    let backend = S3RequestBackend::control_admin(&config).map_err(request_fault)?;
+    revoke_over(&resolved, invocation, backend)
+}
 
 /// The draft document's namespace token — the identity member every
 /// parser of the shape checks first.
@@ -478,6 +506,15 @@ fn composition_fault(error: S3ConfigError) -> CliError {
         S3ConfigErrorKind::MalformedSetting
         | S3ConfigErrorKind::TransportMismatch
         | S3ConfigErrorKind::DuplicateIdentity => CliError::usage(),
+    }
+}
+
+fn request_fault(error: archivist_storage_s3::request::S3RequestError) -> CliError {
+    match error.kind() {
+        S3RequestErrorKind::CredentialUnavailable | S3RequestErrorKind::CredentialMalformed => {
+            CliError::registered(SECRET_REF_REFUSED)
+        }
+        S3RequestErrorKind::EndpointMalformed => CliError::usage(),
     }
 }
 

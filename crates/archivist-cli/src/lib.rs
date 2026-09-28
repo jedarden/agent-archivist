@@ -53,3 +53,123 @@ pub mod operator;
 pub mod probe;
 pub mod revoke;
 pub mod serve;
+
+use archivist_client_core::cli::CommandHandler;
+
+/// All handlers shipped by the composition root.
+///
+/// This is the one command-to-handler list used by the binary and by the
+/// command-level coherence test. Keeping the aggregation here makes a new
+/// production handler impossible to wire into only one of those surfaces.
+#[must_use]
+pub fn handlers() -> Vec<(&'static str, CommandHandler)> {
+    operator::handlers()
+        .into_iter()
+        .chain(serve::handlers())
+        .chain(probe::handlers())
+        .chain(approve::handlers())
+        .chain(revoke::handlers())
+        .chain(catalog::handlers())
+        .collect()
+}
+
+/// Compose every shipped command against the registry and the two embedded
+/// supporting registries. These assertions are intentionally command-level:
+/// a local registry parser can pass while a handler list, consumed key, error
+/// code, or error class has drifted at the composition boundary.
+///
+/// # Panics
+/// Panics when the committed command surface contains a duplicate handler,
+/// an unregistered or unavailable handler, an available document without a
+/// result schema, an unregistered key, an unconsumed key, or an error code
+/// without a registered exit class.
+pub fn assert_registry_coherence() {
+    let registry = archivist_client_core::cli::registry::Registry::pinned();
+    let attached = handlers();
+    let mut attached_paths = std::collections::BTreeSet::new();
+    for (path, _handler) in &attached {
+        assert!(attached_paths.insert(*path), "duplicate handler for {path}");
+        let segments = path.split(' ').map(str::to_owned).collect::<Vec<_>>();
+        let command = registry
+            .command(&segments)
+            .unwrap_or_else(|| panic!("handler {path} is not a registered command"));
+        assert!(
+            command.is_available(),
+            "handler {path} is not an available command"
+        );
+        if command.stdout_kind() == "document" {
+            assert!(
+                command.result_schema().is_some(),
+                "document command {path} has no result schema"
+            );
+        }
+    }
+
+    let available = registry
+        .commands()
+        .filter(|command| command.is_available())
+        .map(archivist_client_core::cli::registry::Command::path_text)
+        .collect::<std::collections::BTreeSet<_>>();
+    let attached_text = attached_paths
+        .iter()
+        .map(|path| (*path).to_owned())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        attached_text, available,
+        "every available command must have exactly one production handler"
+    );
+
+    let config = archivist_client_core::config::registry::config_registry();
+    let mut consumed = std::collections::BTreeSet::new();
+    for command in registry.commands() {
+        for key in command.keys() {
+            assert!(
+                config.key(key).is_some(),
+                "command {} consumes unregistered key {key}",
+                command.path_text()
+            );
+            consumed.insert(key.as_str());
+        }
+    }
+    for key in config.keys() {
+        assert!(
+            consumed.contains(key.name()),
+            "registered key {} is consumed by no command",
+            key.name()
+        );
+    }
+
+    let errors = archivist_client_core::config::registry::error_registry();
+    for class in errors.classes() {
+        assert_ne!(
+            class.exit_code(),
+            0,
+            "error class {} must not claim the success exit",
+            class.name()
+        );
+        assert!(
+            class.exit_code() < 128,
+            "error class {} must not claim a signal exit",
+            class.name()
+        );
+    }
+    for code in errors.codes() {
+        let class = errors
+            .class(code.class())
+            .unwrap_or_else(|| panic!("error code {} names no class", code.code()));
+        assert_eq!(
+            archivist_client_core::cli::CliError::registered(code.code()).exit_code(),
+            class.exit_code(),
+            "emitted code {} must use its registered exit class",
+            code.code()
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn command_surface_joins_handlers_keys_codes_and_exit_classes() {
+        super::assert_registry_coherence();
+    }
+}

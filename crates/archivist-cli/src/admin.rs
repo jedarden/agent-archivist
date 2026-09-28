@@ -132,7 +132,7 @@ pub fn compose_admin_control_plane<B>(
 /// Build the administration configuration from the registered `admin.*`
 /// keys, through its builder — the single fail-closed gate that validates
 /// the endpoint, region, bucket, tenant, and credential grammars.
-fn admin_config(resolved: &ResolvedConfig) -> Result<ControlAdminConfig, S3ConfigError> {
+pub(crate) fn admin_config(resolved: &ResolvedConfig) -> Result<ControlAdminConfig, S3ConfigError> {
     ControlAdminConfig::builder()
         .endpoint_url(required_admin_text(resolved, "admin.endpoint_url")?.to_owned())
         .region(required_admin_text(resolved, "admin.region")?.to_owned())

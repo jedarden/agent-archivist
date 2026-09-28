@@ -393,6 +393,18 @@ pub struct ErrorRegistry {
 }
 
 impl ErrorRegistry {
+    /// Every registered error class in declaration-independent order.
+    #[must_use = "inspect the registered error classes"]
+    pub fn classes(&self) -> impl Iterator<Item = &ErrorClass> {
+        self.classes.values()
+    }
+
+    /// Every registered error code in declaration-independent order.
+    #[must_use = "inspect the registered error codes"]
+    pub fn codes(&self) -> impl Iterator<Item = &ErrorDefinition> {
+        self.codes.values()
+    }
+
     /// The definition of `code`, when it is registered.
     #[must_use]
     pub fn code(&self, code: &str) -> Option<&ErrorDefinition> {

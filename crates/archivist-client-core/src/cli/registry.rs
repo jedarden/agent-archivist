@@ -109,6 +109,18 @@ impl Command {
         self.result_schema.as_deref()
     }
 
+    /// Whether the command is available in the composed binary.
+    ///
+    /// A command that emits no stdout document is available once its handler
+    /// is attached; a document command is available only after its result
+    /// schema has been pinned. Registry rows without either marker are
+    /// intentionally reserved for a later phase and must not be advertised
+    /// as shipped commands (CLI-015).
+    #[must_use]
+    pub fn is_available(&self) -> bool {
+        self.stdout_kind() == "none" || self.result_schema().is_some()
+    }
+
     /// Find one operational flag by its bare name.
     #[must_use]
     pub fn flag(&self, name: &str) -> Option<&OperationalFlag> {

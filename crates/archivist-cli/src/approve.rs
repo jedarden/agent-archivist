@@ -72,13 +72,14 @@
 use archivist_auth::authority::PinnedAuthorityRoot;
 use archivist_auth::ed25519;
 use archivist_auth::link::{ApprovalError, approve_link_request};
-use archivist_client_core::cli::{CliError, Invocation};
+use archivist_client_core::cli::{CliError, CommandHandler, Invocation};
 use archivist_client_core::config::{ConfigError, ResolvedConfig};
 use archivist_protocol::json::{self, Value};
 use archivist_protocol::vocabulary::{Ed25519PublicKey, KeyId, Timestamp};
 use archivist_storage::error::{StorageError, StorageErrorKind};
 use archivist_storage_s3::config::{S3ConfigError, S3ConfigErrorKind};
 use archivist_storage_s3::control_admin::{ControlAdminBackend, ControlObjectKey};
+use archivist_storage_s3::request::{S3RequestBackend, S3RequestErrorKind};
 
 /// The registered configuration key naming the tenant authority's signing
 /// seed (`tools/config-keys.toml`).
@@ -108,6 +109,33 @@ const SECRET_REF_REFUSED: &str = "client.secret_ref_refused";
 /// The registered code for a transport-level failure with no HTTP response
 /// (`tools/error-codes.toml`, class `network`).
 const TRANSPORT_FAILED: &str = "transport.connection_failed";
+
+/// The production composition surface for the concrete S3 administration
+/// backend. The seam-driven `run` function below remains available to tests
+/// and alternate compositions; this wrapper is the handler the binary
+/// attaches for the registered command.
+#[must_use]
+pub fn handlers() -> [(&'static str, CommandHandler); 1] {
+    [("admin approve", command as CommandHandler)]
+}
+
+/// Run `admin approve` through the registered S3 administration identity.
+/// Configuration is resolved before the request binding is constructed, so a
+/// missing decision or protected-material refusal produces no request.
+///
+/// # Errors
+/// Returns the registered configuration, composition, protected-material,
+/// signing, or publication refusal for the first failing act.
+pub fn command(invocation: &Invocation) -> Result<Value, CliError> {
+    let sources = invocation
+        .config_sources()
+        .capture_environment()
+        .map_err(|error| config_fault(&error))?;
+    let resolved = sources.load().map_err(|error| config_fault(&error))?;
+    let config = crate::admin::admin_config(&resolved).map_err(composition_fault)?;
+    let backend = S3RequestBackend::control_admin(&config).map_err(request_fault)?;
+    approve_over(&resolved, invocation, backend)
+}
 
 /// Run one `admin approve` invocation over the given administration
 /// backend: capture the invocation's environment into the configuration
@@ -242,6 +270,15 @@ fn composition_fault(error: S3ConfigError) -> CliError {
         S3ConfigErrorKind::MalformedSetting
         | S3ConfigErrorKind::TransportMismatch
         | S3ConfigErrorKind::DuplicateIdentity => CliError::usage(),
+    }
+}
+
+fn request_fault(error: archivist_storage_s3::request::S3RequestError) -> CliError {
+    match error.kind() {
+        S3RequestErrorKind::CredentialUnavailable | S3RequestErrorKind::CredentialMalformed => {
+            CliError::registered(SECRET_REF_REFUSED)
+        }
+        S3RequestErrorKind::EndpointMalformed => CliError::usage(),
     }
 }
 

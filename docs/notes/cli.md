@@ -327,9 +327,10 @@ through the registered error surface.
   Rust command surface — the `archivist-cli` composition modules and the
   `archivist-client-core::cli` engine — and proves against the same three
   registries and the two wire schemas (`schemas/v1/cli-output.json`,
-  `schemas/v1/ingest-error.json`): every attached handler names a
-  registered command path with no duplicate attachment and, for a
-  `document` command, a pinned `result_schema` (CLI-003, CLI-015); every
+  `schemas/v1/ingest-error.json`): every available registry command has
+  exactly one attached handler, every attached handler names a registered
+  command path with no duplicate attachment, and every available document
+  command has a pinned `result_schema` (CLI-002, CLI-003, CLI-015); every
   `domain.condition`-shaped literal the surface names is a registered
   error code or a registered configuration key (ERR-008, CFG-001); a
   behavior module's key literals sit within its commands' registry key
@@ -340,7 +341,8 @@ through the registered error surface.
   in the fast lane beside CLI-029's gate, and its `--self-test` mode
   mutates the committed sources — an unregistered or duplicate attachment,
   a schema-less document command, an unregistered code, an off-row key,
-  mode-flag and operand-kind drift, a lost refusal arm, envelope and
+  mode-flag and operand-kind drift, a lost refusal arm, an available row
+  without a handler, envelope and
   error-body drift, an unclassified module — and fails unless every one is
   rejected. A Rust file under a scan root that the tool has not classified
   is itself a rejection: a new module joins the coherence proof in the
