@@ -79,11 +79,14 @@ pub fn probe_over(resolved: &ResolvedConfig) -> Result<Value, CliError> {
 #[cfg(test)]
 mod tests {
     use archivist_client_core::cli::Router;
+    use archivist_client_core::cli::parse::{Parsed, parse};
+    use archivist_client_core::cli::registry::Registry;
     use archivist_client_core::config::ConfigSources;
+    use std::ffi::OsString;
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
-    use super::{handlers, probe_over};
+    use super::{handlers, probe, probe_over};
 
     /// The environment tier every load resolves over: the required
     /// registered keys (the same fixture the serve composition tests
@@ -119,8 +122,10 @@ mod tests {
     }
 
     /// Bind an ephemeral listener whose first connection is answered with
-    /// the liveness route's success response and then closed.
-    fn serving_liveness_route() -> std::net::SocketAddr {
+    /// `response` and then closed. Parametrized over the canned first
+    /// response so the composition layer proves both verdicts an answer
+    /// can carry: the route's `200 OK` and a degraded answer that is not.
+    fn serving_canned(response: &'static str) -> std::net::SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0").expect("an ephemeral listener binds");
         let address = listener
             .local_addr()
@@ -129,13 +134,19 @@ mod tests {
             if let Ok((mut stream, _)) = listener.accept() {
                 let mut request = [0u8; 512];
                 let _ = stream.read(&mut request);
-                let _ = stream.write_all(
-                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\
-                      content-length: 13\r\nconnection: close\r\n\r\n{\"live\":true}",
-                );
+                let _ = stream.write_all(response.as_bytes());
             }
         });
         address
+    }
+
+    /// Bind an ephemeral listener whose first connection is answered with
+    /// the liveness route's success response and then closed.
+    fn serving_liveness_route() -> std::net::SocketAddr {
+        serving_canned(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\
+             content-length: 13\r\nconnection: close\r\n\r\n{\"live\":true}",
+        )
     }
 
     #[test]
@@ -158,6 +169,54 @@ mod tests {
         assert_eq!(
             probe_over(&resolved),
             Ok(archivist_protocol::json::Value::Null)
+        );
+    }
+
+    #[test]
+    fn a_degraded_replica_is_the_registered_unavailable_class() {
+        // A replica that is there and answers, but not with the liveness
+        // route's `200 OK` — the probe's degraded verdict. The composition
+        // maps it onto the same registered `server.unavailable` class as a
+        // replica that never answered: which of the two it was is the
+        // HEALTHCHECK scheduler's to distinguish by retrying, not the exit
+        // code's.
+        let address = serving_canned(
+            "HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\n\
+             connection: close\r\n\r\n",
+        );
+        let resolved = probe_sources()
+            .env("ARCHIVIST_SERVER_LISTEN_ADDRESS", address.to_string())
+            .load()
+            .expect("the address resolves");
+        let error = probe_over(&resolved).expect_err("the route answered out of health");
+        assert_eq!(error.code(), "server.unavailable");
+        assert_eq!(error.exit_code(), 75, "the server_failure class exit");
+    }
+
+    #[test]
+    fn the_entry_composes_non_interactively_without_the_flag() {
+        // CLI-021: `probe` is always non-interactive whether or not the
+        // flag was passed — the entry resolves through the serve
+        // composition's daemon-mode sources, which cannot prompt (v1 has
+        // no prompt anywhere, CLI-023) and refuse with the registered
+        // missing-decision class instead (CLI-022). The invocation here
+        // carries no `--non-interactive`, and the captured test
+        // environment — the same clean-shape environment every suite run
+        // executes under — supplies no `ARCHIVIST_*` configuration and no
+        // default configuration file, so the daemon-mode resolve refuses
+        // before any socket is touched: the flagless invocation composed
+        // exactly as a non-interactive one does.
+        let parsed = parse(&[OsString::from("probe")], Registry::pinned())
+            .expect("the pinned registry parses the bare probe invocation");
+        let Parsed::Command(invocation) = parsed else {
+            panic!("the bare invocation routes to the probe command");
+        };
+        let error = probe(&invocation).expect_err("no tier supplied the required keys");
+        assert_eq!(error.code(), "cli.decision_missing");
+        assert_eq!(
+            error.exit_code(),
+            64,
+            "the usage-class non-interactive exit"
         );
     }
 
