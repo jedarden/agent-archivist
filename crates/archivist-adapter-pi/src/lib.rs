@@ -60,6 +60,9 @@ pub const DEFAULT_SESSION_ROOT: &str = ".pi/agent/sessions";
 /// The maximum header prefix read while identifying a source.
 pub const MAX_HEADER_BYTES: usize = 16 * 1024;
 
+/// The maximum size of one complete JSONL record or immutable object.
+pub const MAX_RECORD_BYTES: usize = 256 * 1024 * 1024;
+
 /// The supported append-only Pi JSONL fingerprints.
 pub const JSONL_FINGERPRINTS: [&str; 3] = ["pi-jsonl-v1", "pi-jsonl-v2", "pi-jsonl-v3"];
 
@@ -69,6 +72,18 @@ pub const IMMUTABLE_FINGERPRINT: &str = "pi-immutable-v1";
 const UNKNOWN_JSONL_FINGERPRINT: &str = "pi-jsonl-unknown";
 const UNKNOWN_IMMUTABLE_FINGERPRINT: &str = "pi-immutable-unknown";
 const UNKNOWN_FILE_FINGERPRINT: &str = "pi-unknown-format";
+
+const PI_ENTRY_TYPES: [&str; 9] = [
+    "message",
+    "model_change",
+    "thinking_level_change",
+    "compaction",
+    "branch_summary",
+    "custom",
+    "custom_message",
+    "label",
+    "session_info",
+];
 
 /// How a configured Pi root obtains durable sessions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -391,6 +406,8 @@ pub enum PiCaptureError {
     FormatChanged(UnsupportedFingerprint),
     /// The file-core cursor observed an impossible shrink.
     CursorSourceShrank,
+    /// A complete source record exceeded the plan's hard bound.
+    RecordTooLarge,
 }
 
 impl PiCaptureError {
@@ -403,7 +420,9 @@ impl PiCaptureError {
             }
             Self::RootAbsent => ScanClassification::RootAbsent,
             Self::PermissionDenied => ScanClassification::PermissionDenied,
-            Self::ReadError | Self::CursorSourceShrank => ScanClassification::ReadError,
+            Self::ReadError | Self::CursorSourceShrank | Self::RecordTooLarge => {
+                ScanClassification::ReadError
+            }
         }
     }
 }
@@ -417,6 +436,7 @@ impl fmt::Display for PiCaptureError {
             Self::ReadError => "pi_read_error",
             Self::FormatChanged(_) => "pi_format_changed",
             Self::CursorSourceShrank => "pi_capture_source_shrank",
+            Self::RecordTooLarge => "pi_record_too_large",
         })
     }
 }
@@ -792,7 +812,13 @@ impl JsonlCapture {
                 fingerprint: detected.fingerprint(),
             }));
         }
+        ensure_jsonl_record_sizes(&self.source.path)?;
         let bytes = read_all(&self.source.path)?;
+        if !snapshot_matches_format(&bytes, self.source.format) {
+            return Err(PiCaptureError::FormatChanged(UnsupportedFingerprint {
+                fingerprint: PiFormat::Unknown.fingerprint(),
+            }));
+        }
         let rotated = if let Some(tracker) = self.tracker.as_mut() {
             matches!(
                 tracker.observe(identity, &bytes),
@@ -889,7 +915,19 @@ impl ImmutableCapture {
                 fingerprint: detected.fingerprint(),
             }));
         }
+        if fs::metadata(&self.source.path)
+            .map_err(|error| map_io_error(&error))?
+            .len()
+            > u64::try_from(MAX_RECORD_BYTES).unwrap_or(u64::MAX)
+        {
+            return Err(PiCaptureError::RecordTooLarge);
+        }
         let bytes = read_all(&self.source.path)?;
+        if !immutable_matches_format(&bytes) {
+            return Err(PiCaptureError::FormatChanged(UnsupportedFingerprint {
+                fingerprint: PiFormat::Unknown.fingerprint(),
+            }));
+        }
         let digest = PiDigest::from_raw(sha256(&bytes));
         let probe = digest_probe(digest);
         let rotated = if let Some(tracker) = self.tracker.as_mut() {
@@ -1085,6 +1123,440 @@ fn detect_jsonl(prefix: &[u8]) -> PiFormat {
     let version = json_number_member(line, "version").unwrap_or(1);
     PiFormat::Jsonl {
         version: u8::try_from(version).unwrap_or(0),
+    }
+}
+
+/// Validate every complete JSONL record before it can advance the cursor.
+/// The trailing fragment is deliberately excluded: the file-core cursor owns
+/// incomplete-record handling and will reconsider those bytes on the next
+/// pass. This is the body-level fingerprint gate that prevents a familiar
+/// session header from admitting an unrelated or malformed stream.
+fn snapshot_matches_format(snapshot: &[u8], expected: PiFormat) -> bool {
+    let PiFormat::Jsonl { version } = expected else {
+        return false;
+    };
+    let mut saw_header = false;
+    for line in complete_lines(snapshot) {
+        let line = trim_ascii_space(line);
+        if line.is_empty() {
+            continue;
+        }
+        let Some(record) = parse_pi_record(line) else {
+            return false;
+        };
+        if !saw_header {
+            let version_matches = if version == 1 {
+                !record.has(HAS_VERSION)
+            } else {
+                record.version == Some(i64::from(version))
+            };
+            if record.kind != "session" || !version_matches {
+                return false;
+            }
+            saw_header = true;
+            continue;
+        }
+        if !PI_ENTRY_TYPES.contains(&record.kind.as_str()) {
+            return false;
+        }
+        if version >= 2
+            && (!record.has(HAS_ID) || !record.has(HAS_PARENT_ID) || !record.has(HAS_TIMESTAMP))
+        {
+            return false;
+        }
+    }
+    saw_header
+}
+
+fn immutable_matches_format(bytes: &[u8]) -> bool {
+    if bytes.len() > MAX_RECORD_BYTES {
+        return false;
+    }
+    parse_pi_record(trim_ascii_space(bytes)).is_some_and(|record| record.kind == "session")
+}
+
+fn ensure_jsonl_record_sizes(path: &Path) -> Result<(), PiCaptureError> {
+    let mut file = File::open(path).map_err(|error| map_io_error(&error))?;
+    let mut buffer = [0_u8; 8192];
+    let mut record_bytes = 0_usize;
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| map_io_error(&error))?;
+        if read == 0 {
+            return Ok(());
+        }
+        for byte in &buffer[..read] {
+            record_bytes = record_bytes.saturating_add(1);
+            if record_bytes > MAX_RECORD_BYTES {
+                return Err(PiCaptureError::RecordTooLarge);
+            }
+            if *byte == b'\n' {
+                record_bytes = 0;
+            }
+        }
+    }
+}
+
+fn complete_lines(prefix: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let end = match prefix.last() {
+        Some(b'\n') => prefix.len(),
+        _ => prefix
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(0, |last| last + 1),
+    };
+    prefix[..end].split(|byte| *byte == b'\n')
+}
+
+#[derive(Debug)]
+struct ParsedPiRecord {
+    kind: String,
+    version: Option<i64>,
+    flags: u8,
+}
+
+const HAS_VERSION: u8 = 1;
+const HAS_ID: u8 = 1 << 1;
+const HAS_PARENT_ID: u8 = 1 << 2;
+const HAS_TIMESTAMP: u8 = 1 << 3;
+
+impl ParsedPiRecord {
+    fn has(&self, flag: u8) -> bool {
+        self.flags & flag != 0
+    }
+}
+
+#[derive(Debug)]
+enum JsonValueKind {
+    String(String),
+    Number(Option<i64>),
+    Other,
+}
+
+enum ParsedNumber {
+    Integer(i64),
+    NonInteger,
+}
+
+struct JsonParser<'a> {
+    bytes: &'a [u8],
+    position: usize,
+}
+
+fn parse_pi_record(bytes: &[u8]) -> Option<ParsedPiRecord> {
+    if bytes.len() > MAX_RECORD_BYTES || std::str::from_utf8(bytes).is_err() {
+        return None;
+    }
+    let mut parser = JsonParser { bytes, position: 0 };
+    parser.object()
+}
+
+impl JsonParser<'_> {
+    fn object(&mut self) -> Option<ParsedPiRecord> {
+        self.expect(b'{')?;
+        let mut names = BTreeSet::new();
+        let mut kind = None;
+        let mut version = None;
+        let mut flags = 0;
+        self.whitespace();
+        if self.consume(b'}') {
+            return None;
+        }
+        loop {
+            let name = self.string()?;
+            if !names.insert(name.clone()) {
+                return None;
+            }
+            self.whitespace();
+            self.expect(b':')?;
+            let value = self.value(0)?;
+            match name.as_str() {
+                "type" => {
+                    kind = match value {
+                        JsonValueKind::String(value) => Some(value),
+                        _ => return None,
+                    }
+                }
+                "version" => {
+                    flags |= HAS_VERSION;
+                    version = match value {
+                        JsonValueKind::Number(value) => value,
+                        _ => return None,
+                    };
+                }
+                "id" => flags |= HAS_ID,
+                "parentId" => flags |= HAS_PARENT_ID,
+                "timestamp" => flags |= HAS_TIMESTAMP,
+                _ => {}
+            }
+            self.whitespace();
+            if self.consume(b'}') {
+                break;
+            }
+            self.expect(b',')?;
+            self.whitespace();
+        }
+        self.whitespace();
+        if self.position != self.bytes.len() {
+            return None;
+        }
+        Some(ParsedPiRecord {
+            kind: kind?,
+            version,
+            flags,
+        })
+    }
+
+    fn value(&mut self, depth: usize) -> Option<JsonValueKind> {
+        if depth > 64 {
+            return None;
+        }
+        self.whitespace();
+        match self.bytes.get(self.position).copied()? {
+            b'"' => self.string().map(JsonValueKind::String),
+            b'{' => {
+                self.object_value(depth + 1)?;
+                Some(JsonValueKind::Other)
+            }
+            b'[' => {
+                self.array_value(depth + 1)?;
+                Some(JsonValueKind::Other)
+            }
+            b't' => {
+                self.literal(b"true")?;
+                Some(JsonValueKind::Other)
+            }
+            b'f' => {
+                self.literal(b"false")?;
+                Some(JsonValueKind::Other)
+            }
+            b'n' => {
+                self.literal(b"null")?;
+                Some(JsonValueKind::Other)
+            }
+            b'-' | b'0'..=b'9' => Some(JsonValueKind::Number(match self.number()? {
+                ParsedNumber::Integer(value) => Some(value),
+                ParsedNumber::NonInteger => None,
+            })),
+            _ => None,
+        }
+    }
+
+    fn object_value(&mut self, depth: usize) -> Option<()> {
+        self.expect(b'{')?;
+        let mut names = BTreeSet::new();
+        self.whitespace();
+        if self.consume(b'}') {
+            return Some(());
+        }
+        loop {
+            let name = self.string()?;
+            if !names.insert(name) {
+                return None;
+            }
+            self.whitespace();
+            self.expect(b':')?;
+            self.value(depth)?;
+            self.whitespace();
+            if self.consume(b'}') {
+                return Some(());
+            }
+            self.expect(b',')?;
+            self.whitespace();
+        }
+    }
+
+    fn array_value(&mut self, depth: usize) -> Option<()> {
+        self.expect(b'[')?;
+        self.whitespace();
+        if self.consume(b']') {
+            return Some(());
+        }
+        loop {
+            self.value(depth)?;
+            self.whitespace();
+            if self.consume(b']') {
+                return Some(());
+            }
+            self.expect(b',')?;
+            self.whitespace();
+        }
+    }
+
+    fn string(&mut self) -> Option<String> {
+        self.expect(b'"')?;
+        let mut output = String::new();
+        loop {
+            let start = self.position;
+            while let Some(byte) = self.bytes.get(self.position).copied() {
+                if byte == b'"' || byte == b'\\' || byte < 0x20 {
+                    break;
+                }
+                self.position += 1;
+            }
+            if self.position > start {
+                output.push_str(std::str::from_utf8(&self.bytes[start..self.position]).ok()?);
+            }
+            match self.bytes.get(self.position).copied()? {
+                b'"' => {
+                    self.position += 1;
+                    return Some(output);
+                }
+                b'\\' => {
+                    self.position += 1;
+                    let escape = self.bytes.get(self.position).copied()?;
+                    if escape == b'u' {
+                        output.push(self.unicode_escape()?);
+                        continue;
+                    }
+                    output.push(match escape {
+                        b'"' => '"',
+                        b'\\' => '\\',
+                        b'/' => '/',
+                        b'b' => '\u{0008}',
+                        b'f' => '\u{000c}',
+                        b'n' => '\n',
+                        b'r' => '\r',
+                        b't' => '\t',
+                        _ => return None,
+                    });
+                    self.position += 1;
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    fn unicode_escape(&mut self) -> Option<char> {
+        self.position += 1;
+        let mut value = 0_u32;
+        for _ in 0..4 {
+            let digit = hex_digit(self.bytes.get(self.position).copied()?);
+            if digit == 16 {
+                return None;
+            }
+            value = value.checked_mul(16)? + u32::from(digit);
+            self.position += 1;
+        }
+        char::from_u32(value)
+    }
+
+    fn number(&mut self) -> Option<ParsedNumber> {
+        let start = self.position;
+        self.consume(b'-');
+        match self.bytes.get(self.position).copied()? {
+            b'0' => self.position += 1,
+            b'1'..=b'9' => {
+                self.position += 1;
+                while self
+                    .bytes
+                    .get(self.position)
+                    .is_some_and(u8::is_ascii_digit)
+                {
+                    self.position += 1;
+                }
+            }
+            _ => return None,
+        }
+        let mut integer = true;
+        if self.consume(b'.') {
+            integer = false;
+            if !self
+                .bytes
+                .get(self.position)
+                .is_some_and(u8::is_ascii_digit)
+            {
+                return None;
+            }
+            while self
+                .bytes
+                .get(self.position)
+                .is_some_and(u8::is_ascii_digit)
+            {
+                self.position += 1;
+            }
+        }
+        if self
+            .bytes
+            .get(self.position)
+            .is_some_and(|byte| *byte == b'e' || *byte == b'E')
+        {
+            integer = false;
+            self.position += 1;
+            if self
+                .bytes
+                .get(self.position)
+                .is_some_and(|byte| *byte == b'+' || *byte == b'-')
+            {
+                self.position += 1;
+            }
+            if !self
+                .bytes
+                .get(self.position)
+                .is_some_and(u8::is_ascii_digit)
+            {
+                return None;
+            }
+            while self
+                .bytes
+                .get(self.position)
+                .is_some_and(u8::is_ascii_digit)
+            {
+                self.position += 1;
+            }
+        }
+        Some(if integer {
+            ParsedNumber::Integer(
+                std::str::from_utf8(&self.bytes[start..self.position])
+                    .ok()?
+                    .parse()
+                    .ok()?,
+            )
+        } else {
+            ParsedNumber::NonInteger
+        })
+    }
+
+    fn literal(&mut self, literal: &[u8]) -> Option<()> {
+        self.bytes
+            .get(self.position..self.position + literal.len())
+            .filter(|candidate| *candidate == literal)
+            .map(|_| {
+                self.position += literal.len();
+            })
+    }
+
+    fn whitespace(&mut self) {
+        while self
+            .bytes
+            .get(self.position)
+            .is_some_and(u8::is_ascii_whitespace)
+        {
+            self.position += 1;
+        }
+    }
+
+    fn expect(&mut self, byte: u8) -> Option<()> {
+        self.consume(byte).then_some(())
+    }
+
+    fn consume(&mut self, byte: u8) -> bool {
+        if self.bytes.get(self.position) == Some(&byte) {
+            self.position += 1;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn hex_digit(byte: u8) -> u8 {
+    match byte {
+        b'0'..=b'9' => byte - b'0',
+        b'a'..=b'f' => byte - b'a' + 10,
+        b'A'..=b'F' => byte - b'A' + 10,
+        _ => 16,
     }
 }
 
@@ -1426,7 +1898,7 @@ mod tests {
         let path = root.join("session.jsonl");
         write(
             &path,
-            br#"{"type":"session","version":3}
+            br#"{"type":"session"}
 {"type":"message""#,
         );
         let configured = adapter(&root);
@@ -1440,7 +1912,7 @@ mod tests {
         let first = capture.next_chunk().expect("first pass").expect("header");
         assert_eq!(
             first.bytes,
-            br#"{"type":"session","version":3}
+            br#"{"type":"session"}
 "#
         );
         let generation = first.generation.clone();
