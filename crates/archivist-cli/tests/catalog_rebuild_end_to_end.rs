@@ -12,7 +12,7 @@
 
 #![allow(clippy::manual_async_fn, clippy::too_many_lines)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::future::Future;
 use std::process::Command;
@@ -50,6 +50,12 @@ const TENANT: &str = "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b";
 const OTHER_TENANT: &str = "1a2b3c4d-5e6f-4a1b-9c2d-3e4f5a6b7c8d";
 const OBSERVED_AT: &str = "2026-09-28T12:00:00Z";
 const WITNESS: &str = "catalog-rebuild-e2e-transcript-witness";
+const RAW_CREDENTIAL: &str = "file:/tmp/archivist-e2e-raw-credentials";
+const CONTROL_CREDENTIAL: &str = "file:/tmp/archivist-e2e-control-credentials";
+const OFFLINE_RESTORE_CREDENTIAL: &str = "file:/tmp/archivist-e2e-offline-credentials";
+const CATALOG_WRITER_CREDENTIAL: &str = "file:/tmp/archivist-e2e-catalog-credentials";
+const DERIVED_WRITER_CREDENTIAL: &str = "file:/tmp/archivist-e2e-derived-credentials";
+
 #[derive(Clone, Copy, Debug)]
 enum Scenario {
     GoldenBare,
@@ -59,6 +65,8 @@ enum Scenario {
     MissingCredential,
     SharedWriterIdentity,
     IngestIdentityReuse,
+    DerivedIdentityReuse,
+    OfflineIdentityReuse,
     WrongPrefixCredential,
 }
 
@@ -70,6 +78,8 @@ const SCENARIOS: &[Scenario] = &[
     Scenario::MissingCredential,
     Scenario::SharedWriterIdentity,
     Scenario::IngestIdentityReuse,
+    Scenario::DerivedIdentityReuse,
+    Scenario::OfflineIdentityReuse,
     Scenario::WrongPrefixCredential,
 ];
 
@@ -83,6 +93,8 @@ impl Scenario {
             Self::MissingCredential => "missing-credential",
             Self::SharedWriterIdentity => "shared-writer-identity",
             Self::IngestIdentityReuse => "ingest-identity-reuse",
+            Self::DerivedIdentityReuse => "derived-identity-reuse",
+            Self::OfflineIdentityReuse => "offline-identity-reuse",
             Self::WrongPrefixCredential => "wrong-prefix-credential",
         }
     }
@@ -102,10 +114,6 @@ impl Scenario {
         self.is_success() || matches!(self, Self::WrongPrefixCredential)
     }
 
-    fn is_json(self) -> bool {
-        matches!(self, Self::GoldenJson)
-    }
-
     fn expected_exit(self) -> i32 {
         match self {
             Self::GoldenBare | Self::GoldenJson | Self::Retry => 0,
@@ -119,22 +127,22 @@ impl Scenario {
             Self::GoldenBare | Self::GoldenJson | Self::Retry => None,
             Self::MissingConfiguration => Some("cli.decision_missing"),
             Self::MissingCredential => Some("client.secret_ref_refused"),
-            Self::SharedWriterIdentity | Self::IngestIdentityReuse => Some("cli.usage_error"),
+            Self::SharedWriterIdentity
+            | Self::IngestIdentityReuse
+            | Self::DerivedIdentityReuse
+            | Self::OfflineIdentityReuse => Some("cli.usage_error"),
             Self::WrongPrefixCredential => Some("client.internal_error"),
         }
     }
 
-    fn argv(self) -> Vec<OsString> {
-        let mut args = vec![OsString::from("--non-interactive")];
-        if self.is_json() {
-            args.push(OsString::from("--json"));
-        }
-        args.extend([
+    fn argv() -> Vec<OsString> {
+        vec![
+            OsString::from("--non-interactive"),
+            OsString::from("--json"),
             OsString::from("catalog"),
             OsString::from("rebuild"),
             OsString::from("--from-occurrences"),
-        ]);
-        args
+        ]
     }
 }
 
@@ -159,6 +167,8 @@ fn run_parent() {
             Scenario::MissingCredential
                 | Scenario::SharedWriterIdentity
                 | Scenario::IngestIdentityReuse
+                | Scenario::DerivedIdentityReuse
+                | Scenario::OfflineIdentityReuse
         ) {
             for (name, value) in composition_environment(*scenario) {
                 command.env(name, value);
@@ -174,11 +184,7 @@ fn run_parent() {
         );
         if let Some(code) = scenario.expected_diagnostic() {
             assert!(output.stdout.is_empty(), "{story}: refusal has no stdout");
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            assert!(
-                stderr.starts_with(&format!("archivist {code}:")),
-                "{story}: diagnostic code (stderr: {stderr})",
-            );
+            assert_json_error(story, &output.stderr, code);
         } else {
             assert!(
                 output.stderr.is_empty(),
@@ -203,7 +209,7 @@ fn run_child(scenario: Scenario) {
                 .expect("the production catalog handler is schema-bound");
         }
     }
-    let exit = router.run(&scenario.argv());
+    let exit = router.run(&Scenario::argv());
     if scenario.is_success() && exit == 0 {
         verify_landed_state(scenario);
     }
@@ -277,23 +283,26 @@ fn assert_success_output(scenario: Scenario, stdout: &[u8]) {
         !String::from_utf8_lossy(framed).contains(WITNESS),
         "{story}: raw transcript text stays out of result output",
     );
-    let result = if scenario.is_json() {
-        let Value::Object(envelope) = &document else {
-            panic!("{story}: --json output is an object");
-        };
-        assert_eq!(envelope.len(), 4, "{story}: output envelope is closed");
-        assert_eq!(
-            envelope.get("schema"),
-            Some(&Value::Text("archivist.cli-output/v1".to_owned()))
-        );
-        assert_eq!(
-            envelope.get("command"),
-            Some(&Value::Text("catalog-rebuild".to_owned()))
-        );
-        envelope.get("result").expect("envelope result")
-    } else {
-        &document
+    let Value::Object(envelope) = &document else {
+        panic!("{story}: --json output is an object");
     };
+    assert_eq!(envelope.len(), 4, "{story}: output envelope is closed");
+    assert_eq!(
+        envelope.get("schema"),
+        Some(&Value::Text("archivist.cli-output/v1".to_owned()))
+    );
+    assert_eq!(
+        envelope.get("command"),
+        Some(&Value::Text("catalog-rebuild".to_owned()))
+    );
+    let Some(Value::Text(generated_at)) = envelope.get("generated_at") else {
+        panic!("{story}: generated_at is text");
+    };
+    assert!(
+        Timestamp::parse(generated_at).is_ok(),
+        "{story}: generated_at is RFC 3339 UTC"
+    );
+    let result = envelope.get("result").expect("envelope result");
     assert_catalog_result(story, result);
 }
 
@@ -325,11 +334,27 @@ fn assert_catalog_result(story: &str, result: &Value) {
         record.get("schema"),
         Some(&Value::Text("archivist.cli-result/v1".to_owned()))
     );
+    assert_eq!(record.get("catalog_rebuild_version"), Some(&Value::Int(1)));
+    assert_eq!(
+        record.get("pipeline_id"),
+        Some(&Value::Text("usage".to_owned()))
+    );
+    assert_eq!(
+        record.get("pipeline_version"),
+        Some(&Value::Text("1".to_owned()))
+    );
+    assert_eq!(record.get("usage_summary_version"), Some(&Value::Int(1)));
+    assert_eq!(
+        record.get("usage_projection_version"),
+        Some(&Value::Text("1".to_owned()))
+    );
     assert_eq!(
         record.get("tenant_id"),
         Some(&Value::Text(TENANT.to_owned()))
     );
+    assert_digest(story, record, "inventory_digest");
     assert_eq!(record.get("occurrences_total"), Some(&Value::Int(1)));
+    assert_eq!(record.get("attestations_observed"), Some(&Value::Int(1)));
     assert_eq!(record.get("complete"), Some(&Value::Bool(true)));
     let Value::Object(row_states) = record.get("row_states").expect("row states") else {
         panic!("{story}: row states is an object");
@@ -338,10 +363,62 @@ fn assert_catalog_result(story: &str, result: &Value) {
     assert_eq!(row_states.get("absent"), Some(&Value::Int(0)));
     assert_eq!(row_states.get("malformed"), Some(&Value::Int(0)));
     assert_eq!(row_states.get("unsupported"), Some(&Value::Int(0)));
+    assert_digest(story, record, "chain_digest");
+    assert_digest(story, record, "checkpoint_digest");
     let Some(Value::Text(checkpoint_key)) = record.get("checkpoint_key") else {
         panic!("{story}: checkpoint key is text");
     };
-    assert!(checkpoint_key.starts_with(&format!("tenants/{TENANT}/v1/catalog/checkpoints/")));
+    let checkpoint = CatalogCheckpointKey::parse(checkpoint_key)
+        .unwrap_or_else(|error| panic!("{story}: checkpoint key is canonical: {error:?}"));
+    assert_eq!(checkpoint.tenant(), &tenant());
+}
+
+fn assert_digest(story: &str, record: &Object, member: &str) {
+    let Some(Value::Text(digest)) = record.get(member) else {
+        panic!("{story}: {member} is text");
+    };
+    assert_eq!(digest.len(), 64, "{story}: {member} is a SHA-256 digest");
+    assert!(
+        digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+        "{story}: {member} is lowercase hexadecimal"
+    );
+}
+
+fn assert_json_error(story: &str, stderr: &[u8], code: &str) {
+    let framed = stderr
+        .strip_suffix(b"\n")
+        .unwrap_or_else(|| panic!("{story}: JSON diagnostic has one trailing newline"));
+    let document =
+        json::parse(framed).unwrap_or_else(|error| panic!("{story}: error JSON: {error}"));
+    assert_eq!(
+        framed,
+        document.canonical_bytes().as_slice(),
+        "{story}: error output is canonical JSON"
+    );
+    let Value::Object(error) = document else {
+        panic!("{story}: diagnostic is an object");
+    };
+    assert_eq!(error.len(), 6, "{story}: error body is closed");
+    assert_eq!(
+        error.get("schema"),
+        Some(&Value::Text("archivist.error/v1".to_owned()))
+    );
+    assert_eq!(error.get("code"), Some(&Value::Text(code.to_owned())));
+    assert_eq!(error.get("retryable"), Some(&Value::Bool(false)));
+    assert!(matches!(error.get("request_id"), Some(Value::Null)));
+    let Some(Value::Text(correlation_id)) = error.get("correlation_id") else {
+        panic!("{story}: correlation_id is text");
+    };
+    assert!(
+        RequestId::parse(correlation_id).is_ok(),
+        "{story}: correlation_id is a UUIDv7"
+    );
+    let Some(Value::Text(message)) = error.get("message") else {
+        panic!("{story}: message is text");
+    };
+    assert!(!message.is_empty() && !message.contains(['\n', '\r', '{', '}']));
 }
 
 fn verify_landed_state(scenario: Scenario) {
@@ -351,16 +428,39 @@ fn verify_landed_state(scenario: Scenario) {
         2,
         "one content-addressed put per scoped writer"
     );
+    let counters = store.backend.counters();
+    assert_eq!(counters.catalog_puts, 1, "catalog writer performs one put");
+    assert_eq!(
+        counters.catalog_lists,
+        1 + usize::from(matches!(scenario, Scenario::Retry))
+    );
+    assert_eq!(counters.derived_puts, 1, "derived writer performs one put");
+    assert_eq!(
+        counters.derived_lists, 0,
+        "derived writer never lists catalog state"
+    );
     assert_eq!(
         store.audit.checkpoint_reads(),
         usize::from(matches!(scenario, Scenario::Retry)),
         "retry reads the prior checkpoint through the audit identity",
     );
     assert_eq!(
-        store.backend.counters().lists,
+        counters.lists,
         1 + usize::from(matches!(scenario, Scenario::Retry)),
         "each pass lists the checkpoint namespace through the catalog identity",
     );
+
+    let identities = [
+        store.audit.credential_ref,
+        CATALOG_WRITER_CREDENTIAL,
+        DERIVED_WRITER_CREDENTIAL,
+    ];
+    assert_eq!(
+        identities.iter().collect::<BTreeSet<_>>().len(),
+        identities.len(),
+        "audit, catalog, and derived identities are pairwise distinct"
+    );
+    assert!(!identities.contains(&RAW_CREDENTIAL));
 
     let objects = store
         .backend
@@ -368,15 +468,29 @@ fn verify_landed_state(scenario: Scenario) {
         .lock()
         .expect("scoped backend object lock")
         .clone();
-    for (key, bytes) in objects.iter().filter(|(key, _)| key.contains("/catalog/")) {
+    let catalog_objects = objects
+        .iter()
+        .filter(|(key, _)| key.contains("/catalog/"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        catalog_objects.len(),
+        1,
+        "one catalog checkpoint object lands"
+    );
+    for (key, bytes) in catalog_objects {
         let parsed = CatalogCheckpointKey::parse(key).expect("catalog key grammar");
+        assert_eq!(parsed.tenant(), &tenant());
         assert_eq!(parsed.checkpoint(), &blob_digest(bytes));
     }
-    for (key, bytes) in objects.iter().filter(|(key, _)| key.contains("/derived/")) {
-        assert!(
-            key.starts_with(&format!("tenants/{TENANT}/v1/derived/")),
-            "derived writer stayed in its namespace: {key}",
-        );
+    let derived_objects = objects
+        .iter()
+        .filter(|(key, _)| key.contains("/derived/"))
+        .collect::<Vec<_>>();
+    assert_eq!(derived_objects.len(), 1, "one derived row object lands");
+    for (key, bytes) in derived_objects {
+        let parsed = DerivedObjectKey::parse(key).expect("derived key grammar");
+        assert_eq!(parsed.tenant(), &tenant());
+        assert!(key.starts_with(&format!("tenants/{TENANT}/v1/derived/usage/1/")));
         assert!(!String::from_utf8_lossy(bytes).contains(WITNESS));
         let Value::Object(row) = json::parse(bytes).expect("derived row JSON") else {
             panic!("derived row is an object");
@@ -393,17 +507,24 @@ fn verify_landed_state(scenario: Scenario) {
 }
 
 fn composition_environment(scenario: Scenario) -> Vec<(&'static str, String)> {
-    let raw = "file:/tmp/archivist-e2e-raw-credentials".to_owned();
-    let control = "file:/tmp/archivist-e2e-control-credentials".to_owned();
+    let raw = RAW_CREDENTIAL.to_owned();
+    let control = CONTROL_CREDENTIAL.to_owned();
     let catalog = if matches!(scenario, Scenario::IngestIdentityReuse) {
         raw.clone()
     } else {
-        "file:/tmp/archivist-e2e-catalog-credentials".to_owned()
+        CATALOG_WRITER_CREDENTIAL.to_owned()
     };
     let derived = if matches!(scenario, Scenario::SharedWriterIdentity) {
         catalog.clone()
+    } else if matches!(scenario, Scenario::DerivedIdentityReuse) {
+        raw.clone()
     } else {
-        "file:/tmp/archivist-e2e-derived-credentials".to_owned()
+        DERIVED_WRITER_CREDENTIAL.to_owned()
+    };
+    let offline = if matches!(scenario, Scenario::OfflineIdentityReuse) {
+        raw.clone()
+    } else {
+        OFFLINE_RESTORE_CREDENTIAL.to_owned()
     };
     vec![
         (
@@ -427,6 +548,7 @@ fn composition_environment(scenario: Scenario) -> Vec<(&'static str, String)> {
         ),
         ("ARCHIVIST_STORAGE_RAW_WRITE_CREDENTIALS_REF", raw),
         ("ARCHIVIST_STORAGE_CONTROL_READ_CREDENTIALS_REF", control),
+        ("ARCHIVIST_STORAGE_OFFLINE_RESTORE_CREDENTIALS_REF", offline),
         ("ARCHIVIST_STORAGE_CATALOG_WRITE_CREDENTIALS_REF", catalog),
         ("ARCHIVIST_STORAGE_DERIVED_WRITE_CREDENTIALS_REF", derived),
         (
@@ -445,6 +567,10 @@ fn composition_environment(scenario: Scenario) -> Vec<(&'static str, String)> {
 struct BackendCounters {
     puts: usize,
     lists: usize,
+    catalog_puts: usize,
+    catalog_lists: usize,
+    derived_puts: usize,
+    derived_lists: usize,
 }
 
 /// A small object-store policy double. Its two grants stand in for the
@@ -478,7 +604,7 @@ impl ScopedBackend {
         *self.counters.lock().expect("scoped backend counter lock")
     }
 
-    fn put(&self, grant: &str, key: &str, bytes: &[u8]) -> Result<(), StorageError> {
+    fn put(&self, grant: &str, key: &str, bytes: &[u8], catalog: bool) -> Result<(), StorageError> {
         if !key.starts_with(grant) {
             return Err(StorageError::new(
                 StorageErrorKind::ScopeViolation,
@@ -489,14 +615,17 @@ impl ScopedBackend {
             .lock()
             .expect("scoped backend object lock")
             .insert(key.to_owned(), bytes.to_vec());
-        self.counters
-            .lock()
-            .expect("scoped backend counter lock")
-            .puts += 1;
+        let mut counters = self.counters.lock().expect("scoped backend counter lock");
+        counters.puts += 1;
+        if catalog {
+            counters.catalog_puts += 1;
+        } else {
+            counters.derived_puts += 1;
+        }
         Ok(())
     }
 
-    fn list(&self, grant: &str, prefix: &str) -> Result<Vec<String>, StorageError> {
+    fn list(&self, grant: &str, prefix: &str, catalog: bool) -> Result<Vec<String>, StorageError> {
         if !prefix.starts_with(grant) {
             return Err(StorageError::new(
                 StorageErrorKind::ScopeViolation,
@@ -511,10 +640,13 @@ impl ScopedBackend {
             .filter(|key| key.starts_with(prefix))
             .cloned()
             .collect();
-        self.counters
-            .lock()
-            .expect("scoped backend counter lock")
-            .lists += 1;
+        let mut counters = self.counters.lock().expect("scoped backend counter lock");
+        counters.lists += 1;
+        if catalog {
+            counters.catalog_lists += 1;
+        } else {
+            counters.derived_lists += 1;
+        }
         Ok(keys)
     }
 }
@@ -525,14 +657,14 @@ impl CatalogWriteBackend for ScopedBackend {
         key: &CatalogCheckpointKey,
         bytes: &[u8],
     ) -> Result<(), StorageError> {
-        self.put(&self.catalog_grant, key.as_str(), bytes)
+        self.put(&self.catalog_grant, key.as_str(), bytes, true)
     }
 
     async fn list_catalog_objects(
         &self,
         prefix: &CatalogListPrefix,
     ) -> Result<Vec<String>, StorageError> {
-        self.list(&self.catalog_grant, prefix.as_str())
+        self.list(&self.catalog_grant, prefix.as_str(), true)
     }
 }
 
@@ -542,14 +674,14 @@ impl DerivedWriteBackend for ScopedBackend {
         key: &DerivedObjectKey,
         bytes: &[u8],
     ) -> Result<(), StorageError> {
-        self.put(&self.derived_grant, key.as_str(), bytes)
+        self.put(&self.derived_grant, key.as_str(), bytes, false)
     }
 
     async fn list_derived_objects(
         &self,
         prefix: &DerivedListPrefix,
     ) -> Result<Vec<String>, StorageError> {
-        self.list(&self.derived_grant, prefix.as_str())
+        self.list(&self.derived_grant, prefix.as_str(), false)
     }
 }
 
@@ -609,6 +741,7 @@ impl FixtureStore {
                 checkpoints: Arc::clone(&checkpoints),
                 inventory,
                 checkpoint_reads: Arc::new(AtomicUsize::new(0)),
+                credential_ref: OFFLINE_RESTORE_CREDENTIAL,
             },
             catalog: S3CatalogWriteStore::new(writers.catalog().clone(), backend.clone()),
             derived: S3DerivedWriteStore::new(writers.derived().clone(), backend.clone()),
@@ -622,6 +755,7 @@ struct FakeAudit {
     checkpoints: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
     inventory: FrozenInventory,
     checkpoint_reads: Arc<AtomicUsize>,
+    credential_ref: &'static str,
 }
 
 impl FakeAudit {
