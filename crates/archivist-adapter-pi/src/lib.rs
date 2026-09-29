@@ -1876,7 +1876,7 @@ mod tests {
         let root = temp_root("jsonl-v3");
         let path = root.join("project/session.jsonl");
         let bytes = br#"{"type":"session","version":3}
-{"type":"message"}
+{"type":"message","id":"m1","parentId":null,"timestamp":"2026-09-28T00:00:00Z"}
 "#;
         write(&path, bytes);
 
