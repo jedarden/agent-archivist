@@ -77,6 +77,7 @@ NOTE_PATH = Path("docs/notes/storage-profiles.md")
 README_PATH = Path("README.md")
 RELEASE_PATH = Path("RELEASE.md")
 SUPPORT_PATH = Path("SUPPORT.md")
+DOD_PATH = Path("scripts/definition-of-done.sh")
 
 REGISTRY_SCHEMA = "archivist.storage-profiles/v1"
 
@@ -193,6 +194,46 @@ def identifier_violations(where: str, text: str) -> list[str]:
         for pattern, what in IDENTIFIER_PATTERNS
         if pattern.search(text or "")
     ]
+
+
+STORAGE_GATE_LINE = re.compile(
+    r"^\s*run_check\s+\"storage profiles\"\s+"
+    r"python3\s+tools/check-storage-profiles\.py\s+--self-test\s*$",
+    re.M,
+)
+FAST_LANE_BLOCK = (
+    'if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then',
+    'if [ "$LANE" = "slow" ] || [ "$LANE" = "all" ]; then',
+)
+
+
+def validate_definition_of_done(text: str) -> list[str]:
+    """Keep the registry gate in the fast lane used by ``--all``.
+
+    The checker cannot enforce its own invocation if the invocation disappears
+    from the definition-of-done script.  Checking the integration here gives
+    the self-test a regression case for that exact failure, while the normal
+    registry check also catches a manually run tree whose release gate has
+    drifted.
+    """
+    violations: list[str] = []
+    matches = list(STORAGE_GATE_LINE.finditer(text))
+    if len(matches) != 1:
+        violations.append(
+            "scripts/definition-of-done.sh must invoke the storage-profile "
+            "self-test exactly once"
+        )
+        return violations
+
+    fast_start = text.find(FAST_LANE_BLOCK[0])
+    slow_start = text.find(FAST_LANE_BLOCK[1])
+    match_start = matches[0].start()
+    if fast_start < 0 or slow_start < 0 or not fast_start < match_start < slow_start:
+        violations.append(
+            "the storage-profile self-test must run in the definition-of-done "
+            "fast/all lane"
+        )
+    return violations
 
 
 def validate_registry(registry: dict) -> list[str]:
@@ -787,6 +828,49 @@ SELF_TEST_REGISTRY_CASES = [
      lambda r: r["records"][0].update({"date": "2026-02-30"})),
 ]
 
+
+# Every free-text field is subject to PUB-002/SEC-010's identifier ban. Keep
+# one mutation per field so a future shape change cannot quietly stop scanning
+# one of the record variants. The target record at the end of the committed
+# registry supplies the qualified-only fields.
+SELF_TEST_SENSITIVE_FIELD_CASES = [
+    ("an infrastructure URL in a profile description", True,
+     lambda r: r["profiles"]["aws-s3"].update(
+         description="community profile at https://example.invalid")),
+    ("an address-shaped submitter", True,
+     lambda r: r["records"][0].update(
+         submitted_by="operator@example.invalid")),
+    ("an IPv4 address in a reason", True,
+     lambda r: r["records"][0].update(reason="run reached 192.0.2.10")),
+    ("a tailnet hostname in a record note", True,
+     lambda r: r["records"][0].update(note="operator.example.ts.net")),
+    ("an address-shaped qualified operator", True,
+     lambda r: r["records"][-1].update(operator="operator@example.invalid")),
+    ("an infrastructure URL in a suite revision", True,
+     lambda r: r["records"][-1].update(
+         suite_revision="https://example.invalid/revision")),
+]
+
+
+def remove_storage_gate(text: str) -> str:
+    return STORAGE_GATE_LINE.sub("# storage-profile gate removed", text, count=1)
+
+
+def remove_all_storage_gate(text: str) -> str:
+    return text.replace(
+        'if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then',
+        'if [ "$LANE" = "fast" ]; then',
+        1,
+    )
+
+
+SELF_TEST_INTEGRATION_CASES = [
+    ("the storage gate in the fast/all lane", False, lambda text: text),
+    ("the definition-of-done storage gate removed", True, remove_storage_gate),
+    ("the storage gate no longer included by --all", True,
+     remove_all_storage_gate),
+]
+
 # A qualified record changes a profile's standing, so it can only be shown
 # to pass alongside the note edit that records the new standing (SP-008):
 # these cases mutate the registry and the note together. A qualified record
@@ -898,13 +982,40 @@ SELF_TEST_LIVE_RELEASE_CASES = [
 
 
 def run_self_test(base_registry: dict, base_readme: str, base_note: str,
-                  base_release: str, base_support: str) -> int:
+                  base_release: str, base_support: str, base_dod: str) -> int:
     passed = 0
     failed = 0
 
     for label, must_reject, mutation in SELF_TEST_REGISTRY_CASES:
         registry = apply_mutation(base_registry, mutation)
         violations = validate_all(registry, base_readme, base_note)
+        rejected = bool(violations)
+        if rejected == must_reject:
+            passed += 1
+            print(f"  ok  {'rejects' if rejected else 'accepts'}: {label}")
+        else:
+            failed += 1
+            print(f"  FAIL {'should reject' if must_reject else 'should accept'}: "
+                  f"{label}")
+            for violation in violations:
+                print(f"       violation: {violation}")
+
+    for label, must_reject, mutation in SELF_TEST_SENSITIVE_FIELD_CASES:
+        registry = apply_mutation(base_registry, mutation)
+        violations = validate_registry(registry)
+        rejected = bool(violations)
+        if rejected == must_reject:
+            passed += 1
+            print(f"  ok  {'rejects' if rejected else 'accepts'}: {label}")
+        else:
+            failed += 1
+            print(f"  FAIL {'should reject' if must_reject else 'should accept'}: "
+                  f"{label}")
+            for violation in violations:
+                print(f"       violation: {violation}")
+
+    for label, must_reject, mutation in SELF_TEST_INTEGRATION_CASES:
+        violations = validate_definition_of_done(mutation(base_dod))
         rejected = bool(violations)
         if rejected == must_reject:
             passed += 1
@@ -992,15 +1103,17 @@ def main(argv: list[str]) -> int:
         note = load_text(ROOT / NOTE_PATH)
         release = load_text(ROOT / RELEASE_PATH)
         support = load_text(ROOT / SUPPORT_PATH)
+        dod = load_text(ROOT / DOD_PATH)
         if (registry is None or readme is None or note is None
-                or release is None or support is None):
+                or release is None or support is None or dod is None):
             return 2
         if (validate_all(registry, readme, note)
                 or validate_release_support(registry, release, support,
-                                            readme, note)):
-            fail("self-test base: the committed registry itself is invalid")
+                                            readme, note)
+                or validate_definition_of_done(dod)):
+            fail("self-test base: the committed storage-profile gate is invalid")
             return 2
-        return run_self_test(registry, readme, note, release, support)
+        return run_self_test(registry, readme, note, release, support, dod)
     requested_release = None
     if len(argv) == 3 and argv[1] == "--release":
         requested_release = argv[2]
@@ -1013,13 +1126,15 @@ def main(argv: list[str]) -> int:
     note = load_text(ROOT / NOTE_PATH)
     release = load_text(ROOT / RELEASE_PATH)
     support = load_text(ROOT / SUPPORT_PATH)
+    dod = load_text(ROOT / DOD_PATH)
     if (registry is None or readme is None or note is None
-            or release is None or support is None):
+            or release is None or support is None or dod is None):
         return 2
 
     violations = (validate_all(registry, readme, note)
                   + validate_release_support(registry, release, support,
-                                             readme, note))
+                                             readme, note)
+                  + validate_definition_of_done(dod))
     if requested_release is not None:
         violations += validate_release_live(registry, requested_release)
     for violation in violations:
