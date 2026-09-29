@@ -48,6 +48,11 @@ Policy, one rule per check below:
    and the ``#[ignore]``d suite is invoked by the definition of done's
    slow lane — so the matrix's marathon evidence is re-measured by a gate
    and its published numbers cannot drift from what the suite asserts.
+8. **support-claim evidence** — every supported fingerprint row has positive
+   conformance test references and every applicable negative/fault class from
+   the pre-claim gate. Each reference names a real Rust ``#[test]`` function,
+   and the slow definition-of-done lane executes the workspace test set that
+   contains those references; a documentation-only claim cannot pass.
 
 ``--self-test`` runs the same validators against the committed sources and
 note with embedded mutations and requires every rejection path to fire and
@@ -144,6 +149,78 @@ RECONCILIATION_HEADER = [
     "Observed fingerprint", "Verdict", "Admitted by", "Evidence",
 ]
 COVERAGE_HEADER = ["State", "Token", "Rank", "Meaning"]
+EVIDENCE_HEADER = [
+    "Adapter", "Source fingerprint", "Positive conformance tests",
+    "Applicable negative/fault tests",
+]
+
+# The names are the evidence classes from the adapter-capture pre-claim gate.
+# A matrix row is not claimable merely because a test file exists: every
+# applicable class must be attached to that exact fingerprint row below.
+EVIDENCE_CLASSES = frozenset({
+    "partial-record-faults",
+    "rewrite-generation-faults",
+    "discovery-fault-negatives",
+    "permission-faults",
+    "unknown-fingerprint-negatives",
+    "content-freedom-negatives",
+    "hostile-source-negatives",
+    "database-contention-faults",
+    "projection-allowlist-negatives",
+    "parity-mismatch-faults",
+})
+
+JSONL_EVIDENCE_CLASSES = frozenset({
+    "partial-record-faults",
+    "rewrite-generation-faults",
+    "discovery-fault-negatives",
+    "permission-faults",
+    "unknown-fingerprint-negatives",
+    "content-freedom-negatives",
+    "hostile-source-negatives",
+})
+IMMUTABLE_EVIDENCE_CLASSES = frozenset({
+    "rewrite-generation-faults",
+    "discovery-fault-negatives",
+    "permission-faults",
+    "unknown-fingerprint-negatives",
+    "content-freedom-negatives",
+    "hostile-source-negatives",
+})
+DATABASE_EVIDENCE_CLASSES = frozenset({
+    "database-contention-faults",
+    "projection-allowlist-negatives",
+    "parity-mismatch-faults",
+    "discovery-fault-negatives",
+    "permission-faults",
+    "unknown-fingerprint-negatives",
+    "content-freedom-negatives",
+    "hostile-source-negatives",
+})
+
+# A registry of the source files named by the evidence table. Keeping this
+# list explicit makes a moved evidence suite fail closed instead of turning a
+# typo in the note into an unverified claim.
+EVIDENCE_SOURCE_PATHS = (
+    Path("crates/archivist-adapter-claude/src/lib.rs"),
+    Path("crates/archivist-adapter-codex/src/lib.rs"),
+    Path("crates/archivist-adapter-opencode/tests/database_faults.rs"),
+    Path("crates/archivist-adapter-opencode/tests/database_parity_oracle.rs"),
+    Path("crates/archivist-adapter-opencode/tests/projection.rs"),
+    Path("crates/archivist-adapter-opencode/tests/schema.rs"),
+    Path("crates/archivist-adapter-opencode/tests/snapshot.rs"),
+    Path("crates/archivist-adapter-opencode/tests/store_connection.rs"),
+    Path("crates/archivist-adapter-pi/src/lib.rs"),
+    Path("crates/archivist-adapter-pi/tests/ac11_evidence.rs"),
+    Path("crates/archivist-adapter-pi/tests/pi_corpus.rs"),
+)
+
+ADAPTER_EVIDENCE_PREFIX = {
+    "claude-jsonl": "crates/archivist-adapter-claude/",
+    "codex-jsonl": "crates/archivist-adapter-codex/",
+    "opencode": "crates/archivist-adapter-opencode/",
+    "pi": "crates/archivist-adapter-pi/",
+}
 
 # Rule 6: sentences whose retraction is itself a compatibility change.
 # Matched whitespace-normalized so a reflow cannot break a pin.
@@ -374,8 +451,14 @@ def check_adapter_matrix(sources: dict[str, str], note: str) -> bool:
 
     ok = True
     seen: dict[str, set[str]] = {}
+    seen_rows: set[tuple[str, str]] = set()
     for row in rows:
         adapter_id = row["adapter"][0]
+        row_key = (adapter_id, row["fingerprint"][0])
+        if row_key in seen_rows:
+            fail(f"published-matrix repeats fingerprint row {row_key!r}")
+            ok = False
+        seen_rows.add(row_key)
         spec = adapters.get(adapter_id)
         if spec is None:
             fail(f"published-matrix row names unknown adapter "
@@ -394,6 +477,173 @@ def check_adapter_matrix(sources: dict[str, str], note: str) -> bool:
             fail(f"{adapter_id}: published fingerprints {sorted(matrix_set)}"
                  f" != allowlist {sorted(spec['fingerprints'])}")
             ok = False
+    return ok
+
+
+def evidence_classes_for(adapter: str, fingerprint: str) -> frozenset[str]:
+    """Return the negative/fault classes that apply to one source row."""
+    if adapter == "opencode":
+        return DATABASE_EVIDENCE_CLASSES
+    if fingerprint == "claude-sidecar-v1" or fingerprint == "pi-immutable-v1":
+        return IMMUTABLE_EVIDENCE_CLASSES
+    return JSONL_EVIDENCE_CLASSES
+
+
+def test_reference_is_present(
+    token: str, sources: dict[str, str], context: str, adapter: str
+) -> bool:
+    """Check that ``path::test_name`` names a committed Rust test function."""
+    if "::" not in token:
+        fail(f"{context}: evidence reference {token!r} must be path::test_name")
+        return False
+    path, function = token.rsplit("::", 1)
+    expected_prefix = ADAPTER_EVIDENCE_PREFIX.get(adapter)
+    if expected_prefix is None or not path.startswith(expected_prefix):
+        fail(f"{context}: evidence reference {token!r} is not from the "
+             f"{adapter} adapter suite")
+        return False
+    text = sources.get(path)
+    if text is None:
+        fail(f"{context}: evidence source {path!r} is not loaded")
+        return False
+    pattern = re.compile(
+        r"#\[test\](?:\s*#\[[^\]]+\])*\s*"
+        rf"(?:pub\s+)?(?:async\s+)?fn\s+{re.escape(function)}\s*\("
+    )
+    if pattern.search(text) is None:
+        fail(f"{context}: {token!r} does not name a #[test] function")
+        return False
+    return True
+
+
+def parse_evidence_rows(note: str) -> list[dict] | None:
+    """Parse the row-for-row support-claim evidence registry."""
+    section = note_section(note, "Support-claim evidence")
+    rows = table_rows(section)
+    if len(rows) < 2:
+        fail("note's support-claim evidence section contains no table")
+        return None
+    if rows[0][:4] != EVIDENCE_HEADER:
+        fail(f"support-claim evidence header is {rows[0][:4]}, expected the "
+             f"{'/'.join(EVIDENCE_HEADER)} columns")
+        return None
+
+    parsed: list[dict] = []
+    ok = True
+    for row in rows[1:]:
+        if len(row) < 4:
+            fail(f"support-claim evidence row {row!r} does not have four cells")
+            ok = False
+            continue
+        adapter, fingerprint, positive, negative = row[:4]
+        adapter_tokens = cell_tokens(adapter)
+        fingerprint_tokens = cell_tokens(fingerprint)
+        positive_tokens = cell_tokens(positive)
+        negative_tokens = cell_tokens(negative)
+        if len(adapter_tokens) != 1 or len(fingerprint_tokens) != 1:
+            fail(f"support-claim evidence row {row!r}: adapter and "
+                 "fingerprint must each carry one token")
+            ok = False
+            continue
+        parsed.append({
+            "adapter": adapter_tokens[0],
+            "fingerprint": fingerprint_tokens[0],
+            "positive": positive_tokens,
+            "negative": negative_tokens,
+        })
+    return parsed if ok else None
+
+
+def check_claim_evidence(sources: dict[str, str], note: str) -> bool:
+    """Rule 8: every supported row is backed by executable evidence refs."""
+    matrix = parse_matrix_rows(note)
+    evidence = parse_evidence_rows(note)
+    dod_text = sources.get(str(DOD_PATH))
+    if matrix is None or evidence is None or dod_text is None:
+        return False
+
+    ok = True
+    matrix_by_key = {
+        (row["adapter"][0], row["fingerprint"][0]): row for row in matrix
+    }
+    if len(matrix_by_key) != len(matrix):
+        fail("support-claim evidence cannot reconcile duplicate matrix rows")
+        ok = False
+    supported = {
+        key for key, row in matrix_by_key.items() if row["state"] == "supported"
+    }
+    evidence_by_key: dict[tuple[str, str], dict] = {}
+    for row in evidence:
+        key = (row["adapter"], row["fingerprint"])
+        if key in evidence_by_key:
+            fail(f"support-claim evidence names {key!r} twice")
+            ok = False
+        evidence_by_key[key] = row
+        if key not in matrix_by_key:
+            fail(f"support-claim evidence names a fingerprint absent from the "
+                 f"published matrix: {key!r}")
+            ok = False
+            continue
+        if matrix_by_key[key]["state"] != "supported":
+            fail(f"support-claim evidence names non-supported matrix row {key!r}")
+            ok = False
+
+        context = f"{row['adapter']}/{row['fingerprint']} evidence"
+        if not row["positive"]:
+            fail(f"{context}: support claim has no positive conformance test")
+            ok = False
+        for token in row["positive"]:
+            if not test_reference_is_present(
+                    token, sources, context, row["adapter"]):
+                ok = False
+
+        classes: dict[str, list[str]] = {}
+        for token in row["negative"]:
+            if "@" not in token:
+                fail(f"{context}: negative evidence {token!r} must be "
+                     "class@path::test_name")
+                ok = False
+                continue
+            evidence_class, test_ref = token.split("@", 1)
+            if evidence_class not in EVIDENCE_CLASSES:
+                fail(f"{context}: unknown negative evidence class "
+                     f"{evidence_class!r}")
+                ok = False
+                continue
+            if evidence_class in classes:
+                fail(f"{context}: negative evidence class {evidence_class!r} "
+                     "is named more than once")
+                ok = False
+            classes.setdefault(evidence_class, []).append(test_ref)
+            if not test_reference_is_present(
+                    test_ref, sources, context, row["adapter"]):
+                ok = False
+
+        expected = evidence_classes_for(*key)
+        actual = set(classes)
+        if actual != expected:
+            fail(f"{context}: negative evidence classes {sorted(actual)} != "
+                 f"applicable classes {sorted(expected)}")
+            ok = False
+
+    if set(evidence_by_key) != supported:
+        fail(f"support-claim evidence covers {sorted(evidence_by_key)}; "
+             f"supported matrix rows are {sorted(supported)}")
+        ok = False
+
+    # The refs are executable tests, not a documentation-only checklist. The
+    # slow lane must run the workspace test set that contains all of them.
+    normalized_dod = " ".join(dod_text.split())
+    workspace_test = "cargo test --workspace"
+    slow_at = normalized_dod.find('[ "$LANE" = "slow" ]')
+    test_at = normalized_dod.find(workspace_test)
+    if test_at < 0:
+        fail(f"{DOD_PATH}: support evidence is not executed by `"
+             f"{workspace_test}` in the slow lane")
+        ok = False
+    elif slow_at < 0 or test_at < slow_at:
+        fail(f"{DOD_PATH}: `{workspace_test}` is outside the slow lane")
+        ok = False
     return ok
 
 
@@ -780,14 +1030,17 @@ CHECKS = (
     ("coverage vocabulary", check_coverage),
     ("phrase pins", check_phrases),
     ("marathon evidence", check_marathon_evidence),
+    ("support-claim evidence", check_claim_evidence),
 )
 
 
 def load_sources() -> dict[str, str] | None:
     sources: dict[str, str] = {}
     ok = True
-    for path in [INVENTORY_PATH, STATUS_SOURCE_PATH, MARATHON_TEST_PATH,
-                 DOD_PATH] + [spec["source"] for spec in ADAPTERS]:
+    paths = ([INVENTORY_PATH, STATUS_SOURCE_PATH, MARATHON_TEST_PATH, DOD_PATH]
+             + [spec["source"] for spec in ADAPTERS]
+             + list(EVIDENCE_SOURCE_PATHS))
+    for path in dict.fromkeys(paths):
         text = read_text(path)
         if text is None:
             ok = False
@@ -852,6 +1105,14 @@ MUTATIONS = (
      "change the suite's SESSIONS constant under the note", 6),
     ("marathon evidence (slow-lane wiring)",
      "strip the slow lane's invocation of the marathon suite", 6),
+    ("support-claim evidence (dropped row)",
+     "drop the Pi v3 evidence row", 7),
+    ("support-claim evidence (positive test)",
+     "remove a positive conformance reference", 7),
+    ("support-claim evidence (negative class)",
+     "remove an applicable negative class", 7),
+    ("support-claim evidence (test reference)",
+     "rename a referenced Rust test", 7),
 )
 
 
@@ -933,6 +1194,24 @@ def mutate(index: int, sources: dict[str, str], note: str
         sources[dod_path] = sources[dod_path].replace(
             "--test marathon_scale -- --ignored",
             "--test marathon_scale", 1)
+    elif index == 22:
+        note = re.sub(
+            r"^\| `pi` \| `pi-jsonl-v3` \|[^\n]*\n", "", note,
+            count=1, flags=re.M)
+    elif index == 23:
+        note = note.replace(
+            "`crates/archivist-adapter-claude/src/lib.rs::"
+            "the_golden_tree_maps_roles_fingerprints_and_exclusions`",
+            "", 1)
+    elif index == 24:
+        note = note.replace(
+            "`partial-record-faults@crates/archivist-adapter-claude/src/lib.rs::"
+            "jsonl_growth_captures_only_complete_records_and_preserves_generation`",
+            "", 1)
+    elif index == 25:
+        note = note.replace(
+            "the_golden_tree_maps_roles_fingerprints_and_exclusions",
+            "the_golden_tree_maps_roles_fingerprints_and_exclusions_renamed", 1)
     return sources, note
 
 

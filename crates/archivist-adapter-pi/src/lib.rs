@@ -1872,6 +1872,34 @@ mod tests {
     }
 
     #[test]
+    fn jsonl_v3_is_admitted_and_captured_as_complete_records() {
+        let root = temp_root("jsonl-v3");
+        let path = root.join("project/session.jsonl");
+        let bytes = br#"{"type":"session","version":3}
+{"type":"message"}
+"#;
+        write(&path, bytes);
+
+        let configured = adapter(&root);
+        let source = configured
+            .inventory(&account())
+            .supported()
+            .next()
+            .cloned()
+            .expect("v3 source is discovered");
+        assert_eq!(source.format(), PiFormat::Jsonl { version: 3 });
+
+        let mut capture = configured.open(&source).expect("v3 source opens");
+        let chunk = capture
+            .next_chunk()
+            .expect("v3 capture succeeds")
+            .expect("v3 complete records are captured");
+        assert_eq!(chunk.bytes, bytes);
+        assert!(!chunk.is_immutable());
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
     fn missing_root_and_non_durable_modes_are_coverage_gaps() {
         let missing = temp_root("missing");
         let inventory = adapter(&missing).inventory(&account());

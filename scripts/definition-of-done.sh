@@ -281,7 +281,10 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # observed, with the six-state coverage vocabulary pinned to status.rs
   # (plan Phase 6 exit gate; threat AC-11's support-claim rule); a
   # fingerprint that is not in the note is a claim the project does not
-  # make, and the three records cannot drift apart silently.
+  # make, and the three records cannot drift apart silently. The support-claim
+  # evidence registry also requires positive conformance and every applicable
+  # negative/fault test for each supported fingerprint, with references to
+  # real Rust tests that the slow workspace lane executes.
   # `--self-test` proves the rejection paths.
   run_check "compatibility matrix"  python3 tools/check-compatibility-matrix.py --self-test
   # Provider-capture route registry (docs/notes/compatibility-matrix.md,
