@@ -1,0 +1,16 @@
+{
+  "schema": "archivist.redaction-v1-fixtures/v1",
+  "corpus_version": "1",
+  "corpus": {
+    "path": "corpus.json",
+    "sha256": "8c1fd3b805e01a39757ef2cc66542543a75664dcd0e6b9aadaab3216d6405554"
+  },
+  "coverage": {
+    "allowlisted_fields": ["role", "ordinal", "source_time", "parent_ordinals"],
+    "detectors": 10,
+    "marker_classes": 5,
+    "pseudonym_classes": 5,
+    "gap_classes": ["unsupported", "malformed", "oversized", "resource_exhausted", "detector_failed"]
+  },
+  "synthetic": "All detector-shaped values are fragmented in the persisted corpus and joined only in the test process; no key or reversible map is stored."
+}

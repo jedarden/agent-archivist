@@ -1,0 +1,164 @@
+{
+  "corpus_version": "1",
+  "cases": [
+    {
+      "id": "full-sweep",
+      "kind": "episode",
+      "occurrences": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "records": [
+            {
+              "role": "system",
+              "ordinal": 0,
+              "source_time": "2026-09-11T16:44:05Z",
+              "parent_ordinals": [],
+              "content_parts": ["System from /srv/archivist/synthetic/session.log on build-runner.synthetic.test as @fixture-user; contact fixtureuser@example.test or 10.23.45.67."]
+            },
+            {
+              "role": "user",
+              "ordinal": 1,
+              "parent_ordinals": [0],
+              "content_parts": ["Author", "ization: Bearer fixture-auth-value\nAuthor", "ization: Bearer ", "ghp_", "A1bC2dE3fG4hI5jK6lM7nO8pQ9rS0tU3vW4x", "\nProxy-Author", "ization: Basic fixture-proxy-value"]
+            }
+          ]
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "records": [
+            {
+              "role": "assistant",
+              "ordinal": 2,
+              "source_time": "2026-09-11T16:44:19Z",
+              "parent_ordinals": [0, 1],
+              "content_parts": ["-----BEGIN RSA ", "PRIVATE", " KEY-----\nfixture-key-material\n-----END RSA ", "PRIVATE", " KEY-----\nexport DEPLOY_", "API_", "TOKEN=", "fixture-env-secret-123"]
+            },
+            {
+              "role": "tool",
+              "ordinal": 3,
+              "parent_ordinals": [2],
+              "content_parts": ["Candidate ", "Ab3xY9pQ2rT7vW4zB6nM8cD0fF1", " came from /var/log/archivist/run.log on build-runner.synthetic.test."]
+            }
+          ]
+        }
+      ],
+      "asserts": {
+        "marker_classes": ["pinned_credential", "authorization_header", "private_key_block", "environment_secret", "high_entropy_token"],
+        "pseudonym_classes": ["absolute_path", "hostname", "username", "email_address", "ip_address"],
+        "roles": ["system", "user", "assistant", "tool"],
+        "precedence": ["credential_before_authorization", "private_key_before_environment", "entropy_before_path", "email_before_hostname_and_username"]
+      }
+    },
+    {
+      "id": "clean",
+      "kind": "episode",
+      "occurrences": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "records": [
+            {
+              "role": "user",
+              "ordinal": 0,
+              "content_parts": ["Synthetic clean record with no detector-shaped value."]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "unsupported-role",
+      "kind": "gap",
+      "expected_gap": "unsupported",
+      "occurrences": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000004",
+          "records": [
+            {
+              "role": "robot",
+              "ordinal": 0,
+              "content_parts": ["ghp_", "Z9yX8wV7uT6sR5qP4oN3mL2kJ1hG0fE9dC8b"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "malformed-time",
+      "kind": "gap",
+      "expected_gap": "malformed",
+      "occurrences": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000005",
+          "records": [
+            {
+              "role": "assistant",
+              "ordinal": 0,
+              "source_time": "2026-02-30T16:44:10Z",
+              "content_parts": ["fixture malformed timestamp"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "detector-failure",
+      "kind": "gap",
+      "expected_gap": "detector_failed",
+      "failure": "pinned detector invariant failure is content-free and fail-closed",
+      "occurrences": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000009",
+          "records": [
+            {
+              "role": "tool",
+              "ordinal": 0,
+              "content_parts": ["detector failure sentinel"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "oversized-content",
+      "kind": "gap",
+      "expected_gap": "oversized",
+      "generator": {"type": "repeat", "unit": "x", "count": 1048577},
+      "occurrences": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000006",
+          "records": [
+            {"role": "tool", "ordinal": 0, "content_from_generator": true}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "replacement-budget",
+      "kind": "gap",
+      "expected_gap": "resource_exhausted",
+      "generator": {"type": "authorization_lines", "count": 4097},
+      "occurrences": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000007",
+          "records": [
+            {"role": "tool", "ordinal": 0, "content_from_generator": true}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "entropy-probe-budget",
+      "kind": "gap",
+      "expected_gap": "resource_exhausted",
+      "generator": {"type": "entropy_candidates", "count": 8193},
+      "occurrences": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000008",
+          "records": [
+            {"role": "tool", "ordinal": 0, "content_from_generator": true}
+          ]
+        }
+      ]
+    }
+  ]
+}

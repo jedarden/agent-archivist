@@ -15,7 +15,7 @@
 #     adapter compatibility-matrix gate,
 #     S3 noncurrent-version lifecycle gate,
 #     control trust schema gate, threat-model acceptance gate,
-#     synthetic-fixture, conformance-corpus, compat-corpus,
+#     synthetic-fixture, redaction-v1-corpus, conformance-corpus, compat-corpus,
 #     inference-corpus, usage-summary-corpus, and control-corpus
 #     regeneration and content scan,
 #     the standalone contract verifier and its cross-implementation
@@ -362,6 +362,11 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # vocabulary content scan (docs/notes/fixtures.md). Output is
   # content-free: counts, bytes, and digests only.
   run_check "synthetic fixtures"   python3 tools/fixturegen.py --verify
+  # Phase 10's complete redaction-v1 path: the immutable fragmented leak
+  # corpus, detector-order tamper proof, typed markers, tenant-HMAC
+  # pseudonyms, fail-closed gaps, resource limits, and output hygiene all
+  # execute through the public protocol seam.
+  run_check "redaction-v1 corpus" cargo test -p archivist-protocol --test redaction_v1_corpus
   # Language-neutral conformance corpus (docs/notes/conformance-corpus.md):
   # byte-exact regeneration of the golden envelopes, signatures, digests,
   # identifier hashes, object keys, receipt chains, and retry examples;
