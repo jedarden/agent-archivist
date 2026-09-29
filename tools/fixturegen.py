@@ -87,8 +87,10 @@ CANONICAL_OUTPUT = ROOT / "fixtures" / "synthetic"
 MANIFEST_NAME = "manifest.json"
 # The Phase 6D append-only corpus has its own generator and manifest.  Keep it
 # as a sibling of this Phase 0 corpus without making the older verifier treat
-# its adapter-agnostic files as unregistered legacy fixtures.
-SEPARATE_CORPUS_DIRS = frozenset({"append-only"})
+# its adapter-agnostic files as unregistered legacy fixtures. The Phase 10
+# redaction corpus has its own manifest and Rust replay because its persisted
+# fixture shape is deliberately fragmented rather than JSONL session data.
+SEPARATE_CORPUS_DIRS = frozenset({"append-only", "redaction-v1"})
 
 # Corpus identity. Bumping the schema string is a corpus-format version
 # event: regenerate and commit corpus + manifest + code together.
