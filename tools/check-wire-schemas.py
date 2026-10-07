@@ -83,6 +83,7 @@ INSTANCE_STEMS = (
     "ingest-receipt",
     "occurrence-manifest",
     "upload-attestation",
+    "risk-assessment",
 )
 
 KNOWN_BEARINGS = {"security", "identity", "provenance", "structural",
@@ -98,6 +99,7 @@ VERSION_CONSTS = {
     "ingest-receipt": {"receipt_version": 1},
     "occurrence-manifest": {"occurrence_version": 1},
     "upload-attestation": {"attestation_version": 1},
+    "risk-assessment": {"assessment_version": 1},
 }
 
 # The receipt-key certificate lives inside the receipt schema's $defs and

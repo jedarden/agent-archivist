@@ -221,6 +221,15 @@
       "x-archivist": {
         "bearing": "security"
       }
+    },
+    "risk-assessment-object-key": {
+      "type": "string",
+      "pattern": "^tenants/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/v1/derived/rules/1/risk-assessments/[0-9a-f]{2}/[0-9a-f]{64}\\.json$",
+      "maxLength": 512,
+      "description": "Server-derived risk-assessment key: tenant, the immutable rules classifier and version, the risk-assessments partition, then the two-hex shard and assessment digest. The assessment references the episode by digest and occurrence IDs only; it is evidence, not an authorization capability.",
+      "x-archivist": {
+        "bearing": "security"
+      }
     }
   }
 }

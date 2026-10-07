@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:risk-assessment",
+  "title": "Agent Archivist immutable risk assessment (risk-assessment-v1)",
+  "description": "Content-free, immutable classification evidence produced by the checked-in ordered rules-v1 classifier over one completed redaction-v1 episode. It records what the classifier observed, not what a tenant policy authorizes: policy evaluation and human use approval are separate records and are never consulted or asserted here.",
+  "type": "object",
+  "x-archivist": {
+    "mediaType": "application/vnd.agent-archivist.risk-assessment+json;version=1",
+    "canonicalization": "rfc8785",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "objectKey": "schemas/v1/common.json#/$defs/risk-assessment-object-key",
+    "writeOrder": "after the completed redaction-v1 episode is durable; before any separately evaluated consumption-policy-v1 decision or use-approval-v1 record",
+    "writeClass": "immutable, content-addressed by assessment_digest: one object per evidence digest and no overwrite of a different result",
+    "derivationStability": "the classifier result is a function only of the completed episode bytes, this checked-in ordered rules-v1 artifact, and the caller-supplied assessment timestamp; no current policy, authorization, approval, or mutable registry is consulted",
+    "contentBoundary": "the record contains no copied episode content, matched text, raw object path, policy decision, or authorization claim. It carries labels, bounded rule IDs, record ordinals, episode and occurrence digests, and classifier provenance only.",
+    "derivations": [
+      {
+        "id": "assessment_digest",
+        "label": "risk-assessment-v1",
+        "algorithm": "sha256",
+        "fields": ["canonical_risk_assessment_bytes_without_assessment_digest"],
+        "fieldKinds": ["bytes"],
+        "selfMember": "assessment_digest",
+        "source": "the assessment record itself",
+        "description": "SHA-256 under the risk-assessment-v1 domain label over the RFC 8785 canonical record with assessment_digest removed. The record is self-verifying and never embeds the episode or a policy record."
+      }
+    ],
+    "reservedFields": [
+      "approval",
+      "approved_by",
+      "authorization",
+      "authorization_decision",
+      "authorized",
+      "current_policy",
+      "decision",
+      "policy",
+      "policy_version",
+      "raw_object_key",
+      "raw_path",
+      "removed_content",
+      "transcript",
+      "use_approval",
+      "verdict"
+    ]
+  },
+  "additionalProperties": false,
+  "required": [
+    "assessment_digest",
+    "assessment_version",
+    "assessed_at",
+    "classifier_kind",
+    "classifier_version",
+    "episode_digest",
+    "episode_version",
+    "labels",
+    "matches",
+    "occurrence_ids",
+    "outcome",
+    "rule_set_digest",
+    "severity",
+    "tenant_id"
+  ],
+  "properties": {
+    "assessment_version": {
+      "const": 1,
+      "description": "Risk-assessment record shape major version. An unknown major fails closed.",
+      "x-archivist": {"bearing": "security", "failClosed": true}
+    },
+    "assessment_digest": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "Self-verifying digest of this assessment under the risk-assessment-v1 construction.",
+      "x-archivist": {"bearing": "identity", "compat": "required-v1"}
+    },
+    "assessed_at": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/rfc3339-utc-timestamp",
+      "description": "The caller-supplied UTC time at which this evidence was produced. It is provenance only and does not perform a freshness or policy decision.",
+      "x-archivist": {"bearing": "provenance", "compat": "required-v1"}
+    },
+    "classifier_kind": {
+      "const": "rules",
+      "description": "The classifier family. v1 is the deterministic checked-in ordered rules family.",
+      "x-archivist": {"bearing": "security", "failClosed": true, "compat": "required-v1"}
+    },
+    "classifier_version": {
+      "const": "1",
+      "description": "Immutable classifier version. A changed rule set is a new version and never a rewrite of this one.",
+      "x-archivist": {"bearing": "security", "failClosed": true, "compat": "required-v1"}
+    },
+    "episode_digest": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "The completed redaction-v1 episode this evidence assessed. The episode body is never copied here.",
+      "x-archivist": {"bearing": "identity", "compat": "required-v1"}
+    },
+    "episode_version": {
+      "const": 1,
+      "description": "The completed episode record shape understood by rules-v1.",
+      "x-archivist": {"bearing": "security", "failClosed": true, "compat": "required-v1"}
+    },
+    "labels": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/label"},
+      "description": "Positive labels in the fixed label order, or the singleton none_detected/unknown marker. resource_failure is carried by outcome and never represented as a clean label.",
+      "x-archivist": {"bearing": "security", "failClosed": true}
+    },
+    "matches": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {"$ref": "#/$defs/match"},
+      "description": "Bounded rule and episode-record references for positive matches. Matched content is intentionally absent.",
+      "x-archivist": {"bearing": "security", "failClosed": true}
+    },
+    "occurrence_ids": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 65536,
+      "uniqueItems": true,
+      "items": {"$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex"},
+      "description": "Raw occurrence identity references copied from the assessed episode. IDs are provenance references, never raw object paths.",
+      "x-archivist": {"bearing": "provenance", "compat": "required-v1"}
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["positive", "none_detected", "unknown", "resource_failure"],
+      "description": "What the classifier established. Unknown and resource_failure are refusal evidence, not none_detected.",
+      "x-archivist": {"bearing": "security", "failClosed": true}
+    },
+    "failure_reason": {
+      "type": "string",
+      "enum": ["unsupported_schema", "truncated", "ambiguous_decode", "rule_failure", "resource_limit"],
+      "description": "Present only for unknown or resource_failure outcomes; bounded and content-free.",
+      "x-archivist": {"bearing": "security", "failClosed": true}
+    },
+    "rule_set_digest": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/sha256-hex",
+      "description": "Digest of the complete ordered rules-v1 artifact, including matcher definitions and rule order.",
+      "x-archivist": {"bearing": "security", "compat": "required-v1"}
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["none", "unknown", "low", "medium", "high"],
+      "description": "Bounded summary severity. none is only for none_detected; unknown is used for refusal states.",
+      "x-archivist": {"bearing": "security", "failClosed": true}
+    },
+    "tenant_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "Tenant scope copied from the completed episode.",
+      "x-archivist": {"bearing": "identity", "compat": "required-v1"}
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"outcome": {"const": "positive"}}},
+      "then": {
+        "properties": {
+          "labels": {
+            "contains": {
+              "enum": ["prompt_injection", "instruction_hijack", "secret_or_credential", "data_exfiltration", "unsafe_tool_request"],
+              "x-archivist": {"bearing": "security", "failClosed": true}
+            },
+            "not": {
+              "contains": {
+                "enum": ["none_detected", "unknown"],
+                "x-archivist": {"bearing": "security", "failClosed": true}
+              }
+            }
+          },
+          "severity": {
+            "enum": ["low", "medium", "high"],
+            "x-archivist": {"bearing": "security", "failClosed": true}
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"outcome": {"const": "none_detected"}}},
+      "then": {
+        "properties": {
+          "labels": {"const": ["none_detected"]},
+          "severity": {"const": "none"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"outcome": {"const": "unknown"}}},
+      "then": {
+        "required": ["failure_reason"],
+        "properties": {
+          "labels": {"const": ["unknown"]},
+          "severity": {"const": "unknown"},
+          "failure_reason": {"not": {"const": "resource_limit"}}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"outcome": {"const": "resource_failure"}}},
+      "then": {
+        "required": ["failure_reason"],
+        "properties": {
+          "labels": {"const": ["unknown"]},
+          "severity": {"const": "unknown"},
+          "failure_reason": {"const": "resource_limit"}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "label": {
+      "type": "string",
+      "enum": ["prompt_injection", "instruction_hijack", "secret_or_credential", "data_exfiltration", "unsafe_tool_request", "none_detected", "unknown"],
+      "description": "The closed v1 label vocabulary. `none_detected` and `unknown` are refusal/absence markers and are mutually exclusive with positive labels.",
+      "x-archivist": {"bearing": "security", "failClosed": true}
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "record_ordinal", "rule_id"],
+      "properties": {
+        "label": {"$ref": "#/$defs/label"},
+        "record_ordinal": {
+          "$ref": "urn:agent-archivist:schema:v1:common#/$defs/u63",
+          "description": "Episode-local record reference, not copied content."
+        },
+        "rule_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,63}$",
+          "maxLength": 64,
+          "description": "Bounded identifier of one ordered rules-v1 entry.",
+          "x-archivist": {"bearing": "security", "failClosed": true}
+        }
+      }
+    }
+  },
+  "not": {
+    "anyOf": [
+      {"required": ["approval"]},
+      {"required": ["approved_by"]},
+      {"required": ["authorization"]},
+      {"required": ["authorization_decision"]},
+      {"required": ["authorized"]},
+      {"required": ["current_policy"]},
+      {"required": ["decision"]},
+      {"required": ["policy"]},
+      {"required": ["policy_version"]},
+      {"required": ["raw_object_key"]},
+      {"required": ["raw_path"]},
+      {"required": ["removed_content"]},
+      {"required": ["transcript"]},
+      {"required": ["use_approval"]},
+      {"required": ["verdict"]}
+    ]
+  }
+}

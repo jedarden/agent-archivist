@@ -2042,6 +2042,221 @@ pub(crate) const OCCURRENCE_MANIFEST_FIELD_NAMES: [&str; 20] = [
     "upstream_session_id",
 ];
 
+/// The canonical schema URN of `schemas/v1/risk-assessment.json`, read from
+/// the schema's own `$id`.
+pub(crate) const SCHEMA_URN_RISK_ASSESSMENT: &str = "urn:agent-archivist:schema:v1:risk-assessment";
+
+/// Pinned const of `assessment_version` in `schemas/v1/risk-assessment.json`;
+/// an unknown value fails closed on the wire.
+pub(crate) const RISK_ASSESSMENT_ASSESSMENT_VERSION: i64 = 1;
+
+/// Pinned const of `classifier_kind` in `schemas/v1/risk-assessment.json`;
+/// an unknown value fails closed on the wire.
+pub(crate) const RISK_ASSESSMENT_CLASSIFIER_KIND: &str = "rules";
+
+/// Pinned const of `classifier_version` in `schemas/v1/risk-assessment.json`;
+/// an unknown value fails closed on the wire.
+pub(crate) const RISK_ASSESSMENT_CLASSIFIER_VERSION: &str = "1";
+
+/// Pinned const of `episode_version` in `schemas/v1/risk-assessment.json`;
+/// an unknown value fails closed on the wire.
+pub(crate) const RISK_ASSESSMENT_EPISODE_VERSION: i64 = 1;
+
+/// The `canonicalization` metadata of `schemas/v1/risk-assessment.json`.
+pub(crate) const RISK_ASSESSMENT_META_CANONICALIZATION: &str = "rfc8785";
+
+/// The `closedShape` metadata of `schemas/v1/risk-assessment.json`.
+pub(crate) const RISK_ASSESSMENT_META_CLOSED_SHAPE: bool = true;
+
+/// The `contentBoundary` metadata of `schemas/v1/risk-assessment.json`.
+pub(crate) const RISK_ASSESSMENT_META_CONTENT_BOUNDARY: &str = "the record contains no copied episode content, matched text, raw object path, policy decision, or authorization claim. It carries labels, bounded rule IDs, record ordinals, episode and occurrence digests, and classifier provenance only.";
+
+/// The `derivationStability` metadata of `schemas/v1/risk-assessment.json`.
+pub(crate) const RISK_ASSESSMENT_META_DERIVATION_STABILITY: &str = "the classifier result is a function only of the completed episode bytes, this checked-in ordered rules-v1 artifact, and the caller-supplied assessment timestamp; no current policy, authorization, approval, or mutable registry is consulted";
+
+/// The `floats` metadata of `schemas/v1/risk-assessment.json`.
+pub(crate) const RISK_ASSESSMENT_META_FLOATS: bool = false;
+
+/// The `mediaType` metadata of `schemas/v1/risk-assessment.json`.
+pub(crate) const RISK_ASSESSMENT_META_MEDIA_TYPE: &str = "application/vnd.agent-archivist.risk-assessment+json;version=1";
+
+/// The `objectKey` metadata of `schemas/v1/risk-assessment.json`.
+pub(crate) const RISK_ASSESSMENT_META_OBJECT_KEY: &str = "schemas/v1/common.json#/$defs/risk-assessment-object-key";
+
+/// The `unknownFields` metadata of `schemas/v1/risk-assessment.json`.
+pub(crate) const RISK_ASSESSMENT_META_UNKNOWN_FIELDS: &str = "reject";
+
+/// The `writeClass` metadata of `schemas/v1/risk-assessment.json`.
+pub(crate) const RISK_ASSESSMENT_META_WRITE_CLASS: &str = "immutable, content-addressed by assessment_digest: one object per evidence digest and no overwrite of a different result";
+
+/// The `writeOrder` metadata of `schemas/v1/risk-assessment.json`.
+pub(crate) const RISK_ASSESSMENT_META_WRITE_ORDER: &str = "after the completed redaction-v1 episode is durable; before any separately evaluated consumption-policy-v1 decision or use-approval-v1 record";
+
+/// Reserved per-attempt, server, or foreign names of
+/// `schemas/v1/risk-assessment.json` (x-archivist.reservedFields), in
+/// schema order: names the record rejects outright, so retries
+/// cannot fork identity on them.
+pub(crate) const RISK_ASSESSMENT_RESERVED_FIELDS: [&str; 15] = [
+    "approval",
+    "approved_by",
+    "authorization",
+    "authorization_decision",
+    "authorized",
+    "current_policy",
+    "decision",
+    "policy",
+    "policy_version",
+    "raw_object_key",
+    "raw_path",
+    "removed_content",
+    "transcript",
+    "use_approval",
+    "verdict",
+];
+
+/// Every top-level member name `schemas/v1/risk-assessment.json` defines,
+/// alphabetical: the known-name set against which unknown members
+/// are recognized.
+pub(crate) const RISK_ASSESSMENT_FIELD_NAMES: [&str; 15] = [
+    "assessed_at",
+    "assessment_digest",
+    "assessment_version",
+    "classifier_kind",
+    "classifier_version",
+    "episode_digest",
+    "episode_version",
+    "failure_reason",
+    "labels",
+    "matches",
+    "occurrence_ids",
+    "outcome",
+    "rule_set_digest",
+    "severity",
+    "tenant_id",
+];
+
+/// Closed enum tokens of `allOf/then/labels/contains` in `schemas/v1/risk-assessment.json`.
+/// Bearing `security`; fail-closed: true.
+/// Schema order is wire order; unknown values fail closed on the
+/// wire (plan Section 7.1).
+pub(crate) const ENUM_RISK_ASSESSMENT_ALL_OF_THEN_LABELS_CONTAINS_TOKENS: &[&str] = &[
+    "prompt_injection",
+    "instruction_hijack",
+    "secret_or_credential",
+    "data_exfiltration",
+    "unsafe_tool_request",
+];
+
+/// Bearing of the `allOf/then/labels/contains` enum in `schemas/v1/risk-assessment.json`.
+pub(crate) const ENUM_RISK_ASSESSMENT_ALL_OF_THEN_LABELS_CONTAINS_BEARING: &str = "security";
+
+/// Whether the `allOf/then/labels/contains` enum in `schemas/v1/risk-assessment.json` is declared fail-closed.
+pub(crate) const ENUM_RISK_ASSESSMENT_ALL_OF_THEN_LABELS_CONTAINS_FAIL_CLOSED: bool = true;
+
+/// Closed enum tokens of `allOf/then/labels/not/contains` in `schemas/v1/risk-assessment.json`.
+/// Bearing `security`; fail-closed: true.
+/// Schema order is wire order; unknown values fail closed on the
+/// wire (plan Section 7.1).
+pub(crate) const ENUM_RISK_ASSESSMENT_ALL_OF_THEN_LABELS_NOT_CONTAINS_TOKENS: &[&str] = &[
+    "none_detected",
+    "unknown",
+];
+
+/// Bearing of the `allOf/then/labels/not/contains` enum in `schemas/v1/risk-assessment.json`.
+pub(crate) const ENUM_RISK_ASSESSMENT_ALL_OF_THEN_LABELS_NOT_CONTAINS_BEARING: &str = "security";
+
+/// Whether the `allOf/then/labels/not/contains` enum in `schemas/v1/risk-assessment.json` is declared fail-closed.
+pub(crate) const ENUM_RISK_ASSESSMENT_ALL_OF_THEN_LABELS_NOT_CONTAINS_FAIL_CLOSED: bool = true;
+
+/// Closed enum tokens of `allOf/then/severity` in `schemas/v1/risk-assessment.json`.
+/// Bearing `security`; fail-closed: true.
+/// Schema order is wire order; unknown values fail closed on the
+/// wire (plan Section 7.1).
+pub(crate) const ENUM_RISK_ASSESSMENT_ALL_OF_THEN_SEVERITY_TOKENS: &[&str] = &[
+    "low",
+    "medium",
+    "high",
+];
+
+/// Bearing of the `allOf/then/severity` enum in `schemas/v1/risk-assessment.json`.
+pub(crate) const ENUM_RISK_ASSESSMENT_ALL_OF_THEN_SEVERITY_BEARING: &str = "security";
+
+/// Whether the `allOf/then/severity` enum in `schemas/v1/risk-assessment.json` is declared fail-closed.
+pub(crate) const ENUM_RISK_ASSESSMENT_ALL_OF_THEN_SEVERITY_FAIL_CLOSED: bool = true;
+
+/// Closed enum tokens of `failure_reason` in `schemas/v1/risk-assessment.json`.
+/// Bearing `security`; fail-closed: true.
+/// Schema order is wire order; unknown values fail closed on the
+/// wire (plan Section 7.1).
+pub(crate) const ENUM_RISK_ASSESSMENT_FAILURE_REASON_TOKENS: &[&str] = &[
+    "unsupported_schema",
+    "truncated",
+    "ambiguous_decode",
+    "rule_failure",
+    "resource_limit",
+];
+
+/// Bearing of the `failure_reason` enum in `schemas/v1/risk-assessment.json`.
+pub(crate) const ENUM_RISK_ASSESSMENT_FAILURE_REASON_BEARING: &str = "security";
+
+/// Whether the `failure_reason` enum in `schemas/v1/risk-assessment.json` is declared fail-closed.
+pub(crate) const ENUM_RISK_ASSESSMENT_FAILURE_REASON_FAIL_CLOSED: bool = true;
+
+/// Closed enum tokens of `label` in `schemas/v1/risk-assessment.json`.
+/// Bearing `security`; fail-closed: true.
+/// Schema order is wire order; unknown values fail closed on the
+/// wire (plan Section 7.1).
+pub(crate) const ENUM_RISK_ASSESSMENT_LABEL_TOKENS: &[&str] = &[
+    "prompt_injection",
+    "instruction_hijack",
+    "secret_or_credential",
+    "data_exfiltration",
+    "unsafe_tool_request",
+    "none_detected",
+    "unknown",
+];
+
+/// Bearing of the `label` enum in `schemas/v1/risk-assessment.json`.
+pub(crate) const ENUM_RISK_ASSESSMENT_LABEL_BEARING: &str = "security";
+
+/// Whether the `label` enum in `schemas/v1/risk-assessment.json` is declared fail-closed.
+pub(crate) const ENUM_RISK_ASSESSMENT_LABEL_FAIL_CLOSED: bool = true;
+
+/// Closed enum tokens of `outcome` in `schemas/v1/risk-assessment.json`.
+/// Bearing `security`; fail-closed: true.
+/// Schema order is wire order; unknown values fail closed on the
+/// wire (plan Section 7.1).
+pub(crate) const ENUM_RISK_ASSESSMENT_OUTCOME_TOKENS: &[&str] = &[
+    "positive",
+    "none_detected",
+    "unknown",
+    "resource_failure",
+];
+
+/// Bearing of the `outcome` enum in `schemas/v1/risk-assessment.json`.
+pub(crate) const ENUM_RISK_ASSESSMENT_OUTCOME_BEARING: &str = "security";
+
+/// Whether the `outcome` enum in `schemas/v1/risk-assessment.json` is declared fail-closed.
+pub(crate) const ENUM_RISK_ASSESSMENT_OUTCOME_FAIL_CLOSED: bool = true;
+
+/// Closed enum tokens of `severity` in `schemas/v1/risk-assessment.json`.
+/// Bearing `security`; fail-closed: true.
+/// Schema order is wire order; unknown values fail closed on the
+/// wire (plan Section 7.1).
+pub(crate) const ENUM_RISK_ASSESSMENT_SEVERITY_TOKENS: &[&str] = &[
+    "none",
+    "unknown",
+    "low",
+    "medium",
+    "high",
+];
+
+/// Bearing of the `severity` enum in `schemas/v1/risk-assessment.json`.
+pub(crate) const ENUM_RISK_ASSESSMENT_SEVERITY_BEARING: &str = "security";
+
+/// Whether the `severity` enum in `schemas/v1/risk-assessment.json` is declared fail-closed.
+pub(crate) const ENUM_RISK_ASSESSMENT_SEVERITY_FAIL_CLOSED: bool = true;
+
 /// The canonical schema URN of `schemas/v1/upload-attestation.json`, read from
 /// the schema's own `$id`.
 pub(crate) const SCHEMA_URN_UPLOAD_ATTESTATION: &str = "urn:agent-archivist:schema:v1:upload-attestation";

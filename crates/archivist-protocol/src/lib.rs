@@ -68,6 +68,10 @@
 //!   successful redacted occurrences to the canonical derived episode, with
 //!   tenant-scoped HMAC pseudonyms, bounded composition rules, and the
 //!   self-verifying episode digest.
+//! - [`risk_assessment`] — the immutable `rules-v1` classifier evidence over
+//!   completed redaction episodes ([`schemas/v1/risk-assessment.json`]), with
+//!   ordered rule provenance, bounded refusal outcomes, and no policy or
+//!   authorization dependency.
 //! - [`envelope`] — the version 1 ingest envelope: field-level bounded
 //!   validation, unknown-field retention, reserved-name rejection, and
 //!   identity re-derivation.
@@ -105,6 +109,7 @@
 //! [`schemas/v1/examples/conformance`]: ../../../schemas/v1/examples/conformance
 //! [`schemas/v1/examples/inference`]: ../../../schemas/v1/examples/inference
 //! [`schemas/v1/derived-episode.json`]: ../../../schemas/v1/derived-episode.json
+//! [`schemas/v1/risk-assessment.json`]: ../../../schemas/v1/risk-assessment.json
 //! [`schemas/v1/inference-artifact.json`]: ../../../schemas/v1/inference-artifact.json
 
 pub mod attempt_reconstruction;
@@ -127,6 +132,7 @@ pub mod object_key;
 pub mod occurrence_redaction;
 pub mod orchestrator_correlation;
 pub mod redaction_policy;
+pub mod risk_assessment;
 pub mod sha256;
 pub mod usage_summary;
 pub mod vocabulary;

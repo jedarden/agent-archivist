@@ -151,6 +151,18 @@ fn type_inventory() -> Vec<(&'static str, &'static str)> {
             type_name::<archivist_protocol::episode_derivation::PseudonymKey<'_>>(),
         ),
         (
+            "risk_assessment::AssessmentOutcome",
+            type_name::<archivist_protocol::risk_assessment::AssessmentOutcome>(),
+        ),
+        (
+            "risk_assessment::ClassificationFailure",
+            type_name::<archivist_protocol::risk_assessment::ClassificationFailure>(),
+        ),
+        (
+            "risk_assessment::RiskAssessment",
+            type_name::<archivist_protocol::risk_assessment::RiskAssessment>(),
+        ),
+        (
             "envelope::Envelope",
             type_name::<archivist_protocol::envelope::Envelope>(),
         ),
@@ -453,7 +465,7 @@ fn type_inventory() -> Vec<(&'static str, &'static str)> {
 
 /// Number of documented public types in [`type_inventory`]; the boundary gate
 /// cross-checks the literal against the source.
-const PUBLIC_TYPES: usize = 102;
+const PUBLIC_TYPES: usize = 105;
 
 /// Number of pinned signatures in [`function_inventory`]; the boundary gate
 /// cross-checks the literal against the source.
@@ -608,6 +620,7 @@ fn constant_inventory() -> Vec<&'static str> {
         "redaction_policy::PSEUDONYM_KEY_ID_CONSTRUCTION",
         "redaction_policy::PSEUDONYM_KEY_ID_LABEL",
         "redaction_policy::TEST_SUITE_CORPUS",
+        "risk_assessment::RULE_SET_DIGEST",
         "usage_summary::PIPELINE_ID",
         "usage_summary::PIPELINE_VERSION",
         "usage_summary::USAGE_SUMMARY_VERSION",
@@ -653,7 +666,7 @@ fn public_constants_pin_wire_values() {
     let inventory = constant_inventory();
     assert_eq!(
         inventory.len(),
-        30,
+        31,
         "the constant inventory drifted from its count"
     );
     assert_eq!(protocol::episode_derivation::EPISODE_VERSION, 1);
