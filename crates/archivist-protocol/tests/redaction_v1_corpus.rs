@@ -6,9 +6,6 @@
 //! keeps detector-shaped values out of the repository's secret scan while the
 //! test still presents the exact joined bytes to the production pipeline.
 
-use std::fs;
-use std::path::{Path, PathBuf};
-
 use archivist_protocol::episode_derivation::{
     DerivedEpisode, EpisodeGap, OccurrenceInput, PseudonymKey,
 };
@@ -25,6 +22,19 @@ const EXPECTED_MANIFEST_SHA256: &str =
 const EXPECTED_CORPUS_SHA256: &str =
     "8c1fd3b805e01a39757ef2cc66542543a75664dcd0e6b9aadaab3216d6405554";
 
+const CORPUS_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../fixtures/synthetic/redaction-v1/corpus.json"
+));
+const MANIFEST_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../fixtures/synthetic/redaction-v1/manifest.json"
+));
+const POLICY_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../schemas/v1/examples/episodes/pipeline/redaction-v1-corpus.json"
+));
+
 const TENANT: &str = "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b";
 
 // This is a patterned synthetic key, split into bytes so neither the key nor
@@ -34,16 +44,16 @@ const TEST_KEY: [u8; 32] = [
     0x0f, 0x0e, 0x0d, 0x0c, 0x0b, 0x0a, 0x09, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00,
 ];
 
-fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/synthetic/redaction-v1")
-}
-
-fn read(rel: &str) -> Vec<u8> {
-    fs::read(root().join(rel)).unwrap_or_else(|error| panic!("{rel}: {error}"))
+fn read(rel: &str) -> &'static [u8] {
+    match rel {
+        "corpus.json" => CORPUS_BYTES,
+        "manifest.json" => MANIFEST_BYTES,
+        other => panic!("unknown embedded fixture {other}"),
+    }
 }
 
 fn load(rel: &str) -> Value {
-    json::parse(&read(rel)).unwrap_or_else(|error| panic!("{rel}: {error}"))
+    json::parse(read(rel)).unwrap_or_else(|error| panic!("{rel}: {error}"))
 }
 
 fn object<'a>(value: &'a Value, context: &str) -> &'a Object {
@@ -330,14 +340,7 @@ fn assert_no_sensitive_material(bytes: &[u8], sensitive: &[String]) {
 }
 
 fn assert_policy_is_pinned() {
-    let policy = json::parse(
-        &fs::read(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../schemas/v1/examples/episodes/pipeline/redaction-v1-corpus.json"),
-        )
-        .expect("policy corpus exists"),
-    )
-    .expect("policy corpus parses");
+    let policy = json::parse(POLICY_BYTES).expect("policy corpus parses");
     assert_eq!(
         RedactionCorpus::from_value(&policy),
         Ok(RedactionCorpus::pinned())
@@ -394,7 +397,7 @@ fn object_mut<'a>(value: &'a mut Value, context: &str) -> &'a mut Object {
 fn immutable_corpus_replays_the_complete_pipeline_without_leaks() {
     let manifest_bytes = read("manifest.json");
     assert_eq!(
-        encode_hex(&digest(&manifest_bytes)),
+        encode_hex(&digest(manifest_bytes)),
         EXPECTED_MANIFEST_SHA256
     );
     let manifest = load("manifest.json");
@@ -415,7 +418,7 @@ fn immutable_corpus_replays_the_complete_pipeline_without_leaks() {
         EXPECTED_CORPUS_SHA256
     );
     let corpus_bytes = read("corpus.json");
-    assert_eq!(encode_hex(&digest(&corpus_bytes)), EXPECTED_CORPUS_SHA256);
+    assert_eq!(encode_hex(&digest(corpus_bytes)), EXPECTED_CORPUS_SHA256);
 
     assert_policy_is_pinned();
     let sensitive = full_sweep_sensitive_values();
