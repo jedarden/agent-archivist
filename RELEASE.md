@@ -130,16 +130,21 @@ failed candidate can leave a reserved version on main; it creates no release
 tag or promoted image. A retry of that candidate reuses its version.
 
 The successful candidate supplies the verification manifest and both glibc
-2.31 archives to the publisher. Both OCI platforms then build, execute their
+2.31 archives to the publisher. Before any image upload, the existing
+`tools/check-storage-profiles.py --release <VERSION>` gate must pass for that
+exact candidate version. Both OCI platforms then build, execute their
 version smoke check, and pass the container vulnerability scan. Only then may
 the annotated tag, verified image signature, signed release manifest, immutable
 SemVer image, and Forgejo release be published. The signed manifest binds the
 exact source, both archive hashes, committed SBOM, verification manifest, and
-both container scan reports. A duplicate event verifies the published signatures, evidence and every asset
-hash before becoming a no-op; any mismatch fails closed.
+both container scan reports, and the exact-release storage qualification with
+its registry digest. A duplicate event verifies the published signatures,
+evidence and every asset hash before becoming a no-op; any mismatch fails closed.
 
-Automatic notes claim only the isolated MinIO reference profile. B2 support
-requires the separate exact-release live gate described above and is explicitly
-not claimed by this automatic lane. AWS S3 and Garage remain unqualified.
+Automation preserves the release steps above; changing the wording of support
+claims cannot bypass the storage-profile release gate. Missing live evidence
+for the reserved version blocks tagging and publication. Synthetic results or
+a prior version's qualification cannot satisfy that requirement. AWS S3 and
+Garage remain unqualified.
 Signing material is referenced through the release step's OpenBao-backed
 Secret; `containers/agent-archivist/release.pub` is the verification key.

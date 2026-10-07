@@ -16,6 +16,7 @@ import urllib.error
 VERSION_FILE = 'containers/agent-archivist/VERSION'
 SBOM = 'containers/agent-archivist/sbom.json'
 PUBLIC_KEY = 'containers/agent-archivist/release.pub'
+STORAGE_REGISTRY = 'tools/storage-profiles.toml'
 SEMVER = re.compile(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z')
 REPO = 'jedarden/agent-archivist'
 IMAGE = 'ronaldraygun/agent-archivist'
@@ -37,6 +38,13 @@ def version():
         raise ValueError('Cargo workspace and VERSION differ')
     return value
 
+def storage_gate(value):
+    """Run the existing exact-release qualification gate without a claim opt-out."""
+    if value != version():
+        raise ValueError('storage qualification version differs from source')
+    subprocess.run(['python3', 'tools/check-storage-profiles.py', '--release', value], check=True, stdout=subprocess.PIPE)
+    return {'release': value, 'result': 'pass', 'registry_digest': digest(STORAGE_REGISTRY)}
+
 def gate(tag, revision):
     value = version()
     if tag != 'v' + value or not re.fullmatch('[0-9a-f]{40}', revision):
@@ -52,6 +60,7 @@ def verify_published(release, revision, value):
     """A duplicate event is a no-op only after the published bytes verify."""
     if release.get('target_commitish') != revision or release.get('tag_name') != 'v' + value:
         raise ValueError('published release belongs to another source/version')
+    storage = storage_gate(value)
     assets = api('releases/' + str(release['id']) + '/assets')
     by_name = {a['name']: a for a in assets}
     if len(by_name) != len(assets):
@@ -68,6 +77,8 @@ def verify_published(release, revision, value):
         manifest = root / 'release-manifest.json'
         subprocess.run(['cosign', 'verify-blob', '--key', PUBLIC_KEY, '--insecure-ignore-tlog', '--bundle', str(manifest) + '.bundle', str(manifest)], check=True, stdout=subprocess.PIPE)
         record = json.loads(manifest.read_text())
+        if record.get('storage_profile_gate') != storage:
+            raise ValueError('published storage qualification differs from source')
         if record['commit'] != revision or record['version'] != value or set(record['archives']) != archives or set(record['container_scans']) != scans:
             raise ValueError('signed release record differs from requested source/version')
         for name, expected in {**record['archives'], **record['container_scans'], 'sbom.json': record['sbom_digest']}.items():
@@ -199,6 +210,7 @@ def tag_release(revision, tag, manifest):
     if git('rev-parse', 'HEAD') != revision or tag != 'v' + version():
         raise ValueError('candidate source/version differs')
     subprocess.run(['python3', 'tools/verification-manifest.py', 'check', '--manifest', manifest], check=True)
+    storage_gate(version())
     if git('ls-remote', 'origin', 'refs/heads/main').split()[0] != revision:
         raise ValueError('main advanced before release')
     refs = git('ls-remote', 'origin', 'refs/tags/' + tag)
@@ -225,6 +237,7 @@ def api(path, method='GET', data=None, content_type='application/json'):
 
 def publish(revision, tag, image_digest, manifest, archives):
     value = gate(tag, revision)
+    storage = storage_gate(value)
     release = api('releases/tags/' + tag)
     if release and release.get('target_commitish') != revision:
         raise ValueError('release record belongs to another source')
@@ -258,7 +271,7 @@ def publish(revision, tag, image_digest, manifest, archives):
             raise ValueError('container vulnerability gate failed')
         if report.get('ArtifactName') != image:
             raise ValueError('container scan belongs to another image')
-    record = {'version': value, 'commit': revision, 'image': image, 'archives': {n: digest(p) for n, p in files.items()}, 'verification_manifest': json.loads(Path(manifest).read_text()), 'sbom_digest': digest(SBOM), 'container_scans': {name: digest(path) for name, path in scans.items()}, 'support_claims': {'backblaze_b2': 'not claimed by this automated release', 'aws_s3': 'unqualified', 'garage': 'unqualified'}}
+    record = {'version': value, 'commit': revision, 'image': image, 'archives': {n: digest(p) for n, p in files.items()}, 'verification_manifest': json.loads(Path(manifest).read_text()), 'sbom_digest': digest(SBOM), 'container_scans': {name: digest(path) for name, path in scans.items()}, 'storage_profile_gate': storage}
     record_path = Path(archives) / 'release-manifest.json'; record_path.write_text(json.dumps(record, sort_keys=True, indent=2) + '\n')
     bundle = str(record_path) + '.bundle'
     subprocess.run(['cosign', 'sign-blob', '--key', 'env://COSIGN_PRIVATE_KEY', '--yes', '--use-signing-config=false', '--tlog-upload=false', '--bundle', bundle, str(record_path)], check=True)
@@ -272,7 +285,8 @@ def publish(revision, tag, image_digest, manifest, archives):
         source = 'https://git.ardenone.com/' + REPO + '/src/commit/' + revision + '/'
         notes = ('Automated preview release. Exact verification and artifact digests are in the signed release manifest.\n\n'
                  'Supported adapters and source fingerprints: ' + source + 'docs/notes/compatibility-matrix.md\n'
-                 'Storage claims: isolated MinIO reference only. B2 is not claimed by this automated release; a release-specific live qualification is required. AWS S3 and Garage remain unqualified. Registry: ' + source + 'docs/notes/storage-profiles.md\n'
+                 'Storage-profile release gate passed for ' + value + '. Qualifications and limitations: ' + source + 'docs/notes/storage-profiles.md\n'
+                 'Exact release qualification records: ' + source + STORAGE_REGISTRY + '\n'
                  'Coverage gaps and schema versions: ' + source + 'docs/plan/plan.md\n'
                  'Deduplication guarantees: ' + source + 'README.md\n'
                  'No additional provider or production-readiness claims are made by this automation.')
@@ -288,10 +302,11 @@ def publish(revision, tag, image_digest, manifest, archives):
     api('releases/' + str(release['id']), 'PATCH', {'draft': False})
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(); parser.add_argument('operation', choices=['prepare', 'gate', 'evidence', 'tag', 'publish']); parser.add_argument('--revision'); parser.add_argument('--tag', default=''); parser.add_argument('--manifest'); parser.add_argument('--outcomes'); parser.add_argument('--output'); parser.add_argument('--digest'); parser.add_argument('--archives')
+    parser = argparse.ArgumentParser(); parser.add_argument('operation', choices=['prepare', 'gate', 'storage-gate', 'evidence', 'tag', 'publish']); parser.add_argument('--revision'); parser.add_argument('--tag', default=''); parser.add_argument('--manifest'); parser.add_argument('--outcomes'); parser.add_argument('--output'); parser.add_argument('--digest'); parser.add_argument('--archives')
     args = parser.parse_args()
     if args.operation == 'prepare': print(json.dumps(prepare(args.revision, args.tag)))
     elif args.operation == 'gate': gate(args.tag, args.revision)
+    elif args.operation == 'storage-gate': storage_gate(version())
     elif args.operation == 'evidence': evidence(args.outcomes, args.output)
     elif args.operation == 'tag': tag_release(args.revision, args.tag, args.manifest)
     else: publish(args.revision, args.tag, args.digest, args.manifest, args.archives)

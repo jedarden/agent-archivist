@@ -33,6 +33,8 @@ class ReleaseTests(unittest.TestCase):
         Path(policy.PUBLIC_KEY).write_text('synthetic public-key fixture\n')
         Path('containers/agent-archivist/generate-sbom.sh').write_text('printf "{}\\n" > containers/agent-archivist/sbom.json\n')
         Path('tools/verification-manifest.py').write_text('import sys\nsys.exit(0)\n')
+        Path('tools/check-storage-profiles.py').write_text('import sys\nsys.exit(0)\n')
+        Path(policy.STORAGE_REGISTRY).write_text('schema = \"synthetic.storage.fixture\"\n')
         Path('scripts/definition-of-done.sh').write_text('run_check "cargo test" cargo test --workspace\nrun_check "cargo audit" cargo audit\n')
         self.commit('initial')
         self.git('tag', '-a', 'v0.1.0', '-m', 'initial')
@@ -126,6 +128,27 @@ class ReleaseTests(unittest.TestCase):
         self.git('tag', '-a', 'v0.1.0', '-m', 'valid')
         self.assertEqual(policy.gate('v0.1.0', self.source), '0.1.0')
 
+    def test_storage_gate_receives_exact_source_version(self):
+        Path('tools/check-storage-profiles.py').write_text('import sys\nassert sys.argv[1:] == ["--release", "0.1.0"]\n')
+        result = policy.storage_gate('0.1.0')
+        self.assertEqual(result, {'release': '0.1.0', 'result': 'pass', 'registry_digest': policy.digest(policy.STORAGE_REGISTRY)})
+        with self.assertRaisesRegex(ValueError, 'differs from source'):
+            policy.storage_gate('0.1.1')
+
+    def test_missing_release_storage_evidence_prevents_tag(self):
+        Path('tools/check-storage-profiles.py').write_text('import sys\nsys.exit(2)\n')
+        before = self.git('show-ref', '--tags')
+        with self.assertRaises(subprocess.CalledProcessError):
+            policy.tag_release(self.source, 'v0.1.0', '/synthetic/manifest')
+        self.assertEqual(self.git('show-ref', '--tags'), before)
+
+    def test_missing_release_storage_evidence_prevents_publication(self):
+        Path('tools/check-storage-profiles.py').write_text('import sys\nsys.exit(2)\n')
+        with patch.object(policy, 'gate', return_value='0.1.0'), patch.object(policy, 'api') as api:
+            with self.assertRaises(subprocess.CalledProcessError):
+                policy.publish(self.source, 'v0.1.0', 'sha256:'+'a'*64, 'absent', 'absent')
+            api.assert_not_called()
+
     def test_failed_evidence_prevents_tag(self):
         Path('tools/verification-manifest.py').write_text('import sys\nsys.exit(1)\n')
         with self.assertRaises(subprocess.CalledProcessError):
@@ -153,7 +176,7 @@ class ReleaseTests(unittest.TestCase):
         with patch.object(policy, 'gate', return_value='0.1.0'), patch.object(policy, 'api', return_value={'target_commitish': self.source, 'draft': False}), patch.object(policy.subprocess, 'run') as run:
             with self.assertRaisesRegex(ValueError, 'immutable'):
                 policy.publish(self.source, 'v0.1.0', 'sha256:' + 'a'*64, 'missing', 'missing')
-            run.assert_not_called()
+            self.assertTrue(all(call.args[0][:2] == ['python3', 'tools/check-storage-profiles.py'] for call in run.call_args_list))
 
     def publication_fixture(self):
         dist = Path('dist'); dist.mkdir()
@@ -194,7 +217,8 @@ class ReleaseTests(unittest.TestCase):
         record = {'version': '0.1.0', 'commit': self.source, 'image': image,
                   'archives': {p.name: policy.digest(p) for p in dist.glob('*.tar.gz')},
                   'container_scans': {p.name: policy.digest(p) for p in dist.glob('container-scan*.json')},
-                  'sbom_digest': policy.digest(policy.SBOM), 'verification_manifest': json.loads(Path('manifest.json').read_text())}
+                  'sbom_digest': policy.digest(policy.SBOM), 'verification_manifest': json.loads(Path('manifest.json').read_text()),
+                  'storage_profile_gate': {'release': '0.1.0', 'result': 'pass', 'registry_digest': policy.digest(policy.STORAGE_REGISTRY)}}
         (dist / 'release-manifest.json').write_text(json.dumps(record))
         (dist / 'release-manifest.json.bundle').write_text('synthetic signature fixture')
         assets = [{'name': p.name, 'browser_download_url': str(p)} for p in dist.iterdir()]
