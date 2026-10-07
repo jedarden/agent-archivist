@@ -451,16 +451,17 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # register-only mode: offline, content-free.
   run_check "verification register"  python3 tools/verification-manifest.py check
   run_check "verification map"       python3 tools/verification-manifest.py self-test
-  # README status coherence (docs/notes/crate-ownership.md and
+  # Documentation status coherence (docs/notes/crate-ownership.md and
   # tools/verification-register.json): the README's implementation-status
   # statements — the implemented/total requirement counts, the
   # landed/total crate counts, the links to both authorities, and the
   # retired stage claims ("design-stage", "still ahead of their phases")
   # this reconciliation removed — are re-derived from the machine-checked
-  # records on every fast-lane run, so the README cannot drift from the
-  # register or the ownership map silently; `--self-test` proves the
-  # rejection paths.
-  run_check "readme status"  python3 tools/check-readme-status.py --self-test
+  # records on every fast-lane run. Numeric counts in SECURITY.md,
+  # SUPPORT.md, CONTRIBUTING.md, and docs/notes/release-container.md are
+  # checked against those same records; `--self-test` proves the rejection
+  # paths.
+  run_check "documentation status"  python3 tools/check-readme-status.py --self-test
   # .gitleaks.toml (extend-default + never-committed path exclusions) is
   # picked up automatically from the repository root.
   require_tool gitleaks "gitleaks >= 8.19 (dir mode, --redact); see CONTRIBUTING.md" \

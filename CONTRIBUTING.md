@@ -1,10 +1,13 @@
 # Contributing to Agent Archivist
 
-Agent Archivist is a design-stage project: the architecture and requirements are
-settled, the Rust workspace is scaffolded, and implementation arrives through the
-phases in the [implementation plan](docs/plan/plan.md). Contributions are welcome
-at every level — issue reports, contract review, synthetic fixtures,
-documentation, and implementation work as phases open.
+The architecture and requirements are established, and implementation has
+landed in [12 of 12 workspace crates](docs/notes/crate-ownership.md). The
+[verification register](tools/verification-register.json) marks
+10 of 116 requirements implemented; the remaining work follows the
+[implementation plan](docs/plan/plan.md). No ingestion replica is deployed
+(see the [ARMOR storage provisioning note](docs/notes/armor-storage-provisioning.md)).
+Contributions are welcome at every level — issue reports, contract review,
+synthetic fixtures, documentation, and implementation work.
 
 ## Where development happens
 
@@ -76,7 +79,7 @@ python3 tools/contract-verifier.py self-test        # standalone contract verifi
 python3 tools/contract-verifier.py compare --quiet  # Rust vs standalone answer sheets
 python3 tools/verification-manifest.py check       # this tree's verification register
 python3 tools/verification-manifest.py self-test   # verification map rejection paths
-python3 tools/check-readme-status.py --self-test   # README status-coherence gate
+python3 tools/check-readme-status.py --self-test   # documentation status-coherence gate
 gitleaks dir --redact .                            # secret scan, working tree
 gitleaks detect --redact                           # secret scan, git history
 cargo audit --file Cargo.lock --deny warnings      # dependency audit
@@ -96,7 +99,7 @@ The script's lanes keep per-change gating cheap:
   regeneration and content scan, usage-summary-corpus
   regeneration and content scan, the standalone contract verifier and its
   cross-implementation comparison against the Rust implementation (the plan
-  Section 8 Phase 1 exit gate), verification-register gate, README
+  Section 8 Phase 1 exit gate), verification-register gate, documentation
   status-coherence gate,
   working-tree secret scan — seconds, fully offline once the workspace is
   built.

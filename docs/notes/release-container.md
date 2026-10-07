@@ -259,7 +259,13 @@ that binds the claim to the qualified commit (RELEASE.md, release step 1).
 
 ## 5. What is deliberately not yet true
 
-The project is design-stage (plan Section 17). Accordingly:
+Implementation has landed in [12 of 12 workspace crates](crate-ownership.md),
+while the [verification register](../../tools/verification-register.json)
+marks 10 of 116 requirements implemented. No ingestion replica is deployed
+(see the [ARMOR storage provisioning note](armor-storage-provisioning.md)).
+Plan [Section 17](../plan/plan.md) defines the intended first stable state
+through acceptance criteria and exercised deployment, recovery, migration,
+and rollback; those gates have not yet been met. Accordingly:
 
 - the image is not published anywhere yet; publication starts with the
   packaging releases of plan Section 13 (`0.4`/`0.5`), through the Argo

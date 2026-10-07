@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""README status-coherence gate for Agent Archivist.
+"""README and governance status-coherence gate for Agent Archivist.
 
 The README's implementation-status statements are claims about the
 machine-checked records, and they drifted once already: the README still
 described the ingestion data plane, the harness adapters, and the
 ``archivist`` CLI as "still ahead of their phases" after all twelve
 crates had landed behavior. This gate (fast lane of
-``scripts/definition-of-done.sh``) reads committed files only and
+``scripts/definition-of-done.sh``) reads repository files and
 rejects any state of the three that disagrees with the other two:
 
 1. the requirement counts the README displays match
@@ -26,7 +26,11 @@ rejects any state of the three that disagrees with the other two:
 5. the retired stage claims ("design-stage", "still ahead of their
    phases") appear nowhere in the README: the first describes a
    design-only repository this workspace stopped being, and the second
-   is the exact drift this gate exists to catch.
+   is the exact drift this gate exists to catch;
+6. numeric requirement and landed-crate claims in SECURITY.md,
+   SUPPORT.md, CONTRIBUTING.md, and docs/notes/release-container.md
+   match the same records. These files state both counts, so neither
+   claim can silently disappear or go stale.
 
 ``--self-test`` replays the rejection paths against the committed files
 with in-memory mutations and requires every one to fire and every
@@ -54,6 +58,12 @@ ROOT = Path(__file__).resolve().parent.parent
 README_PATH = Path("README.md")
 REGISTER_PATH = Path("tools/verification-register.json")
 OWNERSHIP_PATH = Path("docs/notes/crate-ownership.md")
+GOVERNANCE_PATHS = (
+    Path("SECURITY.md"),
+    Path("SUPPORT.md"),
+    Path("CONTRIBUTING.md"),
+    Path("docs/notes/release-container.md"),
+)
 
 # The two count phrases the README carries. Each occurrence must agree
 # with the record it summarizes, and at least one occurrence of each
@@ -237,6 +247,42 @@ def validate_all(register: dict, readme: str, ownership: str) -> list[str]:
     return violations + validate_coherence(readme, register, cells)
 
 
+def validate_governance_counts(
+    documents: dict[Path, str], register: dict, ownership: str
+) -> list[str]:
+    """Check only record-derived numeric claims in the governance files."""
+    counts = register_counts(register)
+    cells = landed_cells(ownership)
+    if counts is None or cells is None:
+        return ["the status records could not be parsed"]
+
+    expected = (
+        (REQUIREMENT_COUNT_RE, counts, "requirements", REGISTER_PATH),
+        (
+            CRATE_COUNT_RE,
+            (sum(cell.startswith("Landed") for cell in cells.values()), len(cells)),
+            "workspace crates",
+            OWNERSHIP_PATH,
+        ),
+    )
+    violations: list[str] = []
+    for path, body in documents.items():
+        for pattern, actual, label, source in expected:
+            phrases = pattern.findall(body)
+            if not phrases:
+                violations.append(
+                    f"{path}: missing '{actual[0]} of {actual[1]} "
+                    f"{label}' from {source}"
+                )
+            for stated_n, stated_t in phrases:
+                if (int(stated_n), int(stated_t)) != actual:
+                    violations.append(
+                        f"{path}: states {stated_n} of {stated_t} {label}; "
+                        f"{source} counts {actual[0]} of {actual[1]}"
+                    )
+    return violations
+
+
 # --- self-test ----------------------------------------------------------------
 
 
@@ -391,23 +437,66 @@ def run_self_test(
     return 0 if failed == 0 else 2
 
 
+def run_governance_self_test(
+    documents: dict[Path, str], register: dict, ownership: str
+) -> int:
+    if validate_governance_counts(documents, register, ownership):
+        fail("self-test base: the governance counts disagree with the records")
+        return 2
+
+    passed = 0
+    failed = 0
+    for path, body in documents.items():
+        for pattern in (REQUIREMENT_COUNT_RE, CRATE_COUNT_RE):
+            match = pattern.search(body)
+            if match is None:
+                fail(f"self-test base: {path} has no {pattern.pattern!r} count")
+                return 2
+            stale = f"{int(match.group(1)) + 1} of {match.group(2)}"
+            changed = body[: match.start()] + stale + body[match.end(2) :]
+            mutated = {**documents, path: changed}
+            if validate_governance_counts(mutated, register, ownership):
+                passed += 1
+                print(f"  ok  rejects: {path} stale {pattern.pattern!r} count")
+            else:
+                failed += 1
+                print(f"  FAIL should reject: {path} stale {pattern.pattern!r} count")
+
+    print(f"governance self-test: {passed} passed, {failed} failed")
+    return 0 if failed == 0 else 2
+
+
 def main(argv: list[str]) -> int:
     register = load_register(ROOT / REGISTER_PATH)
     readme = load_text(ROOT / README_PATH)
     ownership = load_text(ROOT / OWNERSHIP_PATH)
-    if register is None or readme is None or ownership is None:
+    documents = {path: load_text(ROOT / path) for path in GOVERNANCE_PATHS}
+    if (
+        register is None
+        or readme is None
+        or ownership is None
+        or any(body is None for body in documents.values())
+    ):
         return 2
+    governance = {path: body for path, body in documents.items() if body is not None}
 
     if "--self-test" in argv[1:]:
-        if validate_all(register, readme, ownership):
-            fail("self-test base: the committed documents themselves disagree")
+        if validate_all(register, readme, ownership) or validate_governance_counts(
+            governance, register, ownership
+        ):
+            fail("self-test base: the repository documents themselves disagree")
             return 2
-        return run_self_test(register, readme, ownership)
+        readme_result = run_self_test(register, readme, ownership)
+        governance_result = run_governance_self_test(
+            governance, register, ownership
+        )
+        return 0 if readme_result == governance_result == 0 else 2
     if argv[1:]:
         fail(f"unknown arguments: {' '.join(argv[1:])}")
         return 2
 
     violations = validate_all(register, readme, ownership)
+    violations += validate_governance_counts(governance, register, ownership)
     for violation in violations:
         fail(violation)
     if violations:
@@ -416,13 +505,13 @@ def main(argv: list[str]) -> int:
     cells = landed_cells(ownership) or {}
     counts = register_counts(register) or (0, 0)
     landed = sum(1 for cell in cells.values() if cell.startswith("Landed"))
-    print("agent-archivist README status coherence")
+    print("agent-archivist documentation status coherence")
     print(
         f"  requirements: {counts[0]} implemented of {counts[1]} "
         f"({REGISTER_PATH})"
     )
     print(f"  crates: {landed} landed of {len(cells)} ({OWNERSHIP_PATH})")
-    print("OK: README status statements match the machine-checked records")
+    print("OK: README and governance counts match the machine-checked records")
     return 0
 
 

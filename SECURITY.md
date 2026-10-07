@@ -6,8 +6,11 @@ project itself follows this document.
 
 ## Supported versions
 
-The project is design-stage: no production-ready client or server has shipped,
-and no released version is deployed in production.
+Implementation has landed in [12 of 12 workspace crates](docs/notes/crate-ownership.md),
+while the [verification register](tools/verification-register.json) marks only
+10 of 116 requirements implemented. No ingestion replica is deployed (see the
+[ARMOR storage provisioning note](docs/notes/armor-storage-provisioning.md)),
+and no production-ready release is supported yet.
 
 | Version | Supported |
 |---|---|
@@ -19,8 +22,8 @@ for rebuild and restore even after client and server support for a release
 expires — archived data outlives the support window of the software that wrote
 it.
 
-Reports against the current design, the scaffolded workspace, and the protocol
-contracts are welcome now, before any release exists to be affected.
+Reports against implemented code, the remaining design, and the protocol
+contracts are welcome now.
 
 ## Reporting a vulnerability
 

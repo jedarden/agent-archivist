@@ -60,7 +60,7 @@ registry gate, the metrics registry gate (name, unit, label, span, and
 status conventions, the forbidden-label list, and export-name collision
 checking), byte-exact regeneration and a content scan of the synthetic
 fixture, exact-inference, and usage-summary example corpora, the
-requirement-verification register gate, the README status-coherence gate,
+requirement-verification register gate, the documentation status-coherence gate,
 the release container baseline gate (version equality, digest-pinned bases,
 the mtime-pinned reproducible install layer, the same-commit version rule), the
  storage-profile registry gate (qualification standing, required evidence,

@@ -2,8 +2,12 @@
 
 Agent Archivist is a community-supported, single-maintainer open-source
 project. Support is best-effort: there is no hosting, no service-level
-agreement, and no paid support channel. The project is design-stage — no
-production-ready client or server has been released yet.
+agreement, and no paid support channel. Implementation has landed in
+[12 of 12 workspace crates](docs/notes/crate-ownership.md), while the
+[verification register](tools/verification-register.json) marks only
+10 of 116 requirements implemented. No ingestion replica is deployed (see the
+[ARMOR storage provisioning note](docs/notes/armor-storage-provisioning.md)),
+and no production-ready release is supported yet.
 
 ## What is supported
 
@@ -13,8 +17,8 @@ production-ready client or server has been released yet.
   version exists. Preview releases follow the sequence in the
   [implementation plan](docs/plan/plan.md) (Section 13), starting with the
   `0.1` protocol preview.
-- Reports against the design, contracts, and scaffolded workspace are welcome
-  at any time.
+- Reports against the implemented code, contracts, and remaining planned work
+  are welcome at any time.
 
 ### Pre-1.0 releases
 
