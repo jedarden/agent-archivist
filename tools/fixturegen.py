@@ -89,8 +89,12 @@ MANIFEST_NAME = "manifest.json"
 # as a sibling of this Phase 0 corpus without making the older verifier treat
 # its adapter-agnostic files as unregistered legacy fixtures. The Phase 10
 # redaction corpus has its own manifest and Rust replay because its persisted
-# fixture shape is deliberately fragmented rather than JSONL session data.
-SEPARATE_CORPUS_DIRS = frozenset({"append-only", "redaction-v1"})
+# fixture shape is deliberately fragmented rather than JSONL session data. The
+# rules-v1 corpus is likewise a classifier-specific JSON fixture set: its
+# detector phrases are intentionally outside the closed natural-language
+# vocabulary used by the generic content scanner, and its Rust replay is the
+# authoritative verifier.
+SEPARATE_CORPUS_DIRS = frozenset({"append-only", "redaction-v1", "rules-v1"})
 
 # Corpus identity. Bumping the schema string is a corpus-format version
 # event: regenerate and commit corpus + manifest + code together.

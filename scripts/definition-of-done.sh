@@ -369,6 +369,10 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # pseudonyms, fail-closed gaps, resource limits, and output hygiene all
   # execute through the public protocol seam.
   run_check "redaction-v1 corpus" cargo test -p archivist-protocol --test redaction_v1_corpus
+  # Phase 10's rules-v1 path: every supported positive label has positive,
+  # negative, Unicode, obfuscation, and boundary fixtures, and the replay
+  # proves immutable assessment outcomes and provenance without policy input.
+  run_check "rules-v1 corpus" cargo test -p archivist-protocol --test rules_v1_corpus
   # Language-neutral conformance corpus (docs/notes/conformance-corpus.md):
   # byte-exact regeneration of the golden envelopes, signatures, digests,
   # identifier hashes, object keys, receipt chains, and retry examples;
