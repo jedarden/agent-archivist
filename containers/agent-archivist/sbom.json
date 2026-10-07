@@ -3,7 +3,7 @@
   "bomFormat": "CycloneDX",
   "components": [
     {
-      "bom-ref": "pkg:cargo/archivist-adapter-claude@0.1.0",
+      "bom-ref": "pkg:cargo/archivist-adapter-claude@0.1.1",
       "name": "archivist-adapter-claude",
       "properties": [
         {
@@ -11,12 +11,12 @@
           "value": "workspace"
         }
       ],
-      "purl": "pkg:cargo/archivist-adapter-claude@0.1.0",
+      "purl": "pkg:cargo/archivist-adapter-claude@0.1.1",
       "type": "library",
-      "version": "0.1.0"
+      "version": "0.1.1"
     },
     {
-      "bom-ref": "pkg:cargo/archivist-adapter-codex@0.1.0",
+      "bom-ref": "pkg:cargo/archivist-adapter-codex@0.1.1",
       "name": "archivist-adapter-codex",
       "properties": [
         {
@@ -24,12 +24,12 @@
           "value": "workspace"
         }
       ],
-      "purl": "pkg:cargo/archivist-adapter-codex@0.1.0",
+      "purl": "pkg:cargo/archivist-adapter-codex@0.1.1",
       "type": "library",
-      "version": "0.1.0"
+      "version": "0.1.1"
     },
     {
-      "bom-ref": "pkg:cargo/archivist-adapter-opencode@0.1.0",
+      "bom-ref": "pkg:cargo/archivist-adapter-opencode@0.1.1",
       "name": "archivist-adapter-opencode",
       "properties": [
         {
@@ -37,12 +37,12 @@
           "value": "workspace"
         }
       ],
-      "purl": "pkg:cargo/archivist-adapter-opencode@0.1.0",
+      "purl": "pkg:cargo/archivist-adapter-opencode@0.1.1",
       "type": "library",
-      "version": "0.1.0"
+      "version": "0.1.1"
     },
     {
-      "bom-ref": "pkg:cargo/archivist-adapter-pi@0.1.0",
+      "bom-ref": "pkg:cargo/archivist-adapter-pi@0.1.1",
       "name": "archivist-adapter-pi",
       "properties": [
         {
@@ -50,12 +50,12 @@
           "value": "workspace"
         }
       ],
-      "purl": "pkg:cargo/archivist-adapter-pi@0.1.0",
+      "purl": "pkg:cargo/archivist-adapter-pi@0.1.1",
       "type": "library",
-      "version": "0.1.0"
+      "version": "0.1.1"
     },
     {
-      "bom-ref": "pkg:cargo/archivist-adapter-sdk@0.1.0",
+      "bom-ref": "pkg:cargo/archivist-adapter-sdk@0.1.1",
       "name": "archivist-adapter-sdk",
       "properties": [
         {
@@ -63,12 +63,12 @@
           "value": "workspace"
         }
       ],
-      "purl": "pkg:cargo/archivist-adapter-sdk@0.1.0",
+      "purl": "pkg:cargo/archivist-adapter-sdk@0.1.1",
       "type": "library",
-      "version": "0.1.0"
+      "version": "0.1.1"
     },
     {
-      "bom-ref": "pkg:cargo/archivist-auth@0.1.0",
+      "bom-ref": "pkg:cargo/archivist-auth@0.1.1",
       "name": "archivist-auth",
       "properties": [
         {
@@ -76,12 +76,12 @@
           "value": "workspace"
         }
       ],
-      "purl": "pkg:cargo/archivist-auth@0.1.0",
+      "purl": "pkg:cargo/archivist-auth@0.1.1",
       "type": "library",
-      "version": "0.1.0"
+      "version": "0.1.1"
     },
     {
-      "bom-ref": "pkg:cargo/archivist-cli@0.1.0",
+      "bom-ref": "pkg:cargo/archivist-cli@0.1.1",
       "name": "archivist-cli",
       "properties": [
         {
@@ -89,12 +89,12 @@
           "value": "workspace"
         }
       ],
-      "purl": "pkg:cargo/archivist-cli@0.1.0",
+      "purl": "pkg:cargo/archivist-cli@0.1.1",
       "type": "library",
-      "version": "0.1.0"
+      "version": "0.1.1"
     },
     {
-      "bom-ref": "pkg:cargo/archivist-client-core@0.1.0",
+      "bom-ref": "pkg:cargo/archivist-client-core@0.1.1",
       "name": "archivist-client-core",
       "properties": [
         {
@@ -102,12 +102,12 @@
           "value": "workspace"
         }
       ],
-      "purl": "pkg:cargo/archivist-client-core@0.1.0",
+      "purl": "pkg:cargo/archivist-client-core@0.1.1",
       "type": "library",
-      "version": "0.1.0"
+      "version": "0.1.1"
     },
     {
-      "bom-ref": "pkg:cargo/archivist-protocol@0.1.0",
+      "bom-ref": "pkg:cargo/archivist-protocol@0.1.1",
       "name": "archivist-protocol",
       "properties": [
         {
@@ -115,12 +115,12 @@
           "value": "workspace"
         }
       ],
-      "purl": "pkg:cargo/archivist-protocol@0.1.0",
+      "purl": "pkg:cargo/archivist-protocol@0.1.1",
       "type": "library",
-      "version": "0.1.0"
+      "version": "0.1.1"
     },
     {
-      "bom-ref": "pkg:cargo/archivist-server@0.1.0",
+      "bom-ref": "pkg:cargo/archivist-server@0.1.1",
       "name": "archivist-server",
       "properties": [
         {
@@ -128,12 +128,12 @@
           "value": "workspace"
         }
       ],
-      "purl": "pkg:cargo/archivist-server@0.1.0",
+      "purl": "pkg:cargo/archivist-server@0.1.1",
       "type": "library",
-      "version": "0.1.0"
+      "version": "0.1.1"
     },
     {
-      "bom-ref": "pkg:cargo/archivist-storage@0.1.0",
+      "bom-ref": "pkg:cargo/archivist-storage@0.1.1",
       "name": "archivist-storage",
       "properties": [
         {
@@ -141,12 +141,12 @@
           "value": "workspace"
         }
       ],
-      "purl": "pkg:cargo/archivist-storage@0.1.0",
+      "purl": "pkg:cargo/archivist-storage@0.1.1",
       "type": "library",
-      "version": "0.1.0"
+      "version": "0.1.1"
     },
     {
-      "bom-ref": "pkg:cargo/archivist-storage-s3@0.1.0",
+      "bom-ref": "pkg:cargo/archivist-storage-s3@0.1.1",
       "name": "archivist-storage-s3",
       "properties": [
         {
@@ -154,9 +154,9 @@
           "value": "workspace"
         }
       ],
-      "purl": "pkg:cargo/archivist-storage-s3@0.1.0",
+      "purl": "pkg:cargo/archivist-storage-s3@0.1.1",
       "type": "library",
-      "version": "0.1.0"
+      "version": "0.1.1"
     },
     {
       "bom-ref": "pkg:cargo/atomic-waker@1.1.2",
@@ -2162,18 +2162,18 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "pkg:cargo/agent-archivist@0.1.0",
+      "bom-ref": "pkg:cargo/agent-archivist@0.1.1",
       "name": "agent-archivist",
       "type": "application",
-      "version": "0.1.0"
+      "version": "0.1.1"
     },
-    "timestamp": "2026-09-13T04:09:09Z",
+    "timestamp": "2026-10-07T17:08:52Z",
     "tools": {
       "components": [
         {
           "name": "containers/agent-archivist/generate-sbom.sh",
           "type": "application",
-          "version": "0.1.0"
+          "version": "0.1.1"
         }
       ]
     }

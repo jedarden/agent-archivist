@@ -4,21 +4,21 @@ version = 4
 
 [[package]]
 name = "archivist-adapter-claude"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archivist-adapter-sdk",
 ]
 
 [[package]]
 name = "archivist-adapter-codex"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archivist-adapter-sdk",
 ]
 
 [[package]]
 name = "archivist-adapter-opencode"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archivist-adapter-sdk",
  "rusqlite",
@@ -26,28 +26,28 @@ dependencies = [
 
 [[package]]
 name = "archivist-adapter-pi"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archivist-adapter-sdk",
 ]
 
 [[package]]
 name = "archivist-adapter-sdk"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archivist-protocol",
 ]
 
 [[package]]
 name = "archivist-auth"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archivist-protocol",
 ]
 
 [[package]]
 name = "archivist-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archivist-adapter-claude",
  "archivist-adapter-codex",
@@ -72,7 +72,7 @@ dependencies = [
 
 [[package]]
 name = "archivist-client-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archivist-adapter-sdk",
  "archivist-auth",
@@ -83,11 +83,11 @@ dependencies = [
 
 [[package]]
 name = "archivist-protocol"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "archivist-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archivist-auth",
  "archivist-protocol",
@@ -99,7 +99,7 @@ dependencies = [
 
 [[package]]
 name = "archivist-storage"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archivist-protocol",
  "zstd-safe",
@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "archivist-storage-s3"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archivist-auth",
  "archivist-protocol",
