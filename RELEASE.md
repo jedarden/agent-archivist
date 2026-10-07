@@ -1,6 +1,7 @@
 # Release process
 
-Releases are the responsibility of the project maintainer. They are published
+Releases run automatically after the complete verification and signing gates pass.
+The project maintainer owns the release policy. They are published
 from the authoritative Forgejo repository
 (`https://git.ardenone.com/jedarden/agent-archivist`); the GitHub mirror
 receives tags and artifacts automatically and is never published to directly.
@@ -119,3 +120,26 @@ this gate.
   `ronaldraygun/agent-archivist` name.
 - Supply-chain scans (dependency, license, secret, container) run on releases;
   findings are fixed or documented in the release notes before publication.
+
+## Automatic release transaction
+
+The main-push sensor invokes `agent-archivist-auto-release` in iad-ci. It
+reserves the next patch in a version-only main commit, preserving an explicit
+version increase, and runs the full existing CI on that exact candidate. A
+failed candidate can leave a reserved version on main; it creates no release
+tag or promoted image. A retry of that candidate reuses its version.
+
+The successful candidate supplies the verification manifest and both glibc
+2.31 archives to the publisher. Both OCI platforms then build, execute their
+version smoke check, and pass the container vulnerability scan. Only then may
+the annotated tag, verified image signature, signed release manifest, immutable
+SemVer image, and Forgejo release be published. The signed manifest binds the
+exact source, both archive hashes, committed SBOM, verification manifest, and
+both container scan reports. A duplicate event verifies the published signatures, evidence and every asset
+hash before becoming a no-op; any mismatch fails closed.
+
+Automatic notes claim only the isolated MinIO reference profile. B2 support
+requires the separate exact-release live gate described above and is explicitly
+not claimed by this automatic lane. AWS S3 and Garage remain unqualified.
+Signing material is referenced through the release step's OpenBao-backed
+Secret; `containers/agent-archivist/release.pub` is the verification key.

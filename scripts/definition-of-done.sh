@@ -251,6 +251,7 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # version, and Cargo.lock coherence (RC-021 through RC-023);
   # `--self-test` proves the rejection paths.
   run_check "release container baseline"  python3 tools/check-release-container.py --self-test
+  run_check "release transaction policy" python3 scripts/test_release_policy.py
   # Release image SBOM determinism (docs/notes/release-container.md
   # RC-021 through RC-023): the committed CycloneDX document is the
   # deterministic output of the committed generator over this tree —
