@@ -1,6 +1,6 @@
 # Storage profiles
 
-Status: accepted baseline · Last updated: 2026-09-27
+Status: accepted baseline · Last updated: 2026-10-07
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and
 **MAY** are to be interpreted as described in RFC 2119 and RFC 8174 when
@@ -203,7 +203,7 @@ maintained by hand.
 | Profile | Class | Standing | Qualification evidence |
 | --- | --- | --- | --- |
 | `minio` | reference | qualified by the suite on every full verification run | plan Section 7.7 |
-| `backblaze-b2` | target | release-gated | plan Section 10; live record 2026-09-27 (the [B2 qualification note](b2-storage-qualification.md) Section 9) |
+| `backblaze-b2` | target | release-gated | plan Section 10; live record 2026-10-07 (release 0.1.1; the [B2 qualification note](b2-storage-qualification.md) Section 11) |
 | `armor` | target | qualified before deployment on the ARMOR path | plan Section 10; live run recorded 2026-09-27 (the [ARMOR qualification note](armor-storage-qualification.md) Section 11) |
 | `aws-s3` | community | unqualified | record 2026-09-27 (release 1.0.0) |
 | `garage` | community | unqualified | record 2026-09-27 (release 1.0.0) |

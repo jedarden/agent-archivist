@@ -111,3 +111,16 @@ submitted_by = "maintainer"
 suite_revision = "bd89a48"
 operator = "maintainer"
 capability = { conditional_create = "unavailable", multipart_commit_abort = "verified", stored_checksum = "provider_specific", versioning = "enabled", server_side_encryption = "verified" }
+
+# Independent release-time live run; retained redacted transcript and cleanup
+# record: docs/evidence/storage/b2-0.1.1-2026-10-07.{json,jsonl}.
+[[records]]
+profile = "backblaze-b2"
+date = "2026-10-07"
+release = "0.1.1"
+evidence = "live"
+outcome = "qualified"
+submitted_by = "maintainer"
+suite_revision = "111e122d2a3f559580a1e6b0294bbd664c9decbf"
+operator = "maintainer"
+capability = { conditional_create = "unavailable", multipart_commit_abort = "verified", stored_checksum = "provider_specific", versioning = "enabled", server_side_encryption = "verified" }

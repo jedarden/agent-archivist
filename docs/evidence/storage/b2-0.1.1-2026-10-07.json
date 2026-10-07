@@ -1,0 +1,24 @@
+{
+  "release": "0.1.1",
+  "candidate_revision": "111e122d2a3f559580a1e6b0294bbd664c9decbf",
+  "driver_sha256": "3a58259e820aac5bee3352b8056a9451e27048d9557ab510fb43175806102d37",
+  "started_at": "2026-10-07T18:01:25.737681+00:00",
+  "finished_at": "2026-10-07T18:02:09.833123+00:00",
+  "transcript_sha256": "cd8da57d58749d671dd3cf6144145171df8c59de740746a09a6922ebb0fe6244",
+  "lane_complete": true,
+  "tokens": {
+    "conditional_create": "unavailable",
+    "multipart_commit_abort": "verified",
+    "server_side_encryption": "verified",
+    "stored_checksum": "provider_specific",
+    "versioning": "enabled"
+  },
+  "cleanup": {
+    "versions_removed": 6,
+    "uploads_aborted": 0,
+    "remaining_versions": 0,
+    "remaining_uploads": 0
+  },
+  "run_error_type": null,
+  "isolation": "fresh random prefix verified empty before writes; cleanup restricted to exact keys written by this run"
+}

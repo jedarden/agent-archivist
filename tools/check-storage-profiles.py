@@ -938,31 +938,30 @@ SELF_TEST_POLICY_CASES = [
          "AWS S3 passed the full suite.")),
 ]
 
-LIVE_RELEASE = "0.1.0"
-
-
-def b2_live_records(registry: dict) -> list[dict]:
+def b2_live_records(registry: dict, release: str | None = None) -> list[dict]:
     return [
         record for record in registry["records"]
         if isinstance(record, dict)
         and record.get("profile") == "backblaze-b2"
         and record.get("evidence") == LIVE_EVIDENCE
+        and (release is None or record.get("release") == release)
     ]
 
 
-def remove_b2_live_record(registry: dict) -> None:
+def remove_b2_live_record(registry: dict, release: str) -> None:
     registry["records"] = [
         record for record in registry["records"]
         if not (
             isinstance(record, dict)
             and record.get("profile") == "backblaze-b2"
             and record.get("evidence") == LIVE_EVIDENCE
+            and record.get("release") == release
         )
     ]
 
 
-def fail_b2_live_record(registry: dict) -> None:
-    records = b2_live_records(registry)
+def fail_b2_live_record(registry: dict, release: str) -> None:
+    records = b2_live_records(registry, release)
     if records:
         records[-1].update(
             outcome="unqualified",
@@ -973,11 +972,11 @@ def fail_b2_live_record(registry: dict) -> None:
 
 
 SELF_TEST_LIVE_RELEASE_CASES = [
-    ("the committed B2 live release record", False, lambda r: None),
+    ("the committed B2 live release record", False, lambda r, release: None),
     ("B2 live evidence missing for the release", True, remove_b2_live_record),
     ("B2 live run failed for the release", True, fail_b2_live_record),
     ("B2 live evidence belongs to another release", True,
-     lambda r: b2_live_records(r)[-1].update(release="9.9.9")),
+     lambda r, release: b2_live_records(r, release)[-1].update(release="9.9.9")),
 ]
 
 
@@ -1078,19 +1077,23 @@ def run_self_test(base_registry: dict, base_readme: str, base_note: str,
             for violation in violations:
                 print(f"       violation: {violation}")
 
-    for label, must_reject, mutation in SELF_TEST_LIVE_RELEASE_CASES:
-        registry = apply_mutation(base_registry, mutation)
-        violations = validate_release_live(registry, LIVE_RELEASE)
-        rejected = bool(violations)
-        if rejected == must_reject:
-            passed += 1
-            print(f"  ok  {'rejects' if rejected else 'accepts'}: {label}")
-        else:
-            failed += 1
-            print(f"  FAIL {'should reject' if must_reject else 'should accept'}: "
-                  f"{label}")
-            for violation in violations:
-                print(f"       violation: {violation}")
+    # Keep older records present while mutating the release under test: a
+    # later qualification must never mask missing or failed exact-release evidence.
+    for live_release in sorted({r["release"] for r in b2_live_records(base_registry)}):
+        for label, must_reject, mutation in SELF_TEST_LIVE_RELEASE_CASES:
+            registry = copy.deepcopy(base_registry)
+            mutation(registry, live_release)
+            violations = validate_release_live(registry, live_release)
+            rejected = bool(violations)
+            if rejected == must_reject:
+                passed += 1
+                print(f"  ok  {'rejects' if rejected else 'accepts'}: {label} ({live_release})")
+            else:
+                failed += 1
+                print(f"  FAIL {'should reject' if must_reject else 'should accept'}: "
+                      f"{label} ({live_release})")
+                for violation in violations:
+                    print(f"       violation: {violation}")
 
     print(f"self-test: {passed} passed, {failed} failed")
     return 0 if failed == 0 else 2

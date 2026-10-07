@@ -334,3 +334,38 @@ maintainer performs this sequence against the exact candidate revision:
    with the full release verification, permits B2 to appear in release and
    support claims. A synthetic report or the note's Section 9 prose cannot
    bypass this check.
+
+## 11. Release 0.1.1 live qualification (2026-10-07)
+
+A new live direct-B2 run completed at 18:01:25–18:02:09 UTC against
+candidate `111e122d2a3f559580a1e6b0294bbd664c9decbf`. The
+[redacted transcript](../evidence/storage/b2-0.1.1-2026-10-07.jsonl) records
+every instrument; the [run record](../evidence/storage/b2-0.1.1-2026-10-07.json)
+binds its SHA-256, the driver SHA-256, exact candidate, version, and cleanup.
+The full fast lane passed 47 checks and the synthetic storage compatibility
+suite passed both tests on those inputs before the live run. This is new
+0.1.1 evidence; the earlier 0.1.0 record remains unchanged.
+
+The five observed tokens were `conditional_create=unavailable`,
+`stored_checksum=provider_specific`, `versioning=enabled`,
+`server_side_encryption=verified`, and `multipart_commit_abort=verified`.
+Both conditional PUTs returned 501; regular writes, multipart completion,
+and read-back succeeded. First multipart abort returned 204 and repeat
+abort returned 404 `NoSuchUpload`. Unlike the September run, the bucket-encryption query returned 200 and
+both explicit AES256 and plain PUTs echoed SSE. Bucket-level read-back
+listed five current objects and six versions. The object-level version
+query returned non-XML content; it did not establish versioning by itself.
+The run used existing credentials and a fresh random prefix verified empty
+before writing. Cleanup removed exactly its six versions, with zero versions
+and zero open uploads remaining; it changed no bucket configuration.
+The limitations in Section 9 still apply, including no ARMOR-path or load
+qualification from this direct-B2 run. Complete exact-candidate release CI
+and publication checks remain separate requirements.
+
+The preliminary read-only request exposed a driver defect: `Host` was not
+signed, and B2 returned HTTP 400 `InvalidRequest`. Signing the transport
+host made the same read-only probe return HTTP 200. The correction follows
+[AWS's canonical-header contract](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html)
+and [B2's requirement to use SigV4](https://www.backblaze.com/docs/en/cloud-storage-call-the-s3-compatible-api).
+The transport regression check covers HTTPS and HTTP with a nondefault port,
+and verifies that host and credential values remain absent from evidence.
