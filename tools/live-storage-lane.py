@@ -182,7 +182,11 @@ class Lane:
         query = query or []
         signer = self.raw if role == "raw" else self.br
         path = f"/{self.bucket}/{key}" if key else f"/{self.bucket}/"
-        signed = signer.sign(method, path, query, headers or {}, body)
+        # SigV4 requires Host in the canonical request, including any port.
+        # http.client adds it too late for signing if it is left implicit.
+        request_headers = {k: v for k, v in (headers or {}).items() if k.lower() != "host"}
+        request_headers["host"] = self.netloc
+        signed = signer.sign(method, path, query, request_headers, body)
         target = _uri_encode(path, encode_slash=False)
         if query:
             pairs = sorted((_uri_encode(k, True), _uri_encode(v, True)) for k, v in query)

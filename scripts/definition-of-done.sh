@@ -275,6 +275,7 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # rejects keys, prefixes, bodies, upload ids, and authorization-shaped
   # fields while requiring the complete instrument set and final tokens.
   run_check "live storage evidence redaction" python3 tools/check-live-storage-evidence.py --self-test
+  run_check "live storage request signing" python3 tools/test_live_storage_lane.py
   # Adapter compatibility matrix (docs/notes/compatibility-matrix.md): the
   # published per-adapter fingerprint allowlists, projection versions,
   # artifact kinds, and known gaps, reconciled row-for-row against the
