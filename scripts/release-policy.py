@@ -66,7 +66,7 @@ def verify_published(release, revision, value):
         for name in sorted(required):
             download_asset(by_name[name]['browser_download_url'], root / name)
         manifest = root / 'release-manifest.json'
-        subprocess.run(['cosign', 'verify-blob', '--key', PUBLIC_KEY, '--insecure-ignore-tlog', '--bundle', str(manifest) + '.bundle', str(manifest)], check=True)
+        subprocess.run(['cosign', 'verify-blob', '--key', PUBLIC_KEY, '--insecure-ignore-tlog', '--bundle', str(manifest) + '.bundle', str(manifest)], check=True, stdout=subprocess.PIPE)
         record = json.loads(manifest.read_text())
         if record['commit'] != revision or record['version'] != value or set(record['archives']) != archives or set(record['container_scans']) != scans:
             raise ValueError('signed release record differs from requested source/version')
@@ -78,14 +78,14 @@ def verify_published(release, revision, value):
         verification = root / 'verification-manifest.json'
         if json.loads(verification.read_text()) != record['verification_manifest']:
             raise ValueError('published verification evidence differs from signed manifest')
-        subprocess.run(['python3', 'tools/verification-manifest.py', 'check', '--manifest', str(verification)], check=True)
+        subprocess.run(['python3', 'tools/verification-manifest.py', 'check', '--manifest', str(verification)], check=True, stdout=subprocess.PIPE)
         sums = dict((name.removeprefix('./'), 'sha256:' + sha) for sha, name in (line.split() for line in (root / 'SHA256SUMS').read_text().splitlines()))
         if sums != record['archives']:
             raise ValueError('published checksum list differs from signed manifest')
         image = record['image']
         if not re.fullmatch(re.escape(IMAGE) + r'@sha256:[a-f0-9]{64}', image):
             raise ValueError('invalid signed image reference')
-        subprocess.run(['cosign', 'verify', '--key', PUBLIC_KEY, '--insecure-ignore-tlog', image], check=True)
+        subprocess.run(['cosign', 'verify', '--key', PUBLIC_KEY, '--insecure-ignore-tlog', image], check=True, stdout=subprocess.PIPE)
         if json.loads(run('docker', 'buildx', 'imagetools', 'inspect', '--format', '{{json .Manifest.Digest}}', IMAGE + ':' + value)) != image.split('@')[1]:
             raise ValueError('published image tag differs from signed manifest')
 
