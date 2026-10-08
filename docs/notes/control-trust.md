@@ -76,7 +76,7 @@ jq '.result' "$ADMIN_DIR/link-envelope.json" > "$ADMIN_DIR/link-request.json"
 
 # Configure admin.endpoint_url, admin.region, admin.path_style,
 # admin.control_bucket, admin.credentials_ref, and the tenant above.
-export ARCHIVIST_ADMIN_AUTHORITY_SEED_REF="file:$ADMIN_DIR/authority.seed"
+export ARCHIVIST_ADMIN_AUTHORITY_SEED_REF="file:/var/lib/archivist/admin/authority.seed"
 archivist --non-interactive --json admin approve \
   "$ADMIN_DIR/link-request.json" > "$ADMIN_DIR/approval.json"
 
@@ -89,7 +89,7 @@ For a local HTTP MinIO profile, set both `ARCHIVIST_ADMIN_TLS=disabled` and
 `ARCHIVIST_STORAGE_TLS=disabled`; production endpoints should use TLS. Configure
 each replica with `ARCHIVIST_SERVER_AUTHORITY_KEY="$AUTHORITY_KEY"`,
 `ARCHIVIST_SERVER_RECEIPT_CERTIFICATE_PATH="$ADMIN_DIR/receipt.seed.certificate.json"`,
-and `ARCHIVIST_SERVER_RECEIPT_SIGNING_KEY_REF=file:$ADMIN_DIR/receipt.seed`.
+and `ARCHIVIST_SERVER_RECEIPT_SIGNING_KEY_REF="file:/var/lib/archivist/admin/receipt.seed"`.
 Give the replica only its scoped raw-writer and control-reader credentials.
 After the first normal client upload, validate the returned receipt against
 the pinned authority and confirm `/health/ready` returns 200. The executable
