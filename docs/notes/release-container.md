@@ -269,18 +269,34 @@ that binds the claim to the qualified commit (RELEASE.md, release step 1).
 
 ## 5. What is deliberately not yet true
 
-Implementation has landed in [12 of 12 workspace crates](crate-ownership.md),
-while the [verification register](../../tools/verification-register.json)
-marks 10 of 116 requirements implemented. No ingestion replica is deployed
-(see the [ARMOR storage provisioning note](armor-storage-provisioning.md)).
-Plan [Section 17](../plan/plan.md) defines the intended first stable state
-through acceptance criteria and exercised deployment, recovery, migration,
-and rollback; those gates have not yet been met. Accordingly:
+This note pins the release container's version, image-build, reproducibility,
+and release-evidence contract, and the fast-lane checker validates that
+contract. That checked build surface does not establish the project's first
+stable state. The [crate ownership map](crate-ownership.md) records landed
+behavior in all 12 workspace crates and also names phase work that remains,
+including storage compatibility and qualification, ingest reads, and
+deployment integration. The checked [verification register](../../tools/verification-register.json)
+marks 10 of 116 requirements implemented and 106 planned; all 20 registered
+`RC-*` requirements are still marked planned.
 
-- the image is not published anywhere yet; publication starts with the
-  packaging releases of plan Section 13 (`0.4`/`0.5`), through the Argo
-  release workflow described in RELEASE.md — never a local push, and never
-  a mutable tag;
+Plan [Section 17](../plan/plan.md) is the authority for the first stable
+state. It requires the baseline acceptance criteria and the listed recovery,
+security, provenance, operations, and adapter behavior, plus deployment,
+recovery, migration, and rollback exercised from the public documentation.
+The implementation and verification records above do not establish that
+state.
+
+The deployment evidence is narrower. The [ARMOR storage provisioning
+note](armor-storage-provisioning.md) records the iad-ci ARMOR service with
+the six scoped credentials provisioned and live enforcement exercised. It
+also records no ingest replicas, no ExternalSecret consumers of the
+per-role archivist credentials, and empty catalog and derived prefixes.
+ARMOR's live storage enforcement therefore does not establish a deployed
+Agent Archivist workload or a production release. The image is not published
+yet; publication starts with the packaging releases of plan Section 13
+(`0.4`/`0.5`), through the Argo release workflow described in RELEASE.md —
+never a local push, and never a mutable tag. Accordingly:
+
 - multi-architecture (`amd64`, `arm64`) builds are the release workflow's
   duty under the same contract — the digest-pinned references are
   manifest digests and resolve per architecture without Dockerfile
