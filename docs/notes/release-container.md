@@ -273,7 +273,7 @@ This note pins the release container's version, image-build, reproducibility,
 and release-evidence contract, and the fast-lane checker validates that
 contract. That checked build surface does not establish the project's first
 stable state. The [crate ownership map](crate-ownership.md) records landed
-behavior in all 12 workspace crates and also names phase work that remains,
+behavior in 12 of 12 workspace crates and also names phase work that remains,
 including storage compatibility and qualification, ingest reads, and
 deployment integration. The checked [verification register](../../tools/verification-register.json)
 marks 10 of 116 requirements implemented and 106 planned; all 20 registered
