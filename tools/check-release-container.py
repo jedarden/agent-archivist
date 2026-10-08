@@ -10,7 +10,8 @@ Validates ``containers/agent-archivist/VERSION`` and
 2. version equality: the ``VERSION`` file, the workspace
    ``[workspace.package] version``, and every member crate's inherited
    version are one fact (RC-005);
-3. Dockerfile structure (RC-011 through RC-018, RC-020): exactly two stages
+3. Dockerfile structure (RC-011 through RC-018, RC-020, RC-025): exactly
+   two stages
    (``builder``, ``runtime``), every base digest-pinned with a
    version-exact tag, the builder tag matching the pinned
    ``rust-toolchain.toml`` channel, the runtime tag a pinned
@@ -584,7 +585,7 @@ def validate_dockerfile(state: dict) -> list[str]:
     dirs = directives(logical_lines(text))
     values = {kw: [v for k, v in dirs if k == kw] for kw in
               ("FROM", "ARG", "LABEL", "RUN", "COPY", "ADD", "USER",
-               "ENTRYPOINT")}
+               "ENTRYPOINT", "CMD")}
 
     # RC-017: exactly two named stages.
     stages = []
@@ -695,6 +696,7 @@ def validate_dockerfile(state: dict) -> list[str]:
     stage_args: dict[str, set[str]] = {}
     stage_runs: dict[str, int] = {}
     stage_healthchecks: dict[str, list[str]] = {}
+    stage_commands: dict[str, list[str]] = {}
     current: str | None = None
     for kw, value in dirs:
         if kw == "FROM":
@@ -708,6 +710,8 @@ def validate_dockerfile(state: dict) -> list[str]:
                 stage_runs[current] = stage_runs.get(current, 0) + 1
             elif kw == "HEALTHCHECK":
                 stage_healthchecks.setdefault(current, []).append(value)
+            elif kw == "CMD":
+                stage_commands.setdefault(current, []).append(value)
     for stage, count in sorted(stage_runs.items()):
         if "SOURCE_DATE_EPOCH" not in stage_args.get(stage, set()):
             violations.append(f"RC-018: stage {stage} runs {count} RUN "
@@ -754,6 +758,30 @@ def validate_dockerfile(state: dict) -> list[str]:
                                   "executable path")
         except ValueError:
             violations.append(f"RC-017: ENTRYPOINT is not valid JSON: {entry!r}")
+
+    # RC-025: running the image with no explicit command starts the server.
+    # Keep the executable as ENTRYPOINT (RC-017), and select its serve
+    # command as the image's default argv. HEALTHCHECK has its own explicit
+    # probe argv and does not inherit this CMD.
+    for stage in sorted(set(stage_commands) - {"runtime"}):
+        violations.append(
+            f"RC-025: the {stage} stage declares a CMD; only the runtime "
+            "stage's default command starts the server")
+    default_commands = stage_commands.get("runtime", [])
+    if len(default_commands) != 1:
+        violations.append("RC-025: the image must declare exactly one "
+                          "default CMD, found "
+                          f"{len(default_commands)} in the runtime stage")
+    else:
+        default_command = default_commands[0].strip()
+        try:
+            parsed_command = json.loads(default_command)
+        except ValueError:
+            parsed_command = None
+        if parsed_command != ["serve"]:
+            violations.append("RC-025: the image default CMD must be "
+                              'exec-form ["serve"] so the entrypoint runs '
+                              f"the server, found {default_command!r}")
 
     # RC-020: exactly one HEALTHCHECK, in the runtime stage — the only
     # stage that serves anything to probe — exec-form over the installed
@@ -1166,6 +1194,15 @@ def build_cases(state: dict) -> None:
          True, with_dockerfile(state,
                                'ENTRYPOINT ["/usr/local/bin/archivist"]',
                                'ENTRYPOINT ["/usr/bin/archivist"]')),
+        ("the image default command does not start the server",
+         True, with_dockerfile(state, 'CMD ["serve"]', 'CMD ["help"]')),
+        ("the image has no default command",
+         True, with_dockerfile(state, 'CMD ["serve"]\n', "")),
+        ("the image default command is shell-form",
+         True, with_dockerfile(state, 'CMD ["serve"]', "CMD serve")),
+        ("the builder stage declares a default command",
+         True, with_dockerfile(state, "WORKDIR /build",
+                               'WORKDIR /build\nCMD ["serve"]')),
         ("the HEALTHCHECK was dropped",
          True, with_dockerfile(state, healthcheck, "")),
         ("HEALTHCHECK NONE disabled the probe",
@@ -1411,7 +1448,9 @@ def main(argv: list[str]) -> int:
         print(f"base: {ref}")
     user = next((v for k, v in reversed(dirs) if k == "USER"), "?")
     entrypoint = next((v for k, v in reversed(dirs) if k == "ENTRYPOINT"), "?")
-    print(f"entrypoint: {entrypoint} as user '{user.split()[0]}'")
+    default_command = next((v for k, v in reversed(dirs) if k == "CMD"), "?")
+    print(f"entrypoint: {entrypoint} {default_command} as user "
+          f"'{user.split()[0]}'")
     history = state["history"]
     introduced = next(i for i, e in enumerate(history) if e[2] is not None)
     print(f"history: {len(history) - introduced} commits carry the version "

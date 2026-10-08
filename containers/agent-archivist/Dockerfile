@@ -74,6 +74,10 @@ RUN --mount=type=bind,from=builder,source=/build/target/release/archivist,ro,tar
  && touch --date="@${SOURCE_DATE_EPOCH:?SOURCE_DATE_EPOCH must be set}" \
       /usr/local/bin/archivist /usr/local/bin /etc /tmp
 USER 65532:65532
+# The image's default process is the long-running replica. The binary
+# remains the entrypoint so the healthcheck can invoke its `probe` command
+# directly without inheriting this default argument.
+CMD ["serve"]
 # The image's liveness signal is the binary probing itself (RC-020): the
 # runtime base ships neither curl nor wget and RC-017 installs no packages,
 # so the HEALTHCHECK invokes the one binary the image carries in its

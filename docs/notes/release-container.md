@@ -1,6 +1,6 @@
 # Agent Archivist release container conventions
 
-Status: accepted baseline · Last updated: 2026-09-26
+Status: accepted baseline · Last updated: 2026-10-07
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are
 to be interpreted as described in RFC 2119 and RFC 8174 when they appear in bold.
@@ -212,6 +212,16 @@ carries the next rule number:
   **MUST NOT** appear. The directive is image-config metadata: it adds no
   layer and takes no part in the RC-018 mtime discipline.
 
+The server process is also the image's default runtime behavior:
+
+- **RC-025** — The runtime stage **MUST** declare exactly one exec-form
+  `CMD ["serve"]`. The `ENTRYPOINT` remains the installed `archivist`
+  executable, so running the image without an explicit command invokes
+  `archivist serve` and keeps the server process in the foreground. The
+  `HEALTHCHECK` carries its own explicit `archivist probe` argv, independent
+  of this default command. `CMD` changes image configuration only; it adds
+  no layer and does not change the reproducible build's mtime inputs.
+
 One further rule family is supply-chain contract — what the image claims
 to contain — and rides the same baseline: the image's software bill of
 materials, deterministic like the build itself, plus the manifest entry
@@ -294,8 +304,9 @@ checks, offline and in seconds:
 
 - the `VERSION` grammar (RC-004) and its equality with the workspace
   version and every member's inheritance (RC-005);
-- the Dockerfile rules RC-011 through RC-018 and RC-020 — digest-pinned bases, the
-  toolchain-tag cross-check against `rust-toolchain.toml`, the exact
+- the Dockerfile rules RC-011 through RC-018, RC-020, and RC-025 —
+  digest-pinned bases, the toolchain-tag cross-check against
+  `rust-toolchain.toml`, the exact
   build invocation, `COPY`-only context, the bind-mount install RUN with
   its cp destination equal to the entrypoint and its RC-018 pin set
   covering the binary, its parent directory, `/etc`, and `/tmp`, label
