@@ -1,11 +1,15 @@
 # Contributing to Agent Archivist
 
-The architecture and requirements are established, and implementation has
-landed in [12 of 12 workspace crates](docs/notes/crate-ownership.md). The
-[verification register](tools/verification-register.json) marks
-10 of 116 requirements implemented; the remaining work follows the
-[implementation plan](docs/plan/plan.md). No ingestion replica is deployed
+The public repository has moved beyond design into partial implementation:
+behavior has landed in [12 of 12 workspace crates](docs/notes/crate-ownership.md),
+each with some verification-gated behavior, including the Phase 4 ingestion
+bootstrap and the Phase 10 catalog rebuild described in the [README](README.md).
+The checked [verification register](tools/verification-register.json) marks
+only 10 of 116 requirements implemented; most remain planned. This does not
+mean a production-ready client or server has shipped. The pilot and
+production-hardening phases remain ahead, and no ingestion replica is deployed
 (see the [ARMOR storage provisioning note](docs/notes/armor-storage-provisioning.md)).
+No production-ready release is supported.
 Contributions are welcome at every level — issue reports, contract review,
 synthetic fixtures, documentation, and implementation work.
 
