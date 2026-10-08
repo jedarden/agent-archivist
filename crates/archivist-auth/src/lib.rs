@@ -106,6 +106,7 @@
 pub mod authority;
 pub mod consumption_policy;
 pub mod delegation;
+pub mod derived_use;
 pub mod ed25519;
 pub mod error;
 pub mod export_approval;
