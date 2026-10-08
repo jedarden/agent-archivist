@@ -48,6 +48,54 @@ the replica verifies the certificate and stored record against the pinned root
 and refuses to bind when any piece is missing or disagrees. Readiness becomes
 ready only after an upload authorization verifies the linked-client record.
 
+## First tenant bootstrap
+
+This procedure starts with empty raw and control buckets and a local
+administrator credential that can write the tenant control prefix. Keep the
+administrator work directory private; only the authority public key,
+link-request document, receipt certificate, and signed control records are
+exportable.
+
+```sh
+umask 077
+TENANT=0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b
+ADMIN_DIR=/var/lib/archivist/admin
+CLIENT_DIR=/var/lib/archivist/client
+install -d -m 700 "$ADMIN_DIR" "$CLIENT_DIR"
+
+export ARCHIVIST_ADMIN_TENANT="$TENANT"
+archivist --non-interactive --json admin create-authority \
+  "$ADMIN_DIR/authority.seed" > "$ADMIN_DIR/authority.json"
+AUTHORITY_KEY="$(jq -er '.result.authority_key' "$ADMIN_DIR/authority.json")"
+
+export ARCHIVIST_CLIENT_STATE_DIR="$CLIENT_DIR"
+export ARCHIVIST_CLIENT_TENANT="$TENANT"
+export ARCHIVIST_CLIENT_HARNESS=codex
+archivist --non-interactive --json link request > "$ADMIN_DIR/link-envelope.json"
+jq '.result' "$ADMIN_DIR/link-envelope.json" > "$ADMIN_DIR/link-request.json"
+
+# Configure admin.endpoint_url, admin.region, admin.path_style,
+# admin.control_bucket, admin.credentials_ref, and the tenant above.
+export ARCHIVIST_ADMIN_AUTHORITY_SEED_REF="file:$ADMIN_DIR/authority.seed"
+archivist --non-interactive --json admin approve \
+  "$ADMIN_DIR/link-request.json" > "$ADMIN_DIR/approval.json"
+
+export ARCHIVIST_ADMIN_RECEIPT_SIGNING_KEY_PATH="$ADMIN_DIR/receipt.seed"
+archivist --non-interactive --json admin receipt-key \
+  > "$ADMIN_DIR/receipt-key.json"
+```
+
+For a local HTTP MinIO profile, set both `ARCHIVIST_ADMIN_TLS=disabled` and
+`ARCHIVIST_STORAGE_TLS=disabled`; production endpoints should use TLS. Configure
+each replica with `ARCHIVIST_SERVER_AUTHORITY_KEY="$AUTHORITY_KEY"`,
+`ARCHIVIST_SERVER_RECEIPT_CERTIFICATE_PATH="$ADMIN_DIR/receipt.seed.certificate.json"`,
+and `ARCHIVIST_SERVER_RECEIPT_SIGNING_KEY_REF=file:$ADMIN_DIR/receipt.seed`.
+Give the replica only its scoped raw-writer and control-reader credentials.
+After the first normal client upload, validate the returned receipt against
+the pinned authority and confirm `/health/ready` returns 200. The executable
+empty-bucket proof, including receipt validation and the readiness transition,
+is the MinIO live stage of `containers/agent-archivist/smoke.sh`.
+
 1. **Link.** The linked-client record is one installation's identity in
    one tenant: its Ed25519 public key, base scopes, and the current
    authorization epoch. The link is epoch 1, and every subsequent

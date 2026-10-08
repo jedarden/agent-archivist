@@ -21,6 +21,10 @@ Modes:
                   signature, keys.json publics, mint determinism)
   mint            write one fresh, correctly-signed ingest attempt plus the
                   stale golden attempt and the expected raw object keys
+  mint-linked      sign fresh and stale attempts with the protected identity
+                  created by `archivist link request`
+  verify-receipt   verify a returned receipt and its tenant-authority-signed
+                  certificate using the independently implemented verifier
   control-objects write the linked-client pointer objects at their pinned
                   object keys, ready for the control bucket
   base-inventory  the final-state regular-file inventory of a `docker save`
@@ -252,6 +256,22 @@ class DerivedSigner:
         return sign(self._seed, message).hex()
 
 
+class IdentitySigner:
+    """The fresh client key held by the local protected identity file."""
+
+    def __init__(self, identity: dict):
+        self.name = "newly-linked-client"
+        self._seed = bytes.fromhex(identity["private_seed"])
+        if len(self._seed) != 32:
+            raise SystemExit("protected identity seed has the wrong size")
+        self.public = public_from_seed(self._seed)
+        self.public_key = self.public.hex()
+        self.key_id = hashlib.sha256(self.public).hexdigest()
+
+    def sign(self, message: bytes) -> str:
+        return sign(self._seed, message).hex()
+
+
 def control_signer(name: str) -> DerivedSigner:
     return DerivedSigner(name, ct.KEY_SEED_PREFIX)
 
@@ -359,6 +379,149 @@ def mint(now: str) -> dict:
             identity["attestation_object_key"],
         ],
     }
+
+
+def mint_linked(now: str, tenant: str, link_request: dict,
+                identity_document: dict) -> dict:
+    """Create a real upload proof using the identity just linked by the CLI."""
+    signer = IdentitySigner(identity_document)
+    client_id = link_request.get("client_id")
+    if (link_request.get("requested_tenant_id") != tenant
+            or link_request.get("key_id") != signer.key_id
+            or link_request.get("public_key") != signer.public_key
+            or not isinstance(client_id, str)):
+        raise SystemExit("link request and protected identity do not agree")
+    scopes = link_request.get("requested_scopes", {})
+    if "codex" not in scopes.get("harnesses", []) or "ingest" not in scopes.get(
+        "operations", []
+    ):
+        raise SystemExit("newly-linked client lacks the smoke upload scope")
+
+    scenario_dir = _scenario_dir(GOLDEN_SCENARIO)
+    payload = (scenario_dir / "payload.jsonl").read_bytes()
+    envelope = json.loads((scenario_dir / "envelope.json").read_text())
+    envelope["tenant_id"] = tenant
+    envelope["uploader_client_id"] = client_id
+    envelope["origin_client_id"] = client_id
+    envelope["harness"] = "codex"
+    envelope["blob_digest"] = cg.blob_digest(payload)
+    # The blob digest participates in occurrence and attestation derivation.
+    derived = cg.derive_identity(envelope)
+    envelope["occurrence_id"] = derived["occurrence_id"]
+    envelope["attestation_id"] = derived["attestation_id"]
+    if cg.derive_identity(envelope) != derived:
+        raise SystemExit("fresh upload identity derivation did not stabilize")
+
+    def build_attempt(sid: str, authorization_time: str) -> tuple:
+        attempt_scenario = cg.Scenario(
+            sid=sid,
+            kind="valid",
+            covers=[],
+            story="zero-state bootstrap smoke: freshly linked client upload",
+            envelope=envelope,
+            payload=payload,
+            boundary="aa-bootstrap-first-receipt",
+            uploader_key=signer,
+            epoch=1,
+            authorization_time=authorization_time,
+            server_time=now,
+            receipt_key=None,
+            outcomes=None,
+            commit_time=None,
+            error=None,
+            asserts=[],
+        )
+        files = attempt_scenario.build()
+        attempt = json.loads(files["attempt.json"])
+        message = attempt_scenario.attempt_input_bytes(
+            attempt_scenario.covered_values(files["request.body"])
+        )
+        if not cg.ed25519_verify(signer.public_key, attempt["signature"], message):
+            raise SystemExit("fresh client attempt signature did not verify")
+        return attempt_scenario, files
+
+    fresh_scenario, fresh_files = build_attempt("bootstrap-fresh", now)
+    stale_time = (
+        datetime.datetime.fromisoformat(now.replace("Z", "+00:00"))
+        - datetime.timedelta(minutes=20)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    stale_scenario, stale_files = build_attempt("bootstrap-stale", stale_time)
+    identity = cg.derive_identity(envelope)
+    return {
+        "request_body": fresh_files["request.body"],
+        "content_type": fresh_scenario.content_type(),
+        "attempt": json.loads(fresh_files["attempt.json"]),
+        "object_keys": [
+            identity["blob_object_key"],
+            identity["occurrence_object_key"],
+            identity["attestation_object_key"],
+        ],
+        "stale": {
+            "request_body": stale_files["request.body"],
+            "content_type": stale_scenario.content_type(),
+            "attempt": json.loads(stale_files["attempt.json"]),
+        },
+    }
+
+
+def verify_receipt(receipt: dict, authority_public_key: str,
+                   expected_key_id: str, tenant: str,
+                   authorization_key_id: str | None = None) -> bool:
+    """Verify the signed receipt and its authority-certified receipt key."""
+    certificate = receipt.get("certificate")
+    if not isinstance(certificate, dict):
+        return False
+    if receipt.get("tenant_id") != tenant or certificate.get("tenant_id") != tenant:
+        return False
+    if (authorization_key_id is not None
+            and receipt.get("authorization_key_id") != authorization_key_id):
+        return False
+    if receipt.get("receipt_version") != 1 or receipt.get("signature_algorithm") != "ed25519":
+        return False
+    public_key = certificate.get("public_key")
+    try:
+        public_bytes = bytes.fromhex(public_key) if isinstance(public_key, str) else b""
+        authority_bytes = bytes.fromhex(authority_public_key)
+    except (TypeError, ValueError):
+        return False
+    if len(public_bytes) != 32 or len(authority_bytes) != 32:
+        return False
+    key_id = hashlib.sha256(public_bytes).hexdigest()
+    authority_key_id = hashlib.sha256(authority_bytes).hexdigest()
+    if (key_id != expected_key_id or receipt.get("receipt_key_id") != expected_key_id
+            or certificate.get("key_id") != expected_key_id
+            or certificate.get("authority_key_id") != authority_key_id
+            or certificate.get("key_algorithm") != "ed25519"):
+        return False
+    unsigned_certificate = {
+        key: value for key, value in certificate.items() if key != "authority_signature"
+    }
+    if not cg.ed25519_verify(
+        authority_public_key,
+        certificate.get("authority_signature", ""),
+        cg.canonical_bytes(unsigned_certificate),
+    ):
+        return False
+    try:
+        valid_from = datetime.datetime.fromisoformat(
+            certificate["valid_from"].replace("Z", "+00:00")
+        )
+        valid_until = datetime.datetime.fromisoformat(
+            certificate["valid_until"].replace("Z", "+00:00")
+        )
+        commit_time = datetime.datetime.fromisoformat(
+            receipt["commit_time"].replace("Z", "+00:00")
+        )
+    except (KeyError, ValueError, TypeError):
+        return False
+    if not valid_from <= commit_time <= valid_until:
+        return False
+    unsigned_receipt = {key: value for key, value in receipt.items() if key != "signature"}
+    return cg.ed25519_verify(
+        public_key,
+        receipt.get("signature", ""),
+        cg.canonical_bytes(unsigned_receipt),
+    )
 
 
 def control_objects() -> dict[str, bytes]:
@@ -537,6 +700,55 @@ def mode_self_test(_args: argparse.Namespace) -> int:
     if first["object_keys"] != second["object_keys"]:
         raise SystemExit("mint object keys are not deterministic")
     print("self-test: mint is deterministic at a fixed instant")
+
+    seed = bytes(range(32))
+    identity = {
+        "client_id": "11111111-2222-4333-8444-555555555555",
+        "private_seed": seed.hex(),
+    }
+    public = public_from_seed(seed).hex()
+    link = {
+        "client_id": identity["client_id"],
+        "key_id": hashlib.sha256(bytes.fromhex(public)).hexdigest(),
+        "public_key": public,
+        "requested_tenant_id": TENANT,
+        "requested_scopes": {"harnesses": ["codex"], "operations": ["ingest"]},
+    }
+    linked = mint_linked("2030-01-01T00:00:00Z", TENANT, link, identity)
+    if not cg.ed25519_verify(
+        public,
+        linked["attempt"]["signature"],
+        cg.framing_bytes(
+            "ingest-attempt-v1",
+            [
+                cg.text(linked["attempt"]["http_method"]),
+                cg.text(linked["attempt"]["route"]),
+                cg.text(linked["attempt"]["content_type"]),
+                cg.digest(linked["attempt"]["request_content_digest"]),
+                cg.digest(linked["attempt"]["envelope_digest"]),
+                cg.digest(linked["attempt"]["payload_canonical_digest"]),
+                cg.digest(linked["attempt"]["payload_transport_digest"]),
+                cg.digest(linked["attempt"]["uploader_key_id"]),
+                cg.u63(linked["attempt"]["authorization_epoch"]),
+                cg.text(linked["attempt"]["authorization_timestamp"]),
+            ],
+        ),
+    ):
+        raise SystemExit("fresh linked-client attempt does not self-verify")
+    print("self-test: fresh protected identity signs the real link/upload path")
+
+    receipt = _read_json(
+        f"conformance/scenarios/{GOLDEN_SCENARIO}/receipt.json"
+    )
+    conformance_keys = _read_json("conformance/keys.json")["keys"]
+    root = next(
+        entry["public_key"]
+        for entry in conformance_keys
+        if entry["key_id"] == receipt["certificate"]["authority_key_id"]
+    )
+    if not verify_receipt(receipt, root, receipt["receipt_key_id"], receipt["tenant_id"]):
+        raise SystemExit("receipt verifier rejected the committed golden receipt")
+    print("self-test: receipt and authority-certified key verify independently")
     return 0
 
 
@@ -563,6 +775,45 @@ def mode_mint(args: argparse.Namespace) -> int:
     )
     print(f"mint: fresh attempt and stale golden attempt written under {out}")
     print(f"mint: expected raw object keys: {len(fresh['object_keys'])}")
+    return 0
+
+
+def mode_mint_linked(args: argparse.Namespace) -> int:
+    out = pathlib.Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    link_request = json.loads(pathlib.Path(args.link_request).read_text())
+    identity_document = json.loads(pathlib.Path(args.identity_file).read_text())
+    fresh = mint_linked(args.now, args.tenant, link_request, identity_document)
+    (out / "request.body").write_bytes(fresh["request_body"])
+    (out / "content-type.txt").write_text(fresh["content_type"] + "\n")
+    (out / "attempt.json").write_text(json.dumps(fresh["attempt"]) + "\n")
+    (out / "object-keys.json").write_text(
+        json.dumps(fresh["object_keys"], indent=2) + "\n"
+    )
+    stale_out = out / "stale"
+    stale_out.mkdir(exist_ok=True)
+    (stale_out / "request.body").write_bytes(fresh["stale"]["request_body"])
+    (stale_out / "content-type.txt").write_text(
+        fresh["stale"]["content_type"] + "\n"
+    )
+    (stale_out / "attempt.json").write_text(
+        json.dumps(fresh["stale"]["attempt"]) + "\n"
+    )
+    print("mint-linked: fresh and stale attempts signed by the linked client")
+    return 0
+
+
+def mode_verify_receipt(args: argparse.Namespace) -> int:
+    receipt = json.loads(pathlib.Path(args.receipt).read_text())
+    if not verify_receipt(
+        receipt,
+        args.authority_key,
+        args.key_id,
+        args.tenant,
+        args.authorization_key_id,
+    ):
+        raise SystemExit("receipt signature or authority certificate did not verify")
+    print("verify-receipt: receipt signature, certificate, identity, and window verified")
     return 0
 
 
@@ -658,6 +909,29 @@ def main(argv: list[str]) -> int:
         help="the fresh attempt's authorization instant (RFC 3339, Z)",
     )
 
+    linked_parser = sub.add_parser(
+        "mint-linked", help="sign attempts with a protected CLI-created identity"
+    )
+    linked_parser.add_argument("--out", required=True)
+    linked_parser.add_argument("--tenant", required=True)
+    linked_parser.add_argument("--link-request", required=True)
+    linked_parser.add_argument("--identity-file", required=True)
+    linked_parser.add_argument(
+        "--now",
+        default=datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
+    )
+
+    verify_parser = sub.add_parser(
+        "verify-receipt", help="verify a returned receipt against its pinned root"
+    )
+    verify_parser.add_argument("--receipt", required=True)
+    verify_parser.add_argument("--authority-key", required=True)
+    verify_parser.add_argument("--key-id", required=True)
+    verify_parser.add_argument("--tenant", required=True)
+    verify_parser.add_argument("--authorization-key-id", required=True)
+
     control_parser = sub.add_parser(
         "control-objects", help="write the linked-client pointers at their keys"
     )
@@ -684,6 +958,10 @@ def main(argv: list[str]) -> int:
         return mode_self_test(args)
     if args.mode == "mint":
         return mode_mint(args)
+    if args.mode == "mint-linked":
+        return mode_mint_linked(args)
+    if args.mode == "verify-receipt":
+        return mode_verify_receipt(args)
     if args.mode == "control-objects":
         return mode_control_objects(args)
     if args.mode == "base-inventory":

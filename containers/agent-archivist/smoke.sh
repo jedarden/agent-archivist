@@ -5,22 +5,20 @@
 # git-archive extraction on a BuildKit host and exercise the five smoke
 # categories the packaging acceptance names (plan Section 13; parent bead
 # aa-580ffbb2) — health, secret, vulnerability, signature-input, and
-# multi-replica — against that one image.
+# multi-replica — against that one image. The live MinIO stage starts with
+# fresh buckets and executes the released zero-state bootstrap commands.
 #
 # The contract this harness verifies is docs/notes/release-container.md; the
-# category definitions, instruments, failure modes, and the three documented
-# gaps (the receipt signing-schedule composition, the readiness evidence
-# wiring, and the storage transport key — none landed on the composition
-# yet) are owned by docs/notes/image-smoke.md. Read that note before
-# changing a category's assertions.
+# category definitions, instruments, and failure modes are owned by
+# docs/notes/image-smoke.md.
 #
-# Invocation — the harness runs ON the BuildKit host, from the extraction,
-# never from a working tree (codinghome has no docker daemon; the precedent
-# is release-container.md Section 6):
+# Invocation — the harness runs on the BuildKit CI host from the exact
+# committed tree. A checkout must be clean; an archive extraction receives
+# its source epoch explicitly (release-container.md Section 6):
 #
 #   D=$(mktemp -d) && git archive HEAD | tar -x -C "$D"
-#   ssh builder "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct HEAD) \
-#     bash $D/containers/agent-archivist/smoke.sh"
+#   SOURCE_DATE_EPOCH=$(git log -1 --format=%ct HEAD) \
+#     bash "$D/containers/agent-archivist/smoke.sh"
 #
 # The extraction carries no .git, so the one build input the canonical
 # invocation cannot derive comes in through the environment:
@@ -64,12 +62,8 @@ SMOKE_PORT_R2="${SMOKE_PORT_R2:-18088}"
 # and docker enforces both halves (--cpus/--memory; an OOM kill is a fail).
 SMOKE_REPLICA_CPUS="${SMOKE_REPLICA_CPUS:-2}"
 SMOKE_REPLICA_MEMORY="${SMOKE_REPLICA_MEMORY:-256m}"
-# 0 = assert today's documented fail-closed composition answers; 1 = assert
-# the post-landing answers. See image-smoke.md "What is deliberately not yet
-# true" before flipping any of the three.
-SMOKE_EXPECT_READY="${SMOKE_EXPECT_READY:-0}"
-SMOKE_EXPECT_RECEIPT="${SMOKE_EXPECT_RECEIPT:-0}"
-SMOKE_EXPECT_TRANSPORT="${SMOKE_EXPECT_TRANSPORT:-0}"
+# These remain overrideable while investigating a failing builder, but the
+# committed acceptance path requires the complete MinIO round trip.
 # The vulnerability threshold: grype --fail-on SEVERITY over the findings
 # with an available fix (--only-fixed). The recorded policy is "a fixable
 # Critical fails the smoke"; the digest-pinned base's unfixable findings are
@@ -87,14 +81,14 @@ MC_SHA256="01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891"
 MINIO_URL="https://github.com/minio/minio/releases/download/${MINIO_RELEASE}/minio.linux-amd64.${MINIO_RELEASE}"
 MC_URL="https://github.com/minio/mc/releases/download/${MC_RELEASE}/mc.linux-amd64.${MC_RELEASE}"
 
-# The smoke's own S3 namespace, provisioned by the committed reference tool.
-TENANT="3e5a1c90-8d24-4f67-a1b9-2c7d6e5f4a30"   # the control corpus tenant
-RAW_BUCKET="aa-smoke-raw"
-CONTROL_BUCKET="aa-smoke-control"
-# The pinned control-corpus authority public half (schemas/v1/examples/
-# control/keys.json) — the trust anchor the replica pins and a deny-scan
-# token, since tenant trust material has no business inside an image.
-AUTHORITY_KEY="f97cf56e5cfdeed89c2d9243c57873437300700ab7e9d0c9bc6119676b29e9ba"
+# Each run gets fresh buckets so the bootstrap proof cannot inherit a control
+# record when a builder reuses SMOKE_WORK_DIR.
+TENANT="3e5a1c90-8d24-4f67-a1b9-2c7d6e5f4a30"
+RUN_SUFFIX="$(python3 -c 'import secrets; print(secrets.token_hex(4))')"
+RAW_BUCKET="aa-smoke-raw-$RUN_SUFFIX"
+CONTROL_BUCKET="aa-smoke-control-$RUN_SUFFIX"
+AUTHORITY_KEY=""
+RECEIPT_KEY_ID=""
 
 # --- harness plumbing -------------------------------------------------------
 
@@ -161,13 +155,21 @@ response_class() { # response-json ; the wire class it carries, if any
 echo "=== smoke: prerequisites (work dir $SMOKE_WORK_DIR)"
 require docker; require curl; require python3; require tar; require sha256sum; require openssl
 docker info >/dev/null 2>&1 || fail_stage "docker daemon unreachable"
-mkdir -p "$SMOKE_WORK_DIR"/{bin,minio-data,creds,layers,layers-base,attempts,control,records}
+mkdir -p "$SMOKE_WORK_DIR"/{bin,minio-data,creds,layers,layers-base,attempts,admin,client,records}
 chmod 700 "$SMOKE_WORK_DIR"
 
 # --- stage: build -----------------------------------------------------------
 
 if [ "$SMOKE_SKIP_BUILD" != 1 ]; then
   echo "=== smoke: build (the canonical invocation's shape, RC-019)"
+  if git -C "$REPO_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+    [ -z "$(git -C "$REPO_DIR" status --porcelain --untracked-files=normal)" ] \
+      || fail_stage "BuildKit smoke requires a clean committed checkout"
+    if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
+      SOURCE_DATE_EPOCH="$(git -C "$REPO_DIR" log -1 --format=%ct HEAD)"
+      export SOURCE_DATE_EPOCH
+    fi
+  fi
   : "${SOURCE_DATE_EPOCH:?set SOURCE_DATE_EPOCH to the commit timestamp of the extracted tree (git log -1 --format=%ct)}"
   docker build --provenance=false --sbom=false \
     -f "$SELF_DIR/Dockerfile" \
@@ -197,7 +199,7 @@ python3 "$DRIVER" base-inventory \
 # The deny list: the tenant and authority material, plus (after the live
 # stage mints them) the run's own credential values. Mode 600 via the work
 # dir; consumed by the scanner; never printed.
-printf '%s\n%s\n' "$TENANT" "$AUTHORITY_KEY" > "$SMOKE_WORK_DIR/deny.txt"
+printf '%s\n' "$TENANT" > "$SMOKE_WORK_DIR/deny.txt"
 run_scan "$SMOKE_WORK_DIR/layers" "$SMOKE_WORK_DIR/deny.txt" "$SMOKE_WORK_DIR/base-files.txt"
 if [ "$SCAN_STATUS" -eq 0 ]; then
   record PASS secret "layer inventory matches the digest-pinned base plus the one binary; no credential shape in any layer or the config"
@@ -211,13 +213,13 @@ fi
 # tenant and authority material, which have no business anywhere in the
 # image.
 docker run --rm --entrypoint /bin/sh "$SMOKE_IMAGE" -c \
-  "out=\$(grep -rslF -e 'ACCESS_KEY=' -e 'SECRET_KEY=' -e 'PRIVATE KEY' -e '$TENANT' -e '$AUTHORITY_KEY' /etc /tmp 2>/dev/null); [ -z \"\$out\" ]" \
+  "out=\$(grep -rslF -e 'ACCESS_KEY=' -e 'SECRET_KEY=' -e 'PRIVATE KEY' -e '$TENANT' /etc /tmp 2>/dev/null); [ -z \"\$out\" ]" \
   && record PASS secret "no credential shape or tenant material in /etc or /tmp" \
   || record FAIL secret "credential shape or tenant material in /etc or /tmp"
 docker run --rm --entrypoint /bin/sh "$SMOKE_IMAGE" -c \
-  "out=\$(grep -rslF -e '$TENANT' -e '$AUTHORITY_KEY' /usr/local/bin 2>/dev/null); [ -z \"\$out\" ]" \
-  && record PASS secret "no tenant or authority material in the installed binary" \
-  || record FAIL secret "tenant or authority material in the installed binary"
+  "out=\$(grep -rslF -e '$TENANT' /usr/local/bin 2>/dev/null); [ -z \"\$out\" ]" \
+  && record PASS secret "no tenant material in the installed binary" \
+  || record FAIL secret "tenant material in the installed binary"
 
 # --- stage: vulnerability ---------------------------------------------------
 
@@ -285,6 +287,52 @@ fetch_pin "$MC_URL" "$MC_SHA256" "$SMOKE_WORK_DIR/bin/mc"
 chmod 555 "$SMOKE_WORK_DIR/bin/minio" "$SMOKE_WORK_DIR/bin/mc"
 PATH="$SMOKE_WORK_DIR/bin:$PATH"
 export PATH
+MC_CONFIG_DIR="$SMOKE_WORK_DIR/mc-config"
+export MC_CONFIG_DIR
+mkdir -m 700 -p "$MC_CONFIG_DIR"
+
+# MinIO's root credential is generated per smoke run and never appears in a
+# process argument or terminal output. The isolated mc configuration is the
+# alias consumed by the repository's reference provisioner.
+python3 - "$SMOKE_WORK_DIR/creds/minio-root.env" "$MC_CONFIG_DIR/config.json" "$MINIO_ENDPOINT" <<'PY'
+import json, os, pathlib, secrets, sys
+credentials = pathlib.Path(sys.argv[1])
+if credentials.exists():
+    fields = dict(
+        line.rstrip("\n").split("=", 1)
+        for line in credentials.read_text().splitlines()
+        if "=" in line
+    )
+    access, secret = fields.get("MINIO_ROOT_USER"), fields.get("MINIO_ROOT_PASSWORD")
+    if not access or not secret:
+        raise SystemExit("retained MinIO root credentials are malformed")
+else:
+    access, secret = secrets.token_hex(16), secrets.token_hex(32)
+    credentials.write_text(
+        f"MINIO_ROOT_USER={access}\nMINIO_ROOT_PASSWORD={secret}\n"
+    )
+os.chmod(credentials, 0o600)
+config_path = pathlib.Path(sys.argv[2])
+config = {
+    "version": "10",
+    "aliases": {
+        "local": {
+            "url": sys.argv[3],
+            "accessKey": access,
+            "secretKey": secret,
+            "api": "s3v4",
+            "path": "auto",
+        }
+    },
+}
+config_path.write_text(json.dumps(config, separators=(",", ":")) + "\n")
+os.chmod(config_path, 0o600)
+PY
+# Values come from the protected run-local file and are inherited only by the
+# MinIO process. The generated values are URL-safe hexadecimal strings.
+set -a
+. "$SMOKE_WORK_DIR/creds/minio-root.env"
+set +a
 
 # The reference provisioner mints its secrets with `openssl rand -hex 32`.
 # A builder whose openssl is broken (a missing shared library, a botched
@@ -322,6 +370,8 @@ if [ -f "$SMOKE_WORK_DIR/minio.pid" ] \
     && minio_ready; then
   MINIO_PID="$(cat "$SMOKE_WORK_DIR/minio.pid")"
 else
+  MINIO_ROOT_USER="$MINIO_ROOT_USER" \
+  MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
   nohup "$SMOKE_WORK_DIR/bin/minio" server "$SMOKE_WORK_DIR/minio-data" \
     --address "127.0.0.1:${SMOKE_PORT_MINIO}" \
     --console-address "127.0.0.1:$((SMOKE_PORT_MINIO + 1))" \
@@ -329,22 +379,25 @@ else
   MINIO_PID=$!
   echo "$MINIO_PID" > "$SMOKE_WORK_DIR/minio.pid"
 fi
+unset MINIO_ROOT_USER MINIO_ROOT_PASSWORD
 for _ in $(seq 1 30); do minio_ready && break; sleep 1; done
 minio_ready || fail_stage "MinIO reference backend not ready (see $SMOKE_WORK_DIR/minio.log)"
-mc --quiet alias set local "$MINIO_ENDPOINT" minioadmin minioadmin >/dev/null
+python3 - "$MC_CONFIG_DIR/config.json" "$SMOKE_WORK_DIR/creds/control-admin.env" <<'PY'
+import json, os, pathlib, sys
+config = json.loads(pathlib.Path(sys.argv[1]).read_text())
+root = config.get("aliases", {}).get("local", {})
+access, secret = root.get("accessKey"), root.get("secretKey")
+if not access or not secret:
+    raise SystemExit("MinIO admin alias did not retain its protected credential")
+target = pathlib.Path(sys.argv[2])
+target.write_text(f"ACCESS_KEY={access}\nSECRET_KEY={secret}\n")
+os.chmod(target, 0o600)
+PY
 echo "[smoke] MinIO reference backend ready on $MINIO_ENDPOINT (pid $MINIO_PID)"
 
-# The endpoint handed to the replicas. Today's registry grammar is TLS-only
-# by construction (the storage config carries no key that disables TLS,
-# SEC-001), so the scheme claim is https:// — config-honest, and never
-# conversed with by the categories that only prove a replica's own signals.
-# When the transport key lands (image-smoke.md Section 7, gap three) and
-# SMOKE_EXPECT_TRANSPORT=1, the claim and the plaintext backend agree.
-if [ "$SMOKE_EXPECT_TRANSPORT" = 1 ]; then
-  SMOKE_ENDPOINT="$MINIO_ENDPOINT"
-else
-  SMOKE_ENDPOINT="https://127.0.0.1:${SMOKE_PORT_MINIO}"
-fi
+# The smoke opts into plaintext only for its loopback MinIO endpoint; the
+# replica configuration states `storage.tls=disabled` explicitly.
+SMOKE_ENDPOINT="$MINIO_ENDPOINT"
 
 # 3. Buckets and the two disjoint ingest identities (the committed tool).
 "$REPO_DIR/tools/minio-reference-provision.sh" provision \
@@ -356,36 +409,125 @@ echo "[smoke] buckets and the two ingest identities provisioned"
 # The minted credential values now join the deny list.
 sed -n 's/^SECRET_KEY=//p' "$SMOKE_WORK_DIR/creds/raw-writer.env" >> "$SMOKE_WORK_DIR/deny.txt"
 sed -n 's/^SECRET_KEY=//p' "$SMOKE_WORK_DIR/creds/control-reader.env" >> "$SMOKE_WORK_DIR/deny.txt"
+sed -n 's/^SECRET_KEY=//p' "$SMOKE_WORK_DIR/creds/control-admin.env" >> "$SMOKE_WORK_DIR/deny.txt"
+sed -n 's/^MINIO_ROOT_PASSWORD=//p' "$SMOKE_WORK_DIR/creds/minio-root.env" >> "$SMOKE_WORK_DIR/deny.txt"
 
-# 4. The linked-client pointers, at their pinned object keys.
-python3 "$DRIVER" control-objects --out "$SMOKE_WORK_DIR/control" >/dev/null
-find "$SMOKE_WORK_DIR/control" -type f -name '*.json' | while read -r object; do
-  rel="${object#"$SMOKE_WORK_DIR/control/"}"
-  mc --quiet cp "$object" "local/$CONTROL_BUCKET/$rel" >/dev/null
-done
-echo "[smoke] linked-client pointers placed under the control prefix"
+# The first control read starts from no records. The CLI creates the root,
+# creates one protected client identity, publishes its signed link, and then
+# issues the receipt key used by the replica.
+if mc --quiet ls --recursive --json "local/$CONTROL_BUCKET" \
+    > "$SMOKE_WORK_DIR/records/control-before-bootstrap.jsonl" 2>/dev/null \
+    && [ ! -s "$SMOKE_WORK_DIR/records/control-before-bootstrap.jsonl" ]; then
+  record PASS signature-input "new MinIO control bucket is empty before authority bootstrap"
+else
+  fail_stage "fresh MinIO control bucket was not empty"
+fi
 
-# 5. Replica configuration: every non-secret key through the environment
-# tier; the two identities through env references, so no credential value
-# ever sits in a file the image or a bind mount could carry.
-RAW_DOC="$(printf 'ACCESS_KEY=%s\nSECRET_KEY=%s' \
-  "$(sed -n 's/^ACCESS_KEY=//p' "$SMOKE_WORK_DIR/creds/raw-writer.env")" \
-  "$(sed -n 's/^SECRET_KEY=//p' "$SMOKE_WORK_DIR/creds/raw-writer.env")")"
-CTRL_DOC="$(printf 'ACCESS_KEY=%s\nSECRET_KEY=%s' \
-  "$(sed -n 's/^ACCESS_KEY=//p' "$SMOKE_WORK_DIR/creds/control-reader.env")" \
-  "$(sed -n 's/^SECRET_KEY=//p' "$SMOKE_WORK_DIR/creds/control-reader.env")")"
+cli_environment() {
+  cat <<EOF
+ARCHIVIST_INGEST_ENDPOINT_URL=http://127.0.0.1:$SMOKE_PORT_R1
+ARCHIVIST_STORAGE_ENDPOINT_URL=$SMOKE_ENDPOINT
+ARCHIVIST_STORAGE_TLS=disabled
+ARCHIVIST_STORAGE_REGION=us-east-1
+ARCHIVIST_STORAGE_PATH_STYLE=path
+ARCHIVIST_STORAGE_ENCRYPTION=client_envelope
+ARCHIVIST_STORAGE_RAW_BUCKET=$RAW_BUCKET
+ARCHIVIST_STORAGE_CONTROL_BUCKET=$CONTROL_BUCKET
+ARCHIVIST_STORAGE_TENANT=$TENANT
+ARCHIVIST_STORAGE_RAW_WRITE_CREDENTIALS_REF=file:$SMOKE_WORK_DIR/creds/raw-writer.env
+ARCHIVIST_STORAGE_CONTROL_READ_CREDENTIALS_REF=file:$SMOKE_WORK_DIR/creds/control-reader.env
+ARCHIVIST_SERVER_LISTEN_ADDRESS=127.0.0.1:$SMOKE_PORT_R1
+ARCHIVIST_ADMIN_ENDPOINT_URL=$SMOKE_ENDPOINT
+ARCHIVIST_ADMIN_TLS=disabled
+ARCHIVIST_ADMIN_REGION=us-east-1
+ARCHIVIST_ADMIN_PATH_STYLE=path
+ARCHIVIST_ADMIN_CONTROL_BUCKET=$CONTROL_BUCKET
+ARCHIVIST_ADMIN_TENANT=$TENANT
+ARCHIVIST_ADMIN_CREDENTIALS_REF=file:$SMOKE_WORK_DIR/creds/control-admin.env
+ARCHIVIST_ADMIN_AUTHORITY_SEED_REF=file:$SMOKE_WORK_DIR/admin/authority.seed
+ARCHIVIST_ADMIN_RECEIPT_SIGNING_KEY_PATH=$SMOKE_WORK_DIR/admin/receipt.seed
+ARCHIVIST_CLIENT_STATE_DIR=$SMOKE_WORK_DIR/client
+ARCHIVIST_CLIENT_TENANT=$TENANT
+ARCHIVIST_CLIENT_HARNESS=codex
+EOF
+}
+cli_environment > "$SMOKE_WORK_DIR/records/bootstrap-cli.env"
+chmod 600 "$SMOKE_WORK_DIR/records/bootstrap-cli.env"
 
-# Every non-secret configuration key through the environment tier. The
-# composition-required client ingest endpoint (ingest.endpoint_url) is
-# included even though serve itself never dials it: the configuration
-# registry marks it required, so the replica's load refuses to resolve
-# without it — the operator command's readiness probe is what targets the
-# URL, and the replica's own serve address is the truthful value.
+run_archivist() { # output-file ; CLI args follow
+  local output="$1"
+  shift
+  docker run --rm --network host --user "$(id -u):$(id -g)" \
+    --mount "type=bind,src=$SMOKE_WORK_DIR,dst=$SMOKE_WORK_DIR" \
+    --env-file "$SMOKE_WORK_DIR/records/bootstrap-cli.env" \
+    "$SMOKE_IMAGE" --non-interactive --json "$@" \
+    > "$output" 2> "$output.stderr" \
+    || fail_stage "released CLI bootstrap command failed (diagnostics withheld)"
+}
+
+extract_cli_result() { # output-file result-file
+  python3 - "$1" "$2" <<'PY'
+import json, pathlib, sys
+output = json.loads(pathlib.Path(sys.argv[1]).read_text())
+result = output.get("result")
+if not isinstance(result, dict):
+    raise SystemExit("CLI result is not a document")
+pathlib.Path(sys.argv[2]).write_text(
+    json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
+)
+PY
+}
+
+run_archivist "$SMOKE_WORK_DIR/records/create-authority.json" \
+  admin create-authority "$SMOKE_WORK_DIR/admin/authority.seed"
+extract_cli_result "$SMOKE_WORK_DIR/records/create-authority.json" \
+  "$SMOKE_WORK_DIR/records/authority-result.json"
+AUTHORITY_KEY="$(python3 - "$SMOKE_WORK_DIR/records/authority-result.json" <<'PY'
+import json, pathlib, sys
+print(json.loads(pathlib.Path(sys.argv[1]).read_text())["authority_key"])
+PY
+)"
+printf '%s\n' "$AUTHORITY_KEY" >> "$SMOKE_WORK_DIR/deny.txt"
+docker run --rm --entrypoint /bin/sh "$SMOKE_IMAGE" -c \
+  "out=\$(grep -rslF -e '$AUTHORITY_KEY' /etc /tmp /usr/local/bin 2>/dev/null); [ -z \"\$out\" ]" \
+  && record PASS secret "generated authority public key is absent from the image filesystem and binary" \
+  || record FAIL secret "generated authority public key appeared in the image"
+
+run_archivist "$SMOKE_WORK_DIR/records/link-request.json" link request
+extract_cli_result "$SMOKE_WORK_DIR/records/link-request.json" \
+  "$SMOKE_WORK_DIR/records/link-draft.json"
+run_archivist "$SMOKE_WORK_DIR/records/approve.json" \
+  admin approve "$SMOKE_WORK_DIR/records/link-draft.json"
+run_archivist "$SMOKE_WORK_DIR/records/receipt-key.json" admin receipt-key
+extract_cli_result "$SMOKE_WORK_DIR/records/receipt-key.json" \
+  "$SMOKE_WORK_DIR/records/receipt-key-result.json"
+RECEIPT_KEY_ID="$(python3 - "$SMOKE_WORK_DIR/records/receipt-key-result.json" <<'PY'
+import json, pathlib, sys
+print(json.loads(pathlib.Path(sys.argv[1]).read_text())["record"]["key_id"])
+PY
+)"
+python3 - "$SMOKE_WORK_DIR/admin/authority.seed" \
+  "$SMOKE_WORK_DIR/admin/receipt.seed" \
+  "$SMOKE_WORK_DIR/client/identity.json" <<'PY'
+import pathlib, stat, sys
+for path in map(pathlib.Path, sys.argv[1:]):
+    if stat.S_IMODE(path.stat().st_mode) != 0o600:
+        raise SystemExit("bootstrap private file mode is not 0600")
+    if stat.S_IMODE(path.parent.stat().st_mode) != 0o700:
+        raise SystemExit("bootstrap private directory mode is not 0700")
+PY
+echo "[smoke] released CLI created the tenant root, linked one client, and published a receipt key"
+
+# 5. Replica configuration. Credential documents, authority seed, and receipt
+# signing seed stay in the mode-restricted work directory and are referenced
+# by path; their contents never enter command arguments.
 replica_env_file() { # port ; plain KEY=VALUE lines (no multi-line values)
   cat <<EOF
 ARCHIVIST_SERVER_LISTEN_ADDRESS=0.0.0.0:$1
 ARCHIVIST_INGEST_ENDPOINT_URL=http://127.0.0.1:$1
 ARCHIVIST_SERVER_AUTHORITY_KEY=$AUTHORITY_KEY
+ARCHIVIST_SERVER_RECEIPT_CERTIFICATE_PATH=$SMOKE_WORK_DIR/admin/receipt.seed.certificate.json
+ARCHIVIST_SERVER_RECEIPT_SIGNING_KEY_REF=file:$SMOKE_WORK_DIR/admin/receipt.seed
 ARCHIVIST_STORAGE_ENDPOINT_URL=$SMOKE_ENDPOINT
 ARCHIVIST_STORAGE_REGION=us-east-1
 ARCHIVIST_STORAGE_PATH_STYLE=path
@@ -393,8 +535,9 @@ ARCHIVIST_STORAGE_ENCRYPTION=client_envelope
 ARCHIVIST_STORAGE_RAW_BUCKET=$RAW_BUCKET
 ARCHIVIST_STORAGE_CONTROL_BUCKET=$CONTROL_BUCKET
 ARCHIVIST_STORAGE_TENANT=$TENANT
-ARCHIVIST_STORAGE_RAW_WRITE_CREDENTIALS_REF=env:SMOKE_RAW_WRITER
-ARCHIVIST_STORAGE_CONTROL_READ_CREDENTIALS_REF=env:SMOKE_CONTROL_READER
+ARCHIVIST_STORAGE_TLS=disabled
+ARCHIVIST_STORAGE_RAW_WRITE_CREDENTIALS_REF=file:$SMOKE_WORK_DIR/creds/raw-writer.env
+ARCHIVIST_STORAGE_CONTROL_READ_CREDENTIALS_REF=file:$SMOKE_WORK_DIR/creds/control-reader.env
 EOF
 }
 
@@ -404,9 +547,9 @@ start_replica() { # name port
   docker run -d --name "$name" \
     --network host \
     --cpus "$SMOKE_REPLICA_CPUS" --memory "$SMOKE_REPLICA_MEMORY" \
+    --user "$(id -u):$(id -g)" \
+    --mount "type=bind,src=$SMOKE_WORK_DIR,dst=$SMOKE_WORK_DIR,readonly" \
     --env-file <(replica_env_file "$port") \
-    -e SMOKE_RAW_WRITER="$RAW_DOC" \
-    -e SMOKE_CONTROL_READER="$CTRL_DOC" \
     "$SMOKE_IMAGE" serve >/dev/null
 }
 
@@ -414,15 +557,14 @@ start_replica() { # name port
 start_replica aa-smoke-r1 "$SMOKE_PORT_R1"
 
 echo "=== smoke: health (liveness, HEALTHCHECK, fail-closed readiness)"
-if await_url "http://127.0.0.1:${SMOKE_PORT_R1}/health/live" 200; then
-  if [ "$(curl -s --max-time 5 "http://127.0.0.1:${SMOKE_PORT_R1}/health/live")" = '{"live":true}' ]; then
+if await_url "http://127.0.0.1:$SMOKE_PORT_R1/health/live" 200; then
+  if [ "$(curl -s --max-time 5 "http://127.0.0.1:$SMOKE_PORT_R1/health/live")" = '{"live":true}' ]; then
     record PASS health "/health/live answers 200 {\"live\":true} from the replica"
   else
     record FAIL health "/health/live answered 200 with an unexpected body"
   fi
 else
-  record FAIL health "/health/live did not answer 200; replica logs follow"
-  docker logs --tail 30 aa-smoke-r1 >&2 || true
+  record FAIL health "/health/live did not answer 200"
 fi
 HEALTH_OK=0
 for _ in $(seq 1 30); do
@@ -430,49 +572,87 @@ for _ in $(seq 1 30); do
   sleep 3
 done
 if [ "$HEALTH_OK" -eq 1 ]; then
-  record PASS health "the image HEALTHCHECK reaches 'healthy' (the binary probing its own liveness route, RC-020)"
+  record PASS health "the image HEALTHCHECK reaches healthy"
 else
-  record FAIL health "HEALTHCHECK never reached 'healthy' (status: $(docker_health aa-smoke-r1))"
+  record FAIL health "HEALTHCHECK never reached healthy"
 fi
-READY_STATUS="$(curl -s --max-time 5 -o "$SMOKE_WORK_DIR/records/ready1.json" -w '%{http_code}' \
-  "http://127.0.0.1:${SMOKE_PORT_R1}/health/ready")"
-if [ "$SMOKE_EXPECT_READY" = 1 ]; then
-  if [ "$READY_STATUS" = 200 ]; then
-    record PASS health "readiness reached 200 (the evidence wiring has landed)"
-  else
-    record FAIL health "readiness answered $READY_STATUS; SMOKE_EXPECT_READY=1 wanted 200"
-  fi
+READY_STATUS="$(curl -s --max-time 5 -o "$SMOKE_WORK_DIR/records/ready-before-upload.json" -w '%{http_code}' \
+  "http://127.0.0.1:$SMOKE_PORT_R1/health/ready")"
+if [ "$READY_STATUS" = 503 ] \
+    && grep -q 'trust_evidence_absent' "$SMOKE_WORK_DIR/records/ready-before-upload.json"; then
+  record PASS health "readiness remains fail-closed before the first verified client read"
 else
-  if [ "$READY_STATUS" = 503 ] \
-      && grep -q 'trust_evidence_absent' "$SMOKE_WORK_DIR/records/ready1.json"; then
-    record PASS health "readiness is fail-closed before any verified control read (503 trust_evidence_absent; the ready-200 flip is the documented gap in image-smoke.md Section 7)"
-  else
-    record FAIL health "readiness answered $READY_STATUS; wanted the documented 503 trust_evidence_absent"
-  fi
+  record FAIL health "readiness before the first upload answered $READY_STATUS"
 fi
 
-echo "=== smoke: signature-input (signed submission round trip over the wire)"
-python3 "$DRIVER" mint --out "$SMOKE_WORK_DIR/attempts" \
+echo "=== smoke: signature-input (zero-state bootstrap and first receipt)"
+python3 "$DRIVER" mint-linked --out "$SMOKE_WORK_DIR/attempts" \
+  --tenant "$TENANT" \
+  --link-request "$SMOKE_WORK_DIR/records/link-draft.json" \
+  --identity-file "$SMOKE_WORK_DIR/client/identity.json" \
   --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null
+CLIENT_KEY_ID="$(python3 - "$SMOKE_WORK_DIR/records/link-draft.json" <<'PY'
+import json, pathlib, sys
+print(json.loads(pathlib.Path(sys.argv[1]).read_text())["key_id"])
+PY
+)"
 post_attempt() { # port body-file content-type-file attempt-json-file outfile -> http status
   curl -s --max-time 30 -o "$5" -w '%{http_code}' \
     -H "Content-Type: $(cat "$3")" \
     -H "x-archivist-attempt: $(cat "$4")" \
     --data-binary "@$2" \
-    "http://127.0.0.1:${1}/v1/ingest"
+    "http://127.0.0.1:$1/v1/ingest"
 }
 raw_listing() { mc --quiet ls --recursive --json "local/$RAW_BUCKET" 2>/dev/null || true; }
 raw_key_count() { raw_listing | grep -c '"key"' || true; }
 
-# The fail-closed lane (the live half of the acceptance property: altered,
-# replay-expired, and unauthorized requests make no storage writes). The two
-# probes answer in different places, and both places are asserted: the
-# stale-signed proof dies at the replica's freshness gate — the one
-# authorization decision that needs no control evidence — and answers the
-# one closed wire class; the altered body carries a proof whose digests no
-# longer describe it, but the replica verifies nothing it cannot check
-# against readable control evidence, so today it stops at the registry
-# boundary instead — and writes nothing either way.
+# The first upload uses the newly linked key. Its receipt is verified by
+# the independent RFC 8032 implementation; only then is readiness expected.
+FRESH_STATUS="$(post_attempt "$SMOKE_PORT_R1" \
+  "$SMOKE_WORK_DIR/attempts/request.body" \
+  "$SMOKE_WORK_DIR/attempts/content-type.txt" \
+  "$SMOKE_WORK_DIR/attempts/attempt.json" \
+  "$SMOKE_WORK_DIR/records/first-receipt.json")"
+if [ "$FRESH_STATUS" = 200 ] \
+    && python3 "$DRIVER" verify-receipt \
+      --receipt "$SMOKE_WORK_DIR/records/first-receipt.json" \
+      --authority-key "$AUTHORITY_KEY" \
+      --key-id "$RECEIPT_KEY_ID" \
+      --tenant "$TENANT" \
+      --authorization-key-id "$CLIENT_KEY_ID" >/dev/null; then
+  record PASS signature-input "fresh linked-client upload returned a valid receipt and authority-certified key"
+else
+  record FAIL signature-input "first upload did not return a valid authority-certified receipt (status=$FRESH_STATUS)"
+fi
+
+raw_listing > "$SMOKE_WORK_DIR/records/raw-after-fresh.jsonl"
+KEYS_MATCH="$(python3 - "$SMOKE_WORK_DIR" <<'PY'
+import json, pathlib, sys
+work = pathlib.Path(sys.argv[1])
+expected = sorted(json.load(open(work / "attempts" / "object-keys.json")))
+listed = sorted(
+    json.loads(line)["key"].split("/", 1)[1]
+    for line in (work / "records" / "raw-after-fresh.jsonl").read_text().splitlines()
+    if line.strip()
+)
+print("1" if listed == expected else "0")
+PY
+)"
+if [ "$KEYS_MATCH" = 1 ] && [ "$(raw_key_count)" -eq 3 ]; then
+  record PASS signature-input "the first receipt binds the three expected objects committed to MinIO"
+else
+  record FAIL signature-input "first upload object set differs from the derived keys"
+fi
+READY_STATUS="$(curl -s --max-time 5 -o "$SMOKE_WORK_DIR/records/ready-after-upload.json" -w '%{http_code}' \
+  "http://127.0.0.1:$SMOKE_PORT_R1/health/ready")"
+if [ "$READY_STATUS" = 200 ] \
+    && grep -q '"ready":true' "$SMOKE_WORK_DIR/records/ready-after-upload.json"; then
+  record PASS health "readiness reached 200 after the first verified upload and receipt"
+else
+  record FAIL health "readiness after the first upload answered $READY_STATUS"
+fi
+
+# Rejections after the first success must not change the stored object set.
 STALE_STATUS="$(post_attempt "$SMOKE_PORT_R1" \
   "$SMOKE_WORK_DIR/attempts/stale/request.body" \
   "$SMOKE_WORK_DIR/attempts/stale/content-type.txt" \
@@ -480,14 +660,6 @@ STALE_STATUS="$(post_attempt "$SMOKE_PORT_R1" \
   "$SMOKE_WORK_DIR/records/stale-response.json")"
 ALTERED="$SMOKE_WORK_DIR/attempts/altered.body"
 cp "$SMOKE_WORK_DIR/attempts/request.body" "$ALTERED"
-# The flip lands inside part two — the payload bytes — by construction:
-# the midpoint between the payload part's boundary line and the closing
-# boundary. A flip in part one would corrupt the envelope's schema and
-# answer the parse gate (envelope.schema_invalid) before authorization
-# is even reached; a payload flip survives parsing, and the digest
-# agreement it breaks is checked only after the evidence gate — 503
-# server.unavailable today, the rejection class once the transport key
-# makes digest verification reachable.
 FLIP_AT="$(python3 - "$ALTERED" "$SMOKE_WORK_DIR/attempts/content-type.txt" <<'PY'
 import sys
 body = open(sys.argv[1], "rb").read()
@@ -506,72 +678,13 @@ ALTERED_STATUS="$(post_attempt "$SMOKE_PORT_R1" "$ALTERED" \
 REJECT_OK=1
 grep -q '"code":"auth.authorization_rejected"' \
   "$SMOKE_WORK_DIR/records/stale-response.json" || REJECT_OK=0
-if [ "$SMOKE_EXPECT_TRANSPORT" = 1 ]; then
-  grep -q '"code":"auth.authorization_rejected"' \
-    "$SMOKE_WORK_DIR/records/altered-response.json" || REJECT_OK=0
-else
-  grep -q '"code":"server.unavailable"' \
-    "$SMOKE_WORK_DIR/records/altered-response.json" || REJECT_OK=0
-fi
-[ "$(raw_key_count)" -eq 0 ] || REJECT_OK=0
+grep -q '"code":"auth.authorization_rejected"' \
+  "$SMOKE_WORK_DIR/records/altered-response.json" || REJECT_OK=0
+[ "$(raw_key_count)" -eq 3 ] || REJECT_OK=0
 if [ "$REJECT_OK" -eq 1 ]; then
-  record PASS signature-input "stale-signed attempt answers the closed class auth.authorization_rejected (the freshness gate, live) and the altered attempt is refused with nothing durable standing; the raw bucket holds zero objects"
+  record PASS signature-input "stale and altered attempts were refused without changing the first upload's three raw objects"
 else
-  record FAIL signature-input "fail-closed lane broken (stale=$STALE_STATUS altered=$ALTERED_STATUS raw keys after rejects=$(raw_key_count))"
-  cat "$SMOKE_WORK_DIR/records/stale-response.json" \
-    "$SMOKE_WORK_DIR/records/altered-response.json" >&2 || true
-fi
-
-# The admitted lane: the fresh attempt presents a proof that survives every
-# check the replica can apply without readable control evidence (header
-# parse, content-type coverage, freshness). Where it stops is the transport
-# gap's position (image-smoke.md Section 7): today the control plane is
-# unreachable over the registry's TLS-only grammar, so the replica answers
-# the fail-closed registry class with nothing durable standing, and
-# SMOKE_EXPECT_TRANSPORT=1 — after the transport key lands — asserts the
-# round trip instead: the commit answers the composition result and the
-# three derived object keys stand (the receipt knob on top asserts the
-# signed receipt).
-FRESH_STATUS="$(post_attempt "$SMOKE_PORT_R1" \
-  "$SMOKE_WORK_DIR/attempts/request.body" \
-  "$SMOKE_WORK_DIR/attempts/content-type.txt" \
-  "$SMOKE_WORK_DIR/attempts/attempt.json" \
-  "$SMOKE_WORK_DIR/records/fresh-response.json")"
-ADMIT_CLASS="$(response_class "$SMOKE_WORK_DIR/records/fresh-response.json")"
-if [ "$SMOKE_EXPECT_TRANSPORT" = 1 ]; then
-  raw_listing > "$SMOKE_WORK_DIR/records/raw-after-fresh.jsonl"
-  KEYS_MATCH="$(python3 - "$SMOKE_WORK_DIR" <<'PY'
-import json, pathlib, sys
-work = pathlib.Path(sys.argv[1])
-expected = sorted(json.load(open(work / "attempts" / "object-keys.json")))
-listed = sorted(
-    json.loads(line)["key"].split("/", 1)[1]
-    for line in (work / "records" / "raw-after-fresh.jsonl").read_text().splitlines()
-    if line.strip()
-)
-print("1" if listed == expected else f"0 listed={listed[:6]}")
-PY
-)"
-  if grep -q '"code":"server.partial_commit"' \
-        "$SMOKE_WORK_DIR/records/fresh-response.json" \
-        && [ "$KEYS_MATCH" = 1 ]; then
-    if [ "$SMOKE_EXPECT_RECEIPT" = 1 ]; then
-      record FAIL signature-input "fresh attempt answered partial_commit; SMOKE_EXPECT_RECEIPT=1 wanted a signed receipt (the signing-schedule composition has not landed)"
-    else
-      record PASS signature-input "fresh signed attempt authorized and committed; its 3 objects stand at the derived raw keys (the schedule-less replica answers the documented partial_commit, image-smoke.md Section 7)"
-    fi
-  else
-    record FAIL signature-input "fresh attempt did not commit cleanly (status=$FRESH_STATUS class=${ADMIT_CLASS:-none} keys-match=$KEYS_MATCH)"
-    cat "$SMOKE_WORK_DIR/records/fresh-response.json" >&2 || true
-  fi
-else
-  if [ "$ADMIT_CLASS" = "server.unavailable" ] \
-      && [ "$(raw_key_count)" -eq 0 ]; then
-    record PASS signature-input "fresh attempt answers the fail-closed registry boundary (503 server.unavailable) with nothing durable standing — its proof is behind every check the replica can apply without readable control evidence (the transport gap, image-smoke.md Section 7)"
-  else
-    record FAIL signature-input "fresh attempt neither stopped at the registry boundary nor committed (status=$FRESH_STATUS class=${ADMIT_CLASS:-none} keys=$(raw_key_count))"
-    cat "$SMOKE_WORK_DIR/records/fresh-response.json" >&2 || true
-  fi
+  record FAIL signature-input "stale or altered proof changed durable storage (stale=$STALE_STATUS altered=$ALTERED_STATUS)"
 fi
 
 echo "=== smoke: multi-replica (two replicas inside the 4 vCPU / 512 MiB envelope)"
@@ -580,33 +693,25 @@ if await_url "http://127.0.0.1:${SMOKE_PORT_R2}/health/live" 200; then
   record PASS multi-replica "second replica live alongside the first (--cpus $SMOKE_REPLICA_CPUS --memory $SMOKE_REPLICA_MEMORY each)"
 else
   record FAIL multi-replica "second replica never went live; logs follow"
-  docker logs --tail 30 aa-smoke-r2 >&2 || true
+  docker logs --tail 30 aa-smoke-r2 > "$SMOKE_WORK_DIR/records/aa-smoke-r2.log" 2>&1 || true
 fi
-# Identical request across replicas, no sticky routing: the same signed
-# bytes against the other replica. With the transport gap, equivalence means
-# the same authorized-then-failed-closed answer; post-landing it means the
-# same commit result converging on the standing objects.
+# Retry the exact accepted upload through the second replica. It must
+# converge on the same durable objects and independently return a valid receipt.
 R2_STATUS="$(post_attempt "$SMOKE_PORT_R2" \
   "$SMOKE_WORK_DIR/attempts/request.body" \
   "$SMOKE_WORK_DIR/attempts/content-type.txt" \
   "$SMOKE_WORK_DIR/attempts/attempt.json" \
   "$SMOKE_WORK_DIR/records/fresh-r2-response.json")"
-R2_CLASS="$(response_class "$SMOKE_WORK_DIR/records/fresh-r2-response.json")"
-if [ "$SMOKE_EXPECT_TRANSPORT" = 1 ]; then
-  if grep -q '"code":"server.partial_commit"' \
-      "$SMOKE_WORK_DIR/records/fresh-r2-response.json"; then
-    record PASS multi-replica "identical signed attempt served by the second replica converges on the standing objects"
-  else
-    record FAIL multi-replica "second replica did not serve the identical attempt (status=$R2_STATUS class=${R2_CLASS:-none})"
-    cat "$SMOKE_WORK_DIR/records/fresh-r2-response.json" >&2 || true
-  fi
+if [ "$R2_STATUS" = 200 ] \
+    && python3 "$DRIVER" verify-receipt \
+      --receipt "$SMOKE_WORK_DIR/records/fresh-r2-response.json" \
+      --authority-key "$AUTHORITY_KEY" \
+      --key-id "$RECEIPT_KEY_ID" \
+      --tenant "$TENANT" \
+      --authorization-key-id "$CLIENT_KEY_ID" >/dev/null; then
+  record PASS multi-replica "second replica returned a valid receipt for the identical accepted upload"
 else
-  if [ -n "$R2_CLASS" ] && [ "$R2_CLASS" = "$ADMIT_CLASS" ]; then
-    record PASS multi-replica "identical signed attempt served by the second replica answers the same commit-path class (${R2_CLASS}) — replica equivalence at the fail-closed boundary"
-  else
-    record FAIL multi-replica "second replica answered differently from the first (r1=${ADMIT_CLASS:-none} r2=${R2_CLASS:-none})"
-    cat "$SMOKE_WORK_DIR/records/fresh-r2-response.json" >&2 || true
-  fi
+  record FAIL multi-replica "second replica did not return a valid receipt (status=$R2_STATUS)"
 fi
 # Concurrent retry: four identical attempts at once across both replicas —
 # the plan's concurrent-retry test — converge on one answer, and nothing
@@ -626,24 +731,18 @@ done
 wait "${RETRY_PIDS[@]}"
 RETRY_OK=1
 for i in 1 2 3 4; do
-  if [ "$SMOKE_EXPECT_TRANSPORT" = 1 ]; then
-    grep -q '"code":"server.partial_commit"' "$SMOKE_WORK_DIR/records/retry-$i.json" \
-      || RETRY_OK=0
-  else
-    [ "$(response_class "$SMOKE_WORK_DIR/records/retry-$i.json")" = "$ADMIT_CLASS" ] \
-      || RETRY_OK=0
-  fi
+  python3 "$DRIVER" verify-receipt \
+    --receipt "$SMOKE_WORK_DIR/records/retry-$i.json" \
+    --authority-key "$AUTHORITY_KEY" \
+    --key-id "$RECEIPT_KEY_ID" \
+    --tenant "$TENANT" \
+    --authorization-key-id "$CLIENT_KEY_ID" >/dev/null || RETRY_OK=0
 done
-if [ "$SMOKE_EXPECT_TRANSPORT" = 1 ]; then
-  EXPECTED_KEYS="$(python3 -c "import json;print(len(json.load(open('$SMOKE_WORK_DIR/attempts/object-keys.json'))))")"
-else
-  EXPECTED_KEYS=0
-fi
 FINAL_KEYS="$(raw_key_count)"
-if [ "$RETRY_OK" -eq 1 ] && [ "$FINAL_KEYS" -eq "$EXPECTED_KEYS" ]; then
-  record PASS multi-replica "4 concurrent identical retries across both replicas converge on one answer; the raw bucket holds exactly $EXPECTED_KEYS object keys"
+if [ "$RETRY_OK" -eq 1 ] && [ "$FINAL_KEYS" -eq 3 ]; then
+  record PASS multi-replica "4 concurrent identical retries returned verified receipts; MinIO retains exactly 3 raw objects"
 else
-  record FAIL multi-replica "concurrent retries misbehaved (all-answered=$RETRY_OK keys=$FINAL_KEYS wanted=$EXPECTED_KEYS)"
+  record FAIL multi-replica "concurrent retries misbehaved (all-verified=$RETRY_OK keys=$FINAL_KEYS wanted=3)"
 fi
 CAPS_OK=1
 for name in aa-smoke-r1 aa-smoke-r2; do
@@ -666,6 +765,11 @@ else
   record FAIL multi-replica "a replica left the reference envelope (state lines above)"
 fi
 
+for name in aa-smoke-r1 aa-smoke-r2; do
+  docker logs "$name" > "$SMOKE_WORK_DIR/records/$name.log" 2>&1 \
+    || fail_stage "could not capture replica diagnostics for the secret-hygiene scan"
+done
+
 # --- the second secret scan -------------------------------------------------
 
 echo "=== smoke: secret (second scan, against the run's own minted credentials)"
@@ -677,10 +781,34 @@ else
   record FAIL secret "second layer scan matched this run's credential values or an unexpected file"
 fi
 
+if python3 - "$SMOKE_WORK_DIR" <<'PY'
+import json, pathlib, sys
+work = pathlib.Path(sys.argv[1])
+private_values = [
+    (work / "admin" / "authority.seed").read_text().strip(),
+    (work / "admin" / "receipt.seed").read_text().strip(),
+    json.loads((work / "client" / "identity.json").read_text())["private_seed"],
+]
+if any(len(value) != 64 for value in private_values):
+    raise SystemExit("unexpected bootstrap signing-seed encoding")
+logs = list((work / "records").rglob("*"))
+logs += [work / "minio.log"]
+for path in logs:
+    if path.is_file():
+        contents = path.read_bytes()
+        if any(value.encode("ascii") in contents for value in private_values):
+            raise SystemExit("bootstrap private material appeared in runtime diagnostics")
+PY
+then
+  record PASS secret "tenant authority, receipt, and client signing seeds are absent from command and server logs"
+else
+  record FAIL secret "bootstrap private material appeared in a captured command or server log"
+fi
+
 # --- summary ----------------------------------------------------------------
 
 echo "=== smoke: summary"
 for line in "${SUMMARY[@]}"; do echo "  $line"; done
-echo "[smoke] $PASS passed, $FAIL failed, $GAP gap(s); a gap is a defined check this tree cannot yet satisfy (image-smoke.md Section 7)"
+echo "[smoke] $PASS passed, $FAIL failed, $GAP gap(s); only the vulnerability scanner may be recorded as a gap"
 [ "$FAIL" -eq 0 ] || exit 1
 exit 0

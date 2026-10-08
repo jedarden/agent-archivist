@@ -87,6 +87,12 @@ this gate.
    Run the storage-profile release gate for the exact version being released;
    in particular, `python3 tools/check-storage-profiles.py --release <SemVer>`
    must exit 0 before B2 appears in the support claims.
+   The CI runtime gate also runs
+   [`containers/agent-archivist/smoke.sh`](containers/agent-archivist/smoke.sh)
+   on the exact commit. Its MinIO stage starts with an empty control bucket,
+   creates the tenant authority and linked client through the released CLI,
+   accepts one upload, independently validates the receipt, and verifies the
+   readiness transition before the release is eligible for tagging.
 2. **Bump the version** in `Cargo.toml` and
    `containers/agent-archivist/VERSION` together, and commit.
 3. **Tag** the release commit with the annotated `vX.Y.Z` matching the version

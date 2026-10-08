@@ -1,12 +1,12 @@
 bead_cli:
   backend: bead-rs
 
-# NEEDLE validation gate: Definition of Done (fast lane).
-# The SAME command a developer and CI run, so "is this work acceptable?" has a
-# single source of truth. The fast lane is fmt, build, clippy, rustdoc, the
+# NEEDLE validation gates. The fast lane is fmt, build, clippy, rustdoc, the
 # no-placeholder stub scan, the crate graph, the license gate, and a redacted
-# working-tree secret scan — seconds, offline, safe to run on every dispatch.
+# working-tree secret scan. The runtime gate builds the release image and
+# proves zero-state bootstrap against the pinned MinIO reference profile.
 gates:
   - type: command
     commands:
       - scripts/definition-of-done.sh --fast
+      - SOURCE_DATE_EPOCH="$(git log -1 --format=%ct HEAD)" bash containers/agent-archivist/smoke.sh
