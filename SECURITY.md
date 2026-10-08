@@ -6,15 +6,20 @@ project itself follows this document.
 
 ## Supported versions
 
-Implementation has landed in [12 of 12 workspace crates](docs/notes/crate-ownership.md),
-while the [verification register](tools/verification-register.json) marks only
-10 of 116 requirements implemented. No ingestion replica is deployed (see the
-[ARMOR storage provisioning note](docs/notes/armor-storage-provisioning.md)),
-and no production-ready release is supported yet.
+The public repository has moved beyond design into partial implementation:
+all [12 workspace crates](docs/notes/crate-ownership.md) carry some landed,
+verification-gated behavior, including the Phase 4 ingestion bootstrap and
+the Phase 10 catalog rebuild described in the README. The checked
+[verification register](tools/verification-register.json) marks 10 of 116
+requirements implemented; most remain planned. This does not mean a
+production-ready client or server has shipped. The pilot and
+production-hardening phases remain ahead, and no ingestion replica is deployed
+(see the [ARMOR storage provisioning note](docs/notes/armor-storage-provisioning.md)).
+No production-ready release is supported.
 
 | Version | Supported |
 |---|---|
-| pre-1.0 releases | newest release only |
+| pre-1.0 releases, if published | newest release only |
 | 1.0 and later (planned) | newest minor release, plus its immediate predecessor for critical security and data-loss fixes for 90 days after supersession |
 
 Once the version 1.0 storage layout exists, raw `v1` readers remain available
@@ -22,8 +27,8 @@ for rebuild and restore even after client and server support for a release
 expires — archived data outlives the support window of the software that wrote
 it.
 
-Reports against implemented code, the remaining design, and the protocol
-contracts are welcome now.
+Reports against implemented code, protocol contracts, and remaining planned
+work are welcome now.
 
 ## Reporting a vulnerability
 

@@ -2,25 +2,30 @@
 
 Agent Archivist is a community-supported, single-maintainer open-source
 project. Support is best-effort: there is no hosting, no service-level
-agreement, and no paid support channel. Implementation has landed in
-[12 of 12 workspace crates](docs/notes/crate-ownership.md), while the
-[verification register](tools/verification-register.json) marks only
-10 of 116 requirements implemented. No ingestion replica is deployed (see the
-[ARMOR storage provisioning note](docs/notes/armor-storage-provisioning.md)),
-and no production-ready release is supported yet.
+agreement, and no paid support channel. The public repository has moved beyond
+design into partial implementation: all
+[12 workspace crates](docs/notes/crate-ownership.md) carry some landed,
+verification-gated behavior. The Phase 4 ingestion bootstrap and Phase 10
+catalog rebuild are implemented, but the checked
+[verification register](tools/verification-register.json) marks only 10 of
+116 requirements implemented; most remain planned. The pilot and
+production-hardening phases are still ahead. No production-ready client or
+server has shipped, and no ingestion replica is deployed (see the
+[ARMOR storage provisioning note](docs/notes/armor-storage-provisioning.md)).
+No production-ready release is supported.
 
 ## What is supported
 
 ### Today
 
-- No released version is supported in production, because no production-ready
-  version exists. Preview releases follow the sequence in the
-  [implementation plan](docs/plan/plan.md) (Section 13), starting with the
-  `0.1` protocol preview.
+- No released version is supported in production because no production-ready
+  client or server has shipped. If preview releases are published, they will
+  follow the sequence in the [implementation plan](docs/plan/plan.md)
+  (Section 13), starting with the `0.1` protocol preview.
 - Reports against the implemented code, contracts, and remaining planned work
   are welcome at any time.
 
-### Pre-1.0 releases
+### Pre-1.0 releases, if published
 
 - Only the **newest** release receives fixes.
 - Wire formats, storage layouts, and commands may break between releases
