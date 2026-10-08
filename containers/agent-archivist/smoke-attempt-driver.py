@@ -579,7 +579,7 @@ def _iter_layer_bytes(layers: list[pathlib.Path]):
     """Every regular file of every layer, in stack order, as
     (layer-file-name, member-path, bytes)."""
     for layer in layers:
-        with tarfile.open(layer, "r:") as tar:
+        with tarfile.open(layer, "r:*") as tar:
             for member in tar.getmembers():
                 if member.isfile():
                     yield layer.name, member.name, tar.extractfile(member).read()
@@ -591,7 +591,7 @@ def _final_inventory(layers: list[pathlib.Path]) -> set[str]:
     `.wh..wh..opq` empties the directory it sits in)."""
     state: set[str] = set()
     for layer in layers:
-        with tarfile.open(layer, "r:") as tar:
+        with tarfile.open(layer, "r:*") as tar:
             removals: list[str] = []
             opaques: list[str] = []
             additions: list[str] = []
