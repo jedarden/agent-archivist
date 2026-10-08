@@ -290,6 +290,7 @@ export PATH
 MC_CONFIG_DIR="$SMOKE_WORK_DIR/mc-config"
 export MC_CONFIG_DIR
 mkdir -m 700 -p "$MC_CONFIG_DIR"
+MINIO_ENDPOINT="http://127.0.0.1:${SMOKE_PORT_MINIO}"
 
 # MinIO's root credential is generated per smoke run and never appears in a
 # process argument or terminal output. The isolated mc configuration is the
@@ -360,7 +361,6 @@ fi
 # Readiness probes the server's own health endpoint over plain HTTP — the
 # language mc speaks to it; the replicas' endpoint is decided separately.
 MINIO_PID=""
-MINIO_ENDPOINT="http://127.0.0.1:${SMOKE_PORT_MINIO}"
 minio_ready() {
   [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \
     "$MINIO_ENDPOINT/minio/health/live" 2>/dev/null || true)" = 200 ]
