@@ -274,6 +274,34 @@ mc_out() {
   mc --quiet "$@" 2>&1
 }
 
+# `mc ilm rule ls` exits nonzero when the bucket has no lifecycle document.
+# On a fresh bucket that is the normal starting state, not a failed probe.
+# Normalize only MinIO's explicit absence response to an empty listing; keep
+# every other API or transport failure fail-closed.
+ilm_rule_listing() {
+  local output status
+  if output="$(mc_out ilm rule ls --json "${ALIAS}/${RAW_BUCKET}")"; then
+    printf '%s\n' "$output"
+    return 0
+  else
+    status=$?
+  fi
+  if printf '%s\n' "$output" | python3 -c '
+import json, sys
+try:
+    error = json.load(sys.stdin).get("error", {})
+except (json.JSONDecodeError, AttributeError):
+    raise SystemExit(1)
+cause = error.get("cause", {}) if isinstance(error, dict) else {}
+detail = cause.get("error", {}) if isinstance(cause, dict) else {}
+raise SystemExit(0 if isinstance(detail, dict) and detail.get("Code") == "NoSuchLifecycleConfiguration" else 1)
+'; then
+    return 0
+  fi
+  printf '%s\n' "$output" >&2
+  return "$status"
+}
+
 # Read the raw bucket's noncurrent-version rule state: one ILM listing,
 # parsed for the rule scoped to the tenant raw prefix. Prints exactly one
 # word: "configured" when such a rule expires noncurrent versions at
@@ -284,7 +312,7 @@ mc_out() {
 # expiry. Callers must have proven the listing works before trusting any
 # of these words.
 ilm_rule_state() {
-  mc_out ilm rule ls --json "${ALIAS}/${RAW_BUCKET}" | python3 -c '
+  ilm_rule_listing | python3 -c '
 import json, sys
 
 wanted_prefix, wanted_days = sys.argv[1], int(sys.argv[2])
@@ -417,7 +445,7 @@ provision() {
   # prefix. The listing is proven to work before its parse is trusted;
   # a prefixed rule at different days is an operator's explicit
   # configuration and fails the run rather than being rewritten.
-  if ! mc_out ilm rule ls --json "${ALIAS}/${RAW_BUCKET}" >/dev/null 2>&1; then
+  if ! ilm_rule_listing >/dev/null 2>&1; then
     echo "noncurrent-version lifecycle: cannot list the ILM rules on ${RAW_BUCKET}" >&2
     exit 1
   fi
@@ -523,7 +551,7 @@ verify() {
   #     to the tenant raw prefix. The current version at a derived key is
   #     the archive's content address; the rule this check reads back is
   #     an --noncurrent-expire-days rule, which cannot touch it.
-  if ! mc_out ilm rule ls --json "${ALIAS}/${RAW_BUCKET}" >/dev/null 2>&1; then
+  if ! ilm_rule_listing >/dev/null 2>&1; then
     echo "  FAIL cannot list the ILM rules on ${RAW_BUCKET}"
     FAILURES=$((FAILURES + 1))
   else
