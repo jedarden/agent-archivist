@@ -3,12 +3,12 @@
 Agent Archivist is a community-supported, single-maintainer open-source
 project. Support is best-effort: there is no hosting, no service-level
 agreement, and no paid support channel. The public repository has moved beyond
-design into partial implementation: all
-[12 workspace crates](docs/notes/crate-ownership.md) carry some landed,
+design into partial implementation: behavior has landed in
+[12 of 12 workspace crates](docs/notes/crate-ownership.md), each with some
 verification-gated behavior. The Phase 4 ingestion bootstrap and Phase 10
 catalog rebuild are implemented, but the checked
-[verification register](tools/verification-register.json) marks only 10 of
-116 requirements implemented; most remain planned. The pilot and
+[verification register](tools/verification-register.json) marks only 10 of 116 requirements
+implemented; most remain planned. The pilot and
 production-hardening phases are still ahead. No production-ready client or
 server has shipped, and no ingestion replica is deployed (see the
 [ARMOR storage provisioning note](docs/notes/armor-storage-provisioning.md)).
