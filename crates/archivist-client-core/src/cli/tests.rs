@@ -114,13 +114,13 @@ fn human_output_renders_a_readable_field_tree_without_ansi() {
 #[test]
 fn router_refuses_document_commands_without_result_schemas() {
     let mut router = Router::new();
-    // `link request` is a document command whose schema has not shipped yet,
+    // `admin rotate` is a document command whose schema has not shipped yet,
     // so a handler for it has no defined output and is refused; a
     // schema-bearing document command and a none-stdout command are both
     // accepted.
     assert!(
         router
-            .register_handler("link request", |_invocation| {
+            .register_handler("admin rotate", |_invocation| {
                 Ok(json::Value::Object(json::Object::new()))
             })
             .is_err()
