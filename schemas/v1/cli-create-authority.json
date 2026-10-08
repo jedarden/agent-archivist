@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:cli-create-authority",
+  "title": "Agent Archivist create-authority result (archivist.cli-result/v1)",
+  "description": "The public result of `admin create-authority`. The private Ed25519 seed is written only to the operator-selected mode-restricted file; this document contains the public root an ingest replica pins.",
+  "type": "object",
+  "x-archivist": {
+    "namespace": "archivist.cli-result/v1",
+    "namespaceField": "schema",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "compatibility": "member additions are additive within v1 per plan Section 7.1; redefining or removing a member is a v2 event"
+  },
+  "additionalProperties": false,
+  "required": ["schema", "tenant_id", "authority_key", "authority_key_id"],
+  "properties": {
+    "schema": {
+      "const": "archivist.cli-result/v1",
+      "description": "The versioned CLI result namespace.",
+      "x-archivist": {"bearing": "security", "compat": "required-v1", "failClosed": true}
+    },
+    "tenant_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "The tenant whose authority was generated.",
+      "x-archivist": {"bearing": "identity", "compat": "required-v1"}
+    },
+    "authority_key": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/ed25519-public-key-hex",
+      "description": "The public Ed25519 half to configure as `server.authority_key`.",
+      "x-archivist": {"bearing": "security", "compat": "required-v1"}
+    },
+    "authority_key_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id",
+      "description": "The SHA-256-derived identifier of `authority_key`.",
+      "x-archivist": {"bearing": "security", "compat": "required-v1"}
+    }
+  }
+}

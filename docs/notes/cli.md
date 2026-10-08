@@ -92,7 +92,8 @@ through the registered error surface.
 | `verify-state` | 5 | read-only | document | — | spool/receipt/cursor consistency verification |
 | `doctor` | 5 | read-only | document | — | non-mutating health check; nonzero exit when action is needed |
 | `serve` | 4 | none | none | — | the stateless ingestion server |
-| `link request` | 3 | none | document | — | emit a link request carrying public identity only |
+| `link request` | 3 | none | document | — | create or reuse a protected client identity and emit a public link request |
+| `admin create-authority` | 3 | none | document | path | mint a protected tenant authority seed and export its public root |
 | `admin approve` | 3 | none | document | path | sign and write a linked-client record |
 | `admin revoke` | 3 | none | document | path | sign and write a revocation record |
 | `admin rotate` | 3 | none | document | path | record a key rotation with overlapping epochs |
@@ -104,7 +105,14 @@ through the registered error surface.
   status" is realized by this table: capture is `run`/`daemon`, and the
   crate map points here rather than restating names.
 
-  Implementation status: `admin approve` is implemented. The
+  Implementation status: `link request`, `admin create-authority`, and
+  `admin approve` are implemented. `link request` creates or discovers the
+  installation identity below `client.state_dir` and emits only public
+  identity and scope. `admin create-authority` writes a freshly generated
+  Ed25519 seed only to its absolute path operand with mode `0600` in a `0700`
+  parent, and emits the public `authority_key` and derived key ID used to pin
+  an ingest replica. Neither command emits a seed, a secret reference, or a
+  private path. The
   `archivist-cli` composition root routes the command through the Phase 3
   authority-signing and control-admin publication path; its registry entry
   names `archivist-auth` as the behavior owner and pins the linked-client

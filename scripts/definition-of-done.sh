@@ -231,6 +231,9 @@ if [ "$LANE" = "fast" ] || [ "$LANE" = "all" ]; then
   # canonical JSON output, retries, missing configuration/credentials, and
   # both authorization-boundary refusals.
   run_check "catalog rebuild CLI" cargo test -p archivist-cli --test catalog-rebuild-end-to-end
+  # Zero-state bootstrap proof: run the authority and public link commands
+  # from empty local state, including restart reuse and secret file modes.
+  run_check "zero-state bootstrap CLI" cargo test -p archivist-cli --test bootstrap_zero_state
   # Wire-schema coherence (docs/notes/wire-schemas.md): refs, fail-closed
   # enum/version metadata, reserved-name blocks, the construction registry,
   # and the error-message charset; `--self-test` proves the rejection paths.

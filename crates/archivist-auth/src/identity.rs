@@ -93,6 +93,92 @@ impl fmt::Debug for SigningKey {
     }
 }
 
+/// A tenant authority generated for the first bootstrap of a deployment.
+///
+/// The authority seed is deliberately not exposed by this type. It can only
+/// leave the process through [`Self::write_new`], which creates the target
+/// with the same mode-restricted posture as an installation identity. The
+/// public half is safe to export and is what an ingest replica pins in its
+/// `server.authority_key` configuration.
+pub struct TenantAuthority {
+    signing_key: SigningKey,
+}
+
+impl fmt::Debug for TenantAuthority {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TenantAuthority")
+            .field("key_id", &self.key_id().to_hex())
+            .finish()
+    }
+}
+
+impl TenantAuthority {
+    /// Generate a fresh tenant authority from the operating system entropy
+    /// source.
+    ///
+    /// # Errors
+    /// [`IdentityError::Entropy`] when the operating system entropy source is
+    /// unavailable.
+    pub fn generate() -> Result<Self, IdentityError> {
+        Ok(Self {
+            signing_key: SigningKey::generate()?,
+        })
+    }
+
+    /// The public authority half for replica trust configuration.
+    #[must_use]
+    pub fn public_key(&self) -> Ed25519PublicKey {
+        Ed25519PublicKey::from_raw(self.signing_key.public_key())
+    }
+
+    /// The SHA-256-derived identifier of the public authority half.
+    #[must_use]
+    pub fn key_id(&self) -> KeyId {
+        KeyId::from_public_key(&self.public_key())
+    }
+
+    /// Persist the private seed as lowercase hex in a new mode-restricted
+    /// file. Existing targets are never overwritten.
+    ///
+    /// The file contains only the 32-byte seed in its protected local form;
+    /// it is accepted by `AuthoritySigner` and `ReceiptSigningKey` through a
+    /// protected reference. The path is never included in an error.
+    ///
+    /// # Errors
+    /// [`IdentityError::IdentityExists`] when `path` already exists;
+    /// [`IdentityError::ReferenceUnsafe`] when the parent or resulting file
+    /// is not mode restricted; and [`IdentityError::ReferenceUnreadable`]
+    /// for other filesystem failures.
+    #[cfg(unix)]
+    pub fn write_new(&self, path: &std::path::Path) -> Result<(), IdentityError> {
+        use std::fs::OpenOptions;
+        use std::io::Write as _;
+        use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+
+        prepare_parent_directory(path)?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|error| match error.kind() {
+                std::io::ErrorKind::AlreadyExists => IdentityError::IdentityExists,
+                std::io::ErrorKind::NotFound => IdentityError::ReferenceMissing,
+                _ => IdentityError::ReferenceUnreadable,
+            })?;
+        file.write_all(hex(self.signing_key.seed()).as_bytes())
+            .and_then(|()| file.sync_all())
+            .map_err(|_io_error| IdentityError::ReferenceUnreadable)?;
+        let metadata = file
+            .metadata()
+            .map_err(|_io_error| IdentityError::ReferenceUnreadable)?;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(IdentityError::ReferenceUnsafe);
+        }
+        Ok(())
+    }
+}
+
 /// The public identity of an installation: exactly the members a link
 /// request or any public surface may carry (SEC-006 — public halves only).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -528,5 +614,48 @@ mod tests {
             b"a different message",
             &signature
         ));
+    }
+
+    /// The bootstrap root has the same protected-file boundary as a client
+    /// identity: only its public derivation is observable, the seed is
+    /// written once at `0600`, and the resulting file is consumable through
+    /// the authority signer without exposing the seed in a diagnostic.
+    #[cfg(unix)]
+    #[test]
+    fn tenant_authority_writes_once_and_round_trips_through_protected_reference() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = std::env::temp_dir().join(format!(
+            "archivist-authority-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("test clock")
+                .as_nanos()
+        ));
+        let path = directory.join("authority-seed");
+        let authority = TenantAuthority::generate().expect("entropy is available");
+        authority.write_new(&path).expect("protected seed write");
+
+        let mode = std::fs::metadata(&path)
+            .expect("seed metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+        let reference = ProtectedReference::parse(&format!("file:{}", path.display()))
+            .expect("protected reference");
+        let tenant =
+            archivist_protocol::vocabulary::TenantId::parse("0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b")
+                .expect("tenant grammar");
+        let signer = crate::receipt::AuthoritySigner::from_secret_reference(tenant, &reference)
+            .expect("authority signer consumes protected seed");
+        assert_eq!(signer.key_id(), authority.key_id());
+        assert!(matches!(
+            authority.write_new(&path),
+            Err(IdentityError::IdentityExists)
+        ));
+
+        std::fs::remove_dir_all(directory).expect("remove test secret");
     }
 }

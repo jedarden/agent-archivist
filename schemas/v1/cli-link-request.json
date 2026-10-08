@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:cli-link-request",
+  "title": "Agent Archivist link-request result (archivist.link-request/v1)",
+  "description": "The public link request emitted by the client. It contains no private installation material and is the document an administrator supplies to `admin approve`.",
+  "type": "object",
+  "x-archivist": {
+    "namespace": "archivist.link-request/v1",
+    "namespaceField": "schema",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "canonicalization": "rfc8785",
+    "compatibility": "member additions are additive within v1 per plan Section 7.1; redefining or removing a member is a v2 event"
+  },
+  "additionalProperties": false,
+  "required": ["schema", "client_id", "key_algorithm", "key_id", "public_key", "requested_scopes", "requested_tenant_id"],
+  "properties": {
+    "schema": {
+      "const": "archivist.link-request/v1",
+      "description": "The versioned public link-request namespace.",
+      "x-archivist": {"bearing": "security", "compat": "required-v1", "failClosed": true}
+    },
+    "client_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "The installation-generated public client identity.",
+      "x-archivist": {"bearing": "identity", "compat": "required-v1"}
+    },
+    "key_algorithm": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/signature-algorithm",
+      "const": "ed25519",
+      "description": "The algorithm of the public client key.",
+      "x-archivist": {"bearing": "security", "compat": "required-v1", "failClosed": true}
+    },
+    "key_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/key-id",
+      "description": "The SHA-256-derived identifier of `public_key`.",
+      "x-archivist": {"bearing": "security", "compat": "required-v1"}
+    },
+    "public_key": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/ed25519-public-key-hex",
+      "description": "The installation's public Ed25519 key; its private half never leaves the client state directory.",
+      "x-archivist": {"bearing": "security", "compat": "required-v1"}
+    },
+    "requested_tenant_id": {
+      "$ref": "urn:agent-archivist:schema:v1:common#/$defs/uuid-v4",
+      "description": "The tenant the installation asks the authority to link it to.",
+      "x-archivist": {"bearing": "identity", "compat": "required-v1"}
+    },
+    "requested_scopes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["harnesses", "operations"],
+      "properties": {
+        "harnesses": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$"}
+        },
+        "operations": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {"const": "ingest"}
+        }
+      },
+      "x-archivist": {"bearing": "authorization", "compat": "required-v1", "failClosed": true}
+    }
+  }
+}

@@ -192,7 +192,12 @@ and one of the two is wrong and must be fixed in the same commit.
   on Linux, XDG base directories. The default config file is
   `${XDG_CONFIG_HOME}/archivist/archivist.toml` (defaulting under `HOME` per
   the XDG specification) and client state lives under
-  `${XDG_STATE_HOME}/archivist`. Additional platforms adopt their native
+  `${XDG_STATE_HOME}/archivist`. The optional `client.tenant` and
+  `client.harness` settings supply the public link-request command's target
+  tenant and harness scope; they are optional for hosts that do not run
+  linking, and the command refuses if either is absent. The
+  `admin.tenant` setting supplies the tenant for the local authority bootstrap.
+  Additional platforms adopt their native
   conventions when added, with the same key registry and the same permission
   discipline; the registry itself never carries platform-conditional keys.
 - **CFG-023** — Client state and spool directories are mode `0700` and their

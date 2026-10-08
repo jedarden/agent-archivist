@@ -86,6 +86,42 @@ pub(crate) const ENUM_CLI_CATALOG_REBUILD_PIPELINE_ID_BEARING: &str = "security"
 /// Whether the `pipeline_id` enum in `schemas/v1/cli-catalog-rebuild.json` is declared fail-closed.
 pub(crate) const ENUM_CLI_CATALOG_REBUILD_PIPELINE_ID_FAIL_CLOSED: bool = true;
 
+/// The canonical schema URN of `schemas/v1/cli-create-authority.json`, read from
+/// the schema's own `$id`.
+pub(crate) const SCHEMA_URN_CLI_CREATE_AUTHORITY: &str = "urn:agent-archivist:schema:v1:cli-create-authority";
+
+/// Pinned const of `schema` in `schemas/v1/cli-create-authority.json`;
+/// an unknown value fails closed on the wire.
+pub(crate) const CLI_CREATE_AUTHORITY_SCHEMA: &str = "archivist.cli-result/v1";
+
+/// The `closedShape` metadata of `schemas/v1/cli-create-authority.json`.
+pub(crate) const CLI_CREATE_AUTHORITY_META_CLOSED_SHAPE: bool = true;
+
+/// The `compatibility` metadata of `schemas/v1/cli-create-authority.json`.
+pub(crate) const CLI_CREATE_AUTHORITY_META_COMPATIBILITY: &str = "member additions are additive within v1 per plan Section 7.1; redefining or removing a member is a v2 event";
+
+/// The `floats` metadata of `schemas/v1/cli-create-authority.json`.
+pub(crate) const CLI_CREATE_AUTHORITY_META_FLOATS: bool = false;
+
+/// The `namespace` metadata of `schemas/v1/cli-create-authority.json`.
+pub(crate) const CLI_CREATE_AUTHORITY_META_NAMESPACE: &str = "archivist.cli-result/v1";
+
+/// The `namespaceField` metadata of `schemas/v1/cli-create-authority.json`.
+pub(crate) const CLI_CREATE_AUTHORITY_META_NAMESPACE_FIELD: &str = "schema";
+
+/// The `unknownFields` metadata of `schemas/v1/cli-create-authority.json`.
+pub(crate) const CLI_CREATE_AUTHORITY_META_UNKNOWN_FIELDS: &str = "reject";
+
+/// Every top-level member name `schemas/v1/cli-create-authority.json` defines,
+/// alphabetical: the known-name set against which unknown members
+/// are recognized.
+pub(crate) const CLI_CREATE_AUTHORITY_FIELD_NAMES: [&str; 4] = [
+    "authority_key",
+    "authority_key_id",
+    "schema",
+    "tenant_id",
+];
+
 /// The canonical schema URN of `schemas/v1/cli-doctor.json`, read from
 /// the schema's own `$id`.
 pub(crate) const SCHEMA_URN_CLI_DOCTOR: &str = "urn:agent-archivist:schema:v1:cli-doctor";
@@ -330,6 +366,52 @@ pub(crate) const ENUM_CLI_INVENTORY_SCOPE_STATUS_COVERAGE_BEARING: &str = "struc
 
 /// Whether the `scope-status/coverage` enum in `schemas/v1/cli-inventory.json` is declared fail-closed.
 pub(crate) const ENUM_CLI_INVENTORY_SCOPE_STATUS_COVERAGE_FAIL_CLOSED: bool = true;
+
+/// The canonical schema URN of `schemas/v1/cli-link-request.json`, read from
+/// the schema's own `$id`.
+pub(crate) const SCHEMA_URN_CLI_LINK_REQUEST: &str = "urn:agent-archivist:schema:v1:cli-link-request";
+
+/// Pinned const of `key_algorithm` in `schemas/v1/cli-link-request.json`;
+/// an unknown value fails closed on the wire.
+pub(crate) const CLI_LINK_REQUEST_KEY_ALGORITHM: &str = "ed25519";
+
+/// Pinned const of `schema` in `schemas/v1/cli-link-request.json`;
+/// an unknown value fails closed on the wire.
+pub(crate) const CLI_LINK_REQUEST_SCHEMA: &str = "archivist.link-request/v1";
+
+/// The `canonicalization` metadata of `schemas/v1/cli-link-request.json`.
+pub(crate) const CLI_LINK_REQUEST_META_CANONICALIZATION: &str = "rfc8785";
+
+/// The `closedShape` metadata of `schemas/v1/cli-link-request.json`.
+pub(crate) const CLI_LINK_REQUEST_META_CLOSED_SHAPE: bool = true;
+
+/// The `compatibility` metadata of `schemas/v1/cli-link-request.json`.
+pub(crate) const CLI_LINK_REQUEST_META_COMPATIBILITY: &str = "member additions are additive within v1 per plan Section 7.1; redefining or removing a member is a v2 event";
+
+/// The `floats` metadata of `schemas/v1/cli-link-request.json`.
+pub(crate) const CLI_LINK_REQUEST_META_FLOATS: bool = false;
+
+/// The `namespace` metadata of `schemas/v1/cli-link-request.json`.
+pub(crate) const CLI_LINK_REQUEST_META_NAMESPACE: &str = "archivist.link-request/v1";
+
+/// The `namespaceField` metadata of `schemas/v1/cli-link-request.json`.
+pub(crate) const CLI_LINK_REQUEST_META_NAMESPACE_FIELD: &str = "schema";
+
+/// The `unknownFields` metadata of `schemas/v1/cli-link-request.json`.
+pub(crate) const CLI_LINK_REQUEST_META_UNKNOWN_FIELDS: &str = "reject";
+
+/// Every top-level member name `schemas/v1/cli-link-request.json` defines,
+/// alphabetical: the known-name set against which unknown members
+/// are recognized.
+pub(crate) const CLI_LINK_REQUEST_FIELD_NAMES: [&str; 7] = [
+    "client_id",
+    "key_algorithm",
+    "key_id",
+    "public_key",
+    "requested_scopes",
+    "requested_tenant_id",
+    "schema",
+];
 
 /// The canonical schema URN of `schemas/v1/cli-output.json`, read from
 /// the schema's own `$id`.

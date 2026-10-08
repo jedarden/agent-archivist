@@ -48,7 +48,9 @@
 
 pub mod admin;
 pub mod approve;
+pub mod authority;
 pub mod catalog;
+pub mod link;
 pub mod operator;
 pub mod probe;
 pub mod revoke;
@@ -67,6 +69,8 @@ pub fn handlers() -> Vec<(&'static str, CommandHandler)> {
         .into_iter()
         .chain(serve::handlers())
         .chain(probe::handlers())
+        .chain(link::handlers())
+        .chain(authority::handlers())
         .chain(approve::handlers())
         .chain(revoke::handlers())
         .chain(catalog::handlers())

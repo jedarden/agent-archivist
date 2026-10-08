@@ -190,7 +190,19 @@ state_lock = "none"
 stdout = "document"
 operand = "none"
 stdin = "none"
-keys = ["client.state_dir"]
+keys = ["client.state_dir", "client.tenant", "client.harness"]
+result_schema = "schemas/v1/cli-link-request.json"
+
+[commands."admin create-authority"]
+summary = "Generate a tenant authority, store its private seed safely, and export the public root for replica configuration."
+phase = 3
+owner = "archivist-auth"
+state_lock = "none"
+stdout = "document"
+operand = "path"
+stdin = "none"
+keys = ["admin.tenant"]
+result_schema = "schemas/v1/cli-create-authority.json"
 
 [commands."admin approve"]
 summary = "Approve a link request: validate the draft, sign it with the tenant authority, and write the linked-client record."

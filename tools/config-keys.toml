@@ -32,6 +32,24 @@ default = "${XDG_STATE_HOME}/archivist"
 description = "Root of the client state directory: SQLite state, spool, receipts, and the advisory mutator lock (plan Section 7.9)."
 example = "/var/lib/archivist"
 
+[keys."client.tenant"]
+owner = "archivist-auth"
+type = "string"
+tiers = ["flag", "env", "file"]
+secret = false
+optional = true
+description = "Tenant UUID requested by the public link-request command; required when that command is invoked."
+example = "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b"
+
+[keys."client.harness"]
+owner = "archivist-auth"
+type = "string"
+tiers = ["flag", "env", "file"]
+secret = false
+optional = true
+description = "Harness identifier requested by the public link-request command; required when that command is invoked."
+example = "codex"
+
 [keys."spool.max_bytes"]
 owner = "archivist-client-core"
 type = "integer"

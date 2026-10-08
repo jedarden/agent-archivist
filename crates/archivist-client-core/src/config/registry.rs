@@ -232,9 +232,10 @@ impl KeyDefinition {
     /// required nor defaulted (CFG-019). Optionality is the secret
     /// references naming credential roles a deployment does not hold, the
     /// offline-administration section an ingest replica never configures,
-    /// and the replica-only composition keys the serve command alone
-    /// consumes — requiredness the consuming command's composition gate
-    /// enforces. Absent from every tier the key resolves to nothing;
+    /// the replica-only composition keys the serve command alone consumes,
+    /// and link-request-only client settings — requiredness the consuming
+    /// command's composition gate enforces. Absent from every tier the key
+    /// resolves to nothing;
     /// supplied, it validates like any other.
     #[must_use]
     pub const fn optional(&self) -> bool {
@@ -538,18 +539,19 @@ fn parse_key_entry(name: &str, table: &TomlTable) -> Result<KeyDefinition, &'sta
     if secret && flag_tier {
         return Err("a secret key never exposes a flag tier");
     }
-    // Optionality permits omitted credential/admin/replica-only keys; the
-    // latter include pinned trust material consumed only by serve, so other
-    // commands do not demand them (CFG-019).
+    // Optionality permits omitted credential/admin/replica-only keys and
+    // link-request-only client settings; the latter include pinned trust
+    // material consumed only by serve, so other commands do not demand it
+    // (CFG-019).
     let administration_surface = name.starts_with("admin.");
     let replica_only = name == "server.authority_key"
         || name == "storage.tenant"
         || name == "storage.tenant_bucket";
-    if optional && !(secret || administration_surface || replica_only) {
-        return Err(
-            "only a secret reference, an offline-administration key, or a \
-             replica-only composition key may be optional",
-        );
+    let link_request_only = name == "client.tenant" || name == "client.harness";
+    if optional && !(secret || administration_surface || replica_only || link_request_only) {
+        return Err("only a secret reference, an offline-administration key, a \
+             replica-only composition key, or a link-request-only client key \
+             may be optional");
     }
     let key_type = match type_token {
         "boolean" => KeyType::Boolean,

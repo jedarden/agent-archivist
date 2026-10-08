@@ -89,6 +89,8 @@ BEHAVIOR_MODULES: dict[str, tuple[str, ...]] = {
                                "verify-state", "doctor"),
     f"{CLI_SRC}/serve.rs": ("serve",),
     f"{CLI_SRC}/probe.rs": ("probe",),
+    f"{CLI_SRC}/link.rs": ("link request",),
+    f"{CLI_SRC}/authority.rs": ("admin create-authority",),
     f"{CLI_SRC}/approve.rs": ("admin approve",),
     f"{CLI_SRC}/revoke.rs": ("admin revoke",),
     f"{CLI_SRC}/catalog.rs": ("catalog rebuild",),

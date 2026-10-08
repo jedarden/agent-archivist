@@ -30,6 +30,16 @@ seconds. Eight schema files carry the family
 ([`schemas/v1/control-envelope.json`](../../schemas/v1/control-envelope.json)
 plus seven record schemas), and the trust they describe is one story:
 
+The zero-state entry point is `archivist admin create-authority`. It generates
+the tenant root locally, writes the private seed only to the operator's
+mode-restricted path, and emits the public key and derived key ID for
+`server.authority_key`. The client-side `archivist link request` command then
+creates its protected installation identity and emits the public request that
+`admin approve` signs into the first `linked-client` record. The root itself is
+configuration material rather than a control object, so an empty control
+bucket is expected at this point; the first object written below the tenant
+prefix is the approved client record.
+
 1. **Link.** The linked-client record is one installation's identity in
    one tenant: its Ed25519 public key, base scopes, and the current
    authorization epoch. The link is epoch 1, and every subsequent

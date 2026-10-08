@@ -15,8 +15,9 @@ Validates ``tools/config-keys.toml`` against the conventions in
    ``optional`` is declared — optionality is for a capability a deployment
    may omit (a secret reference naming a credential role, the offline
    ``admin`` section whose requiredness the administrator commands'
-   composition gate enforces, or the replica-only composition keys the
-   serve and the Phase 10 catalog rebuild commands alone consume);
+   composition gate enforces, the replica-only composition keys the serve
+   and the Phase 10 catalog rebuild commands alone consume, or the
+   link-request-only client settings);
 4. integer keys carry a unit suffix (``_bytes``, ``_seconds``,
    ``_percent``, ``_count``, ``_ratio``) and defaults/examples respect the
    suffix bounds — there are no float values anywhere;
@@ -384,7 +385,10 @@ def validate_registry(registry: dict) -> list[str]:
                 "storage.tenant",
                 "storage.tenant_bucket",
             )
-            if has_optional and not (secret or admin_surface or replica_only):
+            link_request_only = name in ("client.tenant", "client.harness")
+            if has_optional and not (
+                secret or admin_surface or replica_only or link_request_only
+            ):
                 errors.append(f"{what} declares optional but is neither a "
                               "secret reference, an offline-administration "
                               "key, nor a replica-only composition key; "
