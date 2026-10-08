@@ -18,10 +18,10 @@
 //! control-administration credential. That ingest configuration is then
 //! discarded — no store is ever assembled from it here.
 //!
-//! Transport security follows the endpoint scheme, and the v1 registry
-//! declares no `tls` key for either surface, so composition is `https`-only:
-//! the builders refuse a plaintext endpoint that is not affirmatively
-//! marked (SEC-001), and no registered tier can supply that mark yet.
+//! Transport security follows the endpoint scheme. Both surfaces default to
+//! TLS enabled; plaintext requires the explicit `disabled` token in the
+//! matching registry key, and the builders refuse any scheme mismatch
+//! (SEC-001).
 //!
 //! The store is generic over the administration request seam
 //! ([`archivist_storage_s3::control_admin::ControlAdminBackend`]): the live
@@ -36,7 +36,7 @@ use std::fmt;
 use archivist_client_core::config::{ResolvedConfig, SecretRef};
 use archivist_storage_s3::config::{
     ControlAdminConfig, EncryptionPolicy, PathStyle, S3ConfigError, S3ConfigErrorKind,
-    S3StorageConfig, S3StorageConfigBuilder,
+    S3StorageConfig, S3StorageConfigBuilder, Tls,
 };
 use archivist_storage_s3::control_admin::S3ControlAdminStore;
 
@@ -136,6 +136,7 @@ pub(crate) fn admin_config(resolved: &ResolvedConfig) -> Result<ControlAdminConf
     ControlAdminConfig::builder()
         .endpoint_url(required_admin_text(resolved, "admin.endpoint_url")?.to_owned())
         .region(required_admin_text(resolved, "admin.region")?.to_owned())
+        .tls(tls_token(required_admin_text(resolved, "admin.tls")?)?)
         .path_style(path_style_token(required_admin_text(
             resolved,
             "admin.path_style",
@@ -170,6 +171,7 @@ pub(crate) fn ingest_config(resolved: &ResolvedConfig) -> Result<S3StorageConfig
     let mut builder = S3StorageConfigBuilder::default()
         .endpoint_url(required_ingest_text(resolved, "storage.endpoint_url")?.to_owned())
         .region(required_ingest_text(resolved, "storage.region")?.to_owned())
+        .tls(tls_token(required_ingest_text(resolved, "storage.tls")?)?)
         .path_style(path_style_token(required_ingest_text(
             resolved,
             "storage.path_style",
@@ -263,6 +265,18 @@ pub(crate) fn path_style_token(text: &str) -> Result<PathStyle, S3ConfigError> {
         .map_err(|_| S3ConfigError::new(S3ConfigErrorKind::MalformedSetting, MALFORMED_PATH_STYLE))
 }
 
+/// Parse a registry TLS token, failing closed if its closed values drift.
+pub(crate) fn tls_token(text: &str) -> Result<Tls, S3ConfigError> {
+    match text {
+        "enabled" => Ok(Tls::Enabled),
+        "disabled" => Ok(Tls::Disabled),
+        _ => Err(S3ConfigError::new(
+            S3ConfigErrorKind::MalformedSetting,
+            MALFORMED_TLS,
+        )),
+    }
+}
+
 /// Parse a registry encryption-policy token, failing closed on drift.
 fn encryption_policy_token(text: &str) -> Result<EncryptionPolicy, S3ConfigError> {
     EncryptionPolicy::parse(text)
@@ -284,6 +298,9 @@ const MALFORMED_PATH_STYLE: &str = "path style token is not canonical";
 /// The content-free detail for a non-canonical encryption-policy token.
 const MALFORMED_ENCRYPTION: &str = "encryption policy token is not canonical";
 
+/// The content-free detail for a non-canonical TLS token.
+const MALFORMED_TLS: &str = "TLS token is not canonical";
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -291,7 +308,7 @@ mod tests {
 
     use archivist_client_core::config::{ConfigSources, SecretRef};
     use archivist_storage::error::StorageError;
-    use archivist_storage_s3::config::{PathStyle, S3ConfigErrorKind};
+    use archivist_storage_s3::config::{PathStyle, S3ConfigErrorKind, Tls};
     use archivist_storage_s3::control_admin::{ControlAdminBackend, ControlObjectKey};
 
     use super::compose_admin_control_plane;
@@ -399,6 +416,7 @@ mod tests {
         let config = plane.store().config();
         assert_eq!(config.endpoint().as_str(), ADMIN_ENDPOINT);
         assert_eq!(config.region(), "us-east-1");
+        assert_eq!(config.tls(), Tls::Enabled, "registry TLS default");
         // The registry's path-style default flows through the builder.
         assert_eq!(config.path_style(), PathStyle::Path);
         assert_eq!(config.control_bucket(), "archivist-control-example");
@@ -465,7 +483,31 @@ mod tests {
         );
         let resolved = sources.load().expect("the string grammar itself resolves");
         let error = compose_admin_control_plane(&resolved, MapBackend::default())
-            .expect_err("a plaintext endpoint without an affirmative tls mark is refused");
+            .expect_err("a plaintext endpoint without an explicit disabled token is refused");
         assert_eq!(error.kind(), S3ConfigErrorKind::TransportMismatch);
+    }
+
+    #[test]
+    fn explicit_disabled_tls_composes_http_administration_and_ingest_configs() {
+        let resolved = base_sources()
+            .env(
+                "ARCHIVIST_ADMIN_ENDPOINT_URL",
+                "http://control.example.invalid",
+            )
+            .env("ARCHIVIST_ADMIN_TLS", "disabled")
+            .env(
+                "ARCHIVIST_STORAGE_ENDPOINT_URL",
+                "http://s3.example.invalid",
+            )
+            .env("ARCHIVIST_STORAGE_TLS", "disabled")
+            .load()
+            .expect("fully declared host loads");
+
+        let plane = compose_admin_control_plane(&resolved, MapBackend::default())
+            .expect("plaintext requires and receives the explicit opt-in");
+        assert_eq!(plane.store().config().tls(), Tls::Disabled);
+
+        let ingest = super::ingest_config(&resolved).expect("ingest config composes");
+        assert_eq!(ingest.tls(), Tls::Disabled);
     }
 }

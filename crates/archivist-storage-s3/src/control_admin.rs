@@ -87,6 +87,7 @@ use std::future::Future;
 use std::str::FromStr;
 
 use archivist_auth::link::ClientLinkPublication;
+use archivist_auth::receipt::ReceiptKeyRecord;
 use archivist_auth::retention::RetentionPublication;
 use archivist_auth::revocation::RevocationPublication;
 use archivist_protocol::json::{self, Object, Value};
@@ -1025,6 +1026,26 @@ impl<B: ControlAdminBackend + Sync> S3ControlAdminStore<B> {
         self.put_immutable_record(&AdminControlRecord::new(
             ControlRecordKind::Retention,
             publication.envelope().to_vec(),
+        ))
+        .await
+    }
+
+    /// Route one tenant-authority-signed receipt-key record onto the
+    /// control plane at its key-ID-derived immutable address.
+    ///
+    /// The record contains only public certification material. The store
+    /// re-parses its derived address before issuing a request and applies
+    /// the immutable write rule, so a byte-identical retry is idempotent
+    /// while conflicting content is refused.
+    ///
+    /// # Errors
+    /// Returns the same malformed-input, scope, unavailable, and immutable
+    /// conflict errors as [`ControlAdminStore::put_immutable_record`].
+    pub async fn put_receipt_key(&self, record: &ReceiptKeyRecord) -> Result<(), StorageError> {
+        self.route_publication(&record.object_key(), ControlRecordKind::ReceiptKey)?;
+        self.put_immutable_record(&AdminControlRecord::new(
+            ControlRecordKind::ReceiptKey,
+            record.canonical_bytes(),
         ))
         .await
     }

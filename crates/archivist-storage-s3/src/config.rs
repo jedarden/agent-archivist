@@ -95,9 +95,9 @@
 //! endpoint requires [`Tls::Enabled`], and a plaintext `http://` endpoint
 //! is accepted only with an explicit [`Tls::Disabled`] — plaintext is
 //! never reached by omission (SEC-001). Deployment configuration assembled
-//! from the registry has no key that disables TLS, so a registry-loaded
-//! configuration is TLS-only by construction; [`Tls::Disabled`] exists for
-//! the local reference backend the compatibility suite exercises.
+//! from the registry defaults to TLS enabled; `storage.tls` and `admin.tls`
+//! can explicitly opt into disabled TLS for a matching plaintext endpoint.
+//! [`Tls::Disabled`] is never reached by omission.
 //!
 //! # Secrets by reference
 //!

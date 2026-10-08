@@ -449,6 +449,37 @@ pub(crate) const CLI_OUTPUT_FIELD_NAMES: [&str; 4] = [
     "schema",
 ];
 
+/// The canonical schema URN of `schemas/v1/cli-receipt-key.json`, read from
+/// the schema's own `$id`.
+pub(crate) const SCHEMA_URN_CLI_RECEIPT_KEY: &str = "urn:agent-archivist:schema:v1:cli-receipt-key";
+
+/// Pinned const of `schema` in `schemas/v1/cli-receipt-key.json`;
+/// an unknown value fails closed on the wire.
+pub(crate) const CLI_RECEIPT_KEY_SCHEMA: &str = "archivist.cli-result/v1";
+
+/// The `closedShape` metadata of `schemas/v1/cli-receipt-key.json`.
+pub(crate) const CLI_RECEIPT_KEY_META_CLOSED_SHAPE: bool = true;
+
+/// The `compatibility` metadata of `schemas/v1/cli-receipt-key.json`.
+pub(crate) const CLI_RECEIPT_KEY_META_COMPATIBILITY: &str = "member additions are additive within v1 per plan Section 7.1; redefining or removing a member is a v2 event";
+
+/// The `floats` metadata of `schemas/v1/cli-receipt-key.json`.
+pub(crate) const CLI_RECEIPT_KEY_META_FLOATS: bool = false;
+
+/// The `namespace` metadata of `schemas/v1/cli-receipt-key.json`.
+pub(crate) const CLI_RECEIPT_KEY_META_NAMESPACE: &str = "archivist.cli-result/v1";
+
+/// The `namespaceField` metadata of `schemas/v1/cli-receipt-key.json`.
+pub(crate) const CLI_RECEIPT_KEY_META_NAMESPACE_FIELD: &str = "schema";
+
+/// The `unknownFields` metadata of `schemas/v1/cli-receipt-key.json`.
+pub(crate) const CLI_RECEIPT_KEY_META_UNKNOWN_FIELDS: &str = "reject";
+
+/// Every top-level member name `schemas/v1/cli-receipt-key.json` defines,
+/// alphabetical: the known-name set against which unknown members
+/// are recognized.
+pub(crate) const CLI_RECEIPT_KEY_FIELD_NAMES: [&str; 3] = ["certificate", "record", "schema"];
+
 /// The canonical schema URN of `schemas/v1/cli-run.json`, read from
 /// the schema's own `$id`.
 pub(crate) const SCHEMA_URN_CLI_RUN: &str = "urn:agent-archivist:schema:v1:cli-run";

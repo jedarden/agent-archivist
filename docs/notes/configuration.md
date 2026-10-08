@@ -186,6 +186,23 @@ and one of the two is wrong and must be fixed in the same commit.
   same commit — a registry-only default change is not a compatible edit
   (Section 9).
 
+  S3 transport uses the closed `enabled`/`disabled` tokens in `storage.tls`
+  and `admin.tls`. Both default to `enabled`; an `http://` endpoint is
+  accepted only when the matching surface explicitly sets `tls = "disabled"`
+  (for example, in the `[storage]` or `[admin]` TOML section). This keeps
+  plaintext opt-in explicit for a local MinIO reference profile and rejects
+  endpoint/TLS mismatches before requests are built.
+
+  `admin.receipt_signing_key_path` is an optional absolute path used by
+  `admin receipt-key`; that command refuses when it is absent, writes the
+  private seed there with mode `0600` in a mode `0700` parent, and writes the
+  public signed certificate to the `.certificate.json` sidecar. The immutable
+  signed receipt-key record is published under the derived control-prefix key.
+  An ingest replica uses `server.receipt_certificate_path` for that public
+  sidecar and `server.receipt_signing_key_ref` for the protected private seed;
+  it loads and verifies both against the pinned `server.authority_key` and the
+  immutable control record before opening its listening socket.
+
 ## 6. Paths and platform-native locations
 
 - **CFG-022** — Locations are platform-native and owned by `archivist-cli`:

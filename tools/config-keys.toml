@@ -145,6 +145,16 @@ default = "path"
 description = "Bucket addressing style for the S3 endpoint; the path-style default matches the MinIO reference profile."
 example = "virtual_hosted"
 
+[keys."storage.tls"]
+owner = "archivist-storage-s3"
+type = "enum"
+values = ["enabled", "disabled"]
+tiers = ["flag", "env", "file"]
+secret = false
+default = "enabled"
+description = "Transport security for the ingest S3 endpoint; plaintext requires an explicit disabled setting."
+example = "disabled"
+
 [keys."storage.encryption"]
 owner = "archivist-storage-s3"
 type = "enum"
@@ -357,6 +367,24 @@ optional = true
 description = "The tenant-authority Ed25519 public half this replica serves under (64 lowercase hex); verification material, never a secret. Only the replica composition consumes it; serve refuses its absence."
 example = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
+[keys."server.receipt_certificate_path"]
+owner = "archivist-server"
+type = "path"
+tiers = ["flag", "env", "file"]
+secret = false
+optional = true
+description = "Path to the public tenant-authority-signed receipt-key certificate exported by `admin receipt-key`; serve verifies it against the pinned authority and stored control record."
+example = "/etc/archivist/receipt-signing.seed.certificate.json"
+
+[keys."server.receipt_signing_key_ref"]
+owner = "archivist-server"
+type = "reference"
+tiers = ["env", "file"]
+secret = true
+optional = true
+description = "Protected reference to the receipt-signing private seed; serve loads it only after the public certificate and immutable control record verify against the pinned tenant authority."
+example = "file:/etc/archivist/receipt-signing.seed"
+
 # ---------------------------------------------------------------------------
 # Offline administration surface (plan Section 5, Phase 3) — owners
 # archivist-storage-s3 (store assembly) and archivist-auth (authority seed).
@@ -397,6 +425,16 @@ default = "path"
 description = "Bucket addressing style for the administration endpoint; the path-style default matches the MinIO reference profile."
 example = "virtual_hosted"
 
+[keys."admin.tls"]
+owner = "archivist-storage-s3"
+type = "enum"
+values = ["enabled", "disabled"]
+tiers = ["flag", "env", "file"]
+secret = false
+default = "enabled"
+description = "Transport security for the administration S3 endpoint; plaintext requires an explicit disabled setting."
+example = "disabled"
+
 [keys."admin.control_bucket"]
 owner = "archivist-storage-s3"
 type = "string"
@@ -432,3 +470,12 @@ secret = true
 optional = true
 description = "Reference to the tenant authority's 32-byte Ed25519 signing seed; the private half every administrative signing act borrows (SEC-006)."
 example = "file:/etc/archivist/admin/authority-seed"
+
+[keys."admin.receipt_signing_key_path"]
+owner = "archivist-auth"
+type = "path"
+tiers = ["flag", "env", "file"]
+secret = false
+optional = true
+description = "Absolute mode-restricted destination for the generated tenant receipt-signing seed; `admin receipt-key` refuses absence and writes a public certificate sidecar beside it."
+example = "/etc/archivist/receipt-signing.seed"

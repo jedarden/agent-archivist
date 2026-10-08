@@ -148,6 +148,10 @@ fn scoped_writers(resolved: &ResolvedConfig) -> Result<ScopedWritersConfig, S3Co
     ScopedWritersConfig::builder()
         .endpoint_url(required_text(resolved, "storage.endpoint_url")?.to_owned())
         .region(required_text(resolved, "storage.region")?.to_owned())
+        .tls(crate::admin::tls_token(required_text(
+            resolved,
+            "storage.tls",
+        )?)?)
         .path_style(crate::admin::path_style_token(required_text(
             resolved,
             "storage.path_style",
@@ -376,6 +380,7 @@ mod tests {
 
     use archivist_client_core::cli::registry::Registry;
     use archivist_client_core::cli::{CliError, Invocation, OutputEnvelope, Router, parse};
+    use archivist_client_core::config::ConfigSources;
     use archivist_protocol::json::{self, Value};
     use archivist_storage::audit_restore::{
         AuditRestoreStore, ContinuationToken, FrozenInventory, InventoryKey, InventoryPage,
@@ -389,9 +394,70 @@ mod tests {
 
     use super::{
         INTEGRITY_CONFLICT, INTERNAL, SECRET_REF_REFUSED, TRANSPORT_FAILED, handlers, rebuild_over,
-        request_fault,
+        request_fault, scoped_writers,
     };
+    use archivist_storage_s3::config::Tls;
     use archivist_storage_s3::request::{S3RequestError, S3RequestErrorKind};
+
+    const TENANT: &str = "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b";
+
+    fn writer_sources(endpoint: &str, tls: Option<&str>) -> ConfigSources {
+        let sources = ConfigSources::non_interactive()
+            .env("HOME", "/home/operator")
+            .env(
+                "ARCHIVIST_INGEST_ENDPOINT_URL",
+                "https://ingest.example.invalid",
+            )
+            .env("ARCHIVIST_STORAGE_ENDPOINT_URL", endpoint)
+            .env("ARCHIVIST_STORAGE_REGION", "us-east-1")
+            .env("ARCHIVIST_STORAGE_ENCRYPTION", "s3_sse")
+            .env("ARCHIVIST_STORAGE_RAW_BUCKET", "raw-bucket")
+            .env("ARCHIVIST_STORAGE_CONTROL_BUCKET", "control-bucket")
+            .env(
+                "ARCHIVIST_STORAGE_RAW_WRITE_CREDENTIALS_REF",
+                "env:TEST_RAW_CREDENTIAL",
+            )
+            .env(
+                "ARCHIVIST_STORAGE_CONTROL_READ_CREDENTIALS_REF",
+                "env:TEST_CONTROL_CREDENTIAL",
+            )
+            .env("ARCHIVIST_SERVER_LISTEN_ADDRESS", "127.0.0.1:8087")
+            .env("ARCHIVIST_STORAGE_TENANT_BUCKET", "tenant-bucket")
+            .env("ARCHIVIST_STORAGE_TENANT", TENANT)
+            .env(
+                "ARCHIVIST_STORAGE_CATALOG_WRITE_CREDENTIALS_REF",
+                "env:TEST_CATALOG_CREDENTIAL",
+            )
+            .env(
+                "ARCHIVIST_STORAGE_DERIVED_WRITE_CREDENTIALS_REF",
+                "env:TEST_DERIVED_CREDENTIAL",
+            );
+        if let Some(tls) = tls {
+            sources.env("ARCHIVIST_STORAGE_TLS", tls)
+        } else {
+            sources
+        }
+    }
+
+    #[test]
+    fn scoped_writers_use_the_registry_tls_default() {
+        let resolved = writer_sources("https://s3.example.invalid", None)
+            .load()
+            .expect("fully declared host loads");
+        let writers = scoped_writers(&resolved).expect("writer pair composes");
+        assert_eq!(writers.catalog().tls(), Tls::Enabled);
+        assert_eq!(writers.derived().tls(), Tls::Enabled);
+    }
+
+    #[test]
+    fn scoped_writers_accept_http_only_with_explicit_disabled_tls() {
+        let resolved = writer_sources("http://s3.example.invalid", Some("disabled"))
+            .load()
+            .expect("fully declared host loads");
+        let writers = scoped_writers(&resolved).expect("explicit plaintext opt-in composes");
+        assert_eq!(writers.catalog().tls(), Tls::Disabled);
+        assert_eq!(writers.derived().tls(), Tls::Disabled);
+    }
 
     #[allow(clippy::unnecessary_wraps)]
     fn empty_result(_: &Invocation) -> Result<Value, CliError> {

@@ -38,6 +38,10 @@
 //! liveness probe ([`probe`]): one bounded GET on a served replica's
 //! process-only liveness route, the image's own HEALTHCHECK mechanism
 //! (release-container note RC-020) on the one binary the image carries.
+//! The receipt-key handler ([`receipt_key`]) generates the protected local
+//! signing seed, writes the public receipt certificate sidecar, and
+//! publishes the certificate's immutable control record; its result
+//! contains the certificate and record, never the seed or filesystem path.
 //!
 //! # Dependency boundary
 //!
@@ -53,6 +57,7 @@ pub mod catalog;
 pub mod link;
 pub mod operator;
 pub mod probe;
+pub mod receipt_key;
 pub mod revoke;
 pub mod serve;
 
@@ -73,6 +78,7 @@ pub fn handlers() -> Vec<(&'static str, CommandHandler)> {
         .chain(authority::handlers())
         .chain(approve::handlers())
         .chain(revoke::handlers())
+        .chain(receipt_key::handlers())
         .chain(catalog::handlers())
         .collect()
 }

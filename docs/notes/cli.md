@@ -105,11 +105,12 @@ through the registered error surface.
   status" is realized by this table: capture is `run`/`daemon`, and the
   crate map points here rather than restating names.
 
-  Implementation status: `link request`, `admin create-authority`, and
-  `admin approve` are implemented. `link request` creates or discovers the
-  installation identity below `client.state_dir` and emits only public
-  identity and scope. `admin create-authority` writes a freshly generated
-  Ed25519 seed only to its absolute path operand with mode `0600` in a `0700`
+  Implementation status: `link request`, `admin create-authority`,
+  `admin approve`, and `admin receipt-key` are implemented. `link request`
+  creates or discovers the installation identity below `client.state_dir`
+  and emits only public identity and scope. `admin create-authority` writes
+  a freshly generated Ed25519 seed only to its absolute path operand with
+  mode `0600` in a `0700`
   parent, and emits the public `authority_key` and derived key ID used to pin
   an ingest replica. Neither command emits a seed, a secret reference, or a
   private path. The
@@ -117,6 +118,11 @@ through the registered error surface.
   authority-signing and control-admin publication path; its registry entry
   names `archivist-auth` as the behavior owner and pins the linked-client
   result to `schemas/v1/control-client.json`.
+  `admin receipt-key` writes a generated private seed only to the configured
+  `admin.receipt_signing_key_path`, exports the authority-signed public
+  certificate beside it, and publishes the immutable public record. Its
+  result is pinned to `schemas/v1/cli-receipt-key.json` and contains no seed
+  or output path.
   The catalog row is now attached by `main.rs` over the offline restore
   identity and the two dedicated scoped writers. Its result is pinned to
   `schemas/v1/cli-catalog-rebuild.json`, and configuration/transport refusals

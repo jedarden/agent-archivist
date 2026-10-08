@@ -40,14 +40,20 @@
 //! flight or the socket died underneath the server (the supervisor's
 //! restart is the retry), and the usage class for every startup refusal.
 
+use archivist_auth::authority::PinnedAuthorityRoot;
+use archivist_auth::receipt::{
+    CertifiedReceiptKey, ReceiptKeyCertificate, ReceiptKeyRecord, ReceiptKeySchedule,
+};
+use archivist_auth::reference::ProtectedReference;
 use archivist_client_core::cli::{CliError, CommandHandler, Invocation};
-use archivist_client_core::config::{ConfigSources, ResolvedConfig};
-use archivist_protocol::json::Value;
-use archivist_protocol::vocabulary::TenantId;
+use archivist_client_core::config::{ConfigSources, ResolvedConfig, SecretRef};
+use archivist_protocol::json::{self, Value};
+use archivist_protocol::vocabulary::{Ed25519PublicKey, TenantId};
 use archivist_server::config::{ServerConfig, ServerConfigError, ServerConfigErrorKind};
 use archivist_server::receipts::ReceiptSigners;
 use archivist_server::serve::{ArchivistServer, ShutdownOutcome, shutdown_on_signal};
 use archivist_server::trust::{TenantTrustRoot, TrustConfig};
+use archivist_storage::control::ControlReadStore;
 use archivist_storage::ingest::IngestStorage;
 use archivist_storage_s3::config::{
     ControlReadConfig, S3ConfigError, S3ConfigErrorKind, S3StorageConfig,
@@ -102,14 +108,22 @@ pub fn serve(invocation: &Invocation) -> Result<Value, CliError> {
 /// signal handlers — the same structural guarantee the server's own
 /// signal composition and the daemon's runtime composition restate.
 pub fn serve_over(resolved: &ResolvedConfig) -> Result<Value, CliError> {
-    let (server_config, trust, storage) = compose_replica(resolved)?;
-    let bound = ArchivistServer::new(server_config, trust, storage, ReceiptSigners::new())
-        .bind()
-        .map_err(|_| CliError::usage())?;
+    // Preserve the established validation order: malformed server and trust
+    // settings are reported before the additional receipt-signer decision.
+    let server_config = server_config(resolved)?;
+    let trust = trust_config(resolved)?;
+    require_receipt_signing_config(resolved)?;
+    // Do not resolve S3 credentials until the replica is complete enough to
+    // issue signed receipts.
+    let storage = ingest_storage(resolved)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|_| CliError::internal())?;
+    let signers = runtime.block_on(receipt_signers(resolved, storage.control()))?;
+    let bound = ArchivistServer::new(server_config, trust, storage, signers)
+        .bind()
+        .map_err(|_| CliError::usage())?;
     match runtime.block_on(bound.serve(shutdown_on_signal())) {
         Ok(ShutdownOutcome::Drained) => Ok(Value::Null),
         Ok(ShutdownOutcome::DrainTimedOut | ShutdownOutcome::AbortsFailed) | Err(_) => {
@@ -118,34 +132,83 @@ pub fn serve_over(resolved: &ResolvedConfig) -> Result<Value, CliError> {
     }
 }
 
-/// The concrete replica the composition hands to the server crate: the
-/// validated server configuration, the pinned trust anchor set, and the
-/// two S3 storage identities over their separately-resolved request
-/// bindings. Internal to this module's composition; the trio is a tuple
-/// because [`ArchivistServer::new`] takes the three parts as parameters.
-type Replica = (
-    ServerConfig,
-    TrustConfig,
-    IngestStorage<S3RawWriteStore<S3RequestBackend>, S3ControlReadStore<S3RequestBackend>>,
-);
+/// Refuse an unconfigured receipt signer before resolving credentials or
+/// constructing any S3 request binding. A replica is not ready to serve
+/// uploads it cannot receipt.
+fn require_receipt_signing_config(resolved: &ResolvedConfig) -> Result<(), CliError> {
+    if resolved.path("server.receipt_certificate_path").is_none()
+        || resolved
+            .reference("server.receipt_signing_key_ref")
+            .is_none()
+    {
+        return Err(CliError::registered(DECISION_MISSING));
+    }
+    Ok(())
+}
 
-/// Compose the replica's validated parts from the resolved
-/// configuration, before any I/O: the server configuration from the
-/// registered `server.*` keys, the trust anchor set from the pinned
-/// tenant and authority key, and the two storage identities from the
-/// `storage.*` keys over their two credential references.
+/// Load the replica's one configured receipt signer from three mutually
+/// checked sources: its authority-signed public certificate file, its
+/// immutable authority-signed control record, and its private key through
+/// a protected reference. The record is fetched from the same control-read
+/// identity the upload path uses, before a listener is bound.
 ///
 /// # Errors
-/// [`CliError::registered`](`CliError::registered`) with
-/// `cli.decision_missing` for a composition-required setting that
-/// resolved from no tier, and the usage class for every malformed
-/// setting, refused configuration pair, or credential reference that did
-/// not resolve to protected material.
-fn compose_replica(resolved: &ResolvedConfig) -> Result<Replica, CliError> {
-    let server_config = server_config(resolved)?;
-    let trust = trust_config(resolved)?;
-    let storage = ingest_storage(resolved)?;
-    Ok((server_config, trust, storage))
+/// Missing certificate/reference is a missing decision; an unavailable
+/// record is a retryable server failure; malformed, mismatched, or
+/// untrusted material is a usage refusal; unsafe or absent private material
+/// uses the registered secret-reference refusal.
+async fn receipt_signers<C: ControlReadStore>(
+    resolved: &ResolvedConfig,
+    control: &C,
+) -> Result<ReceiptSigners, CliError> {
+    let certificate_path = resolved
+        .path("server.receipt_certificate_path")
+        .ok_or_else(|| CliError::registered(DECISION_MISSING))?;
+    let reference = resolved
+        .reference("server.receipt_signing_key_ref")
+        .ok_or_else(|| CliError::registered(DECISION_MISSING))?;
+    let reference = protected_reference(reference);
+    let certificate_bytes = std::fs::read(certificate_path).map_err(|_| CliError::usage())?;
+    let certificate_value = json::parse(&certificate_bytes).map_err(|_| CliError::usage())?;
+    let certificate =
+        ReceiptKeyCertificate::parse(&certificate_value).map_err(|_| CliError::usage())?;
+    let tenant = required_text(resolved, "storage.tenant")?
+        .parse::<TenantId>()
+        .map_err(|_| CliError::usage())?;
+    let authority = required_text(resolved, "server.authority_key")?;
+    let authority = Ed25519PublicKey::parse(authority).map_err(|_| CliError::usage())?;
+    let root = PinnedAuthorityRoot::new(tenant.clone(), authority);
+    let Some(record) = control
+        .read_receipt_key(&tenant, certificate.key_id())
+        .await
+        .map_err(|_| CliError::registered(SERVE_UNAVAILABLE))?
+    else {
+        return Err(CliError::registered(SERVE_UNAVAILABLE));
+    };
+    let record = ReceiptKeyRecord::parse(record.envelope()).map_err(|_| CliError::usage())?;
+    let key =
+        CertifiedReceiptKey::from_public_material(certificate, record, &reference, &root, |_| None)
+            .map_err(|error| match error {
+                archivist_auth::receipt::ReceiptKeyError::SecretReference(_) => {
+                    CliError::registered("client.secret_ref_refused")
+                }
+                _ => CliError::usage(),
+            })?;
+    Ok(ReceiptSigners::from_schedules([ReceiptKeySchedule::new(
+        key,
+    )]))
+}
+
+/// Rebuild the auth crate's protected-reference value from the config
+/// snapshot. The target stays opaque in errors and only the resolver reads
+/// the private bytes.
+fn protected_reference(reference: &SecretRef) -> ProtectedReference {
+    match reference {
+        SecretRef::File { path } => ProtectedReference::File {
+            path: path.to_path_buf().into_boxed_path(),
+        },
+        SecretRef::Env { name } => ProtectedReference::Env { name: name.clone() },
+    }
 }
 
 /// Build the validated server configuration from the registered
@@ -226,6 +289,13 @@ fn storage_identities(
             crate::admin::required_ingest_text(resolved, "storage.region")
                 .map_err(composition_fault)?
                 .to_owned(),
+        )
+        .tls(
+            crate::admin::tls_token(
+                crate::admin::required_ingest_text(resolved, "storage.tls")
+                    .map_err(composition_fault)?,
+            )
+            .map_err(composition_fault)?,
         )
         .path_style(
             crate::admin::path_style_token(
@@ -373,6 +443,7 @@ fn config_fault(error: &archivist_client_core::config::ConfigError) -> CliError 
 mod tests {
     use archivist_client_core::cli::Router;
     use archivist_client_core::config::ConfigSources;
+    use archivist_storage_s3::config::Tls;
 
     use super::{handlers, ingest_storage, serve_over, storage_identities};
 
@@ -453,6 +524,8 @@ mod tests {
         // or client surfaces.
         assert_eq!(ingest.endpoint().as_str(), "https://s3.example.invalid");
         assert_eq!(control.endpoint().as_str(), "https://s3.example.invalid");
+        assert_eq!(ingest.tls(), Tls::Enabled, "registry TLS default");
+        assert_eq!(control.tls(), Tls::Enabled, "registry TLS default");
         assert_eq!(control.tenant().as_str(), TENANT);
         // The two credentials are two references: distinct identities,
         // each its own role's.
@@ -485,6 +558,22 @@ mod tests {
     }
 
     #[test]
+    fn explicit_disabled_tls_composes_http_ingest_and_control_read_configs() {
+        let resolved = base_sources()
+            .env(
+                "ARCHIVIST_STORAGE_ENDPOINT_URL",
+                "http://s3.example.invalid",
+            )
+            .env("ARCHIVIST_STORAGE_TLS", "disabled")
+            .load()
+            .expect("fully declared host loads");
+        let (ingest, control) = storage_identities(&resolved)
+            .expect("plaintext requires and receives the explicit opt-in");
+        assert_eq!(ingest.tls(), Tls::Disabled);
+        assert_eq!(control.tls(), Tls::Disabled);
+    }
+
+    #[test]
     fn missing_tenant_is_a_missing_decision() {
         let resolved = replica_sources(false, true)
             .load()
@@ -499,6 +588,26 @@ mod tests {
             .load()
             .expect("the load resolves without the composition-optional keys");
         let error = serve_over(&resolved).expect_err("no authority key pinned");
+        assert_eq!(error.code(), "cli.decision_missing");
+    }
+
+    #[test]
+    fn missing_receipt_certificate_path_is_a_missing_decision() {
+        let resolved = base_sources().load().expect("base config loads");
+        let error = serve_over(&resolved).expect_err("no receipt certificate configured");
+        assert_eq!(error.code(), "cli.decision_missing");
+    }
+
+    #[test]
+    fn missing_receipt_signing_reference_is_a_missing_decision() {
+        let resolved = base_sources()
+            .env(
+                "ARCHIVIST_SERVER_RECEIPT_CERTIFICATE_PATH",
+                "/etc/archivist/receipt.certificate.json",
+            )
+            .load()
+            .expect("certificate path resolves");
+        let error = serve_over(&resolved).expect_err("no receipt seed reference configured");
         assert_eq!(error.code(), "cli.decision_missing");
     }
 

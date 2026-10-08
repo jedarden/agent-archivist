@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-archivist:schema:v1:cli-receipt-key",
+  "title": "Agent Archivist receipt-key issuance result (archivist.cli-result/v1)",
+  "description": "The public result of `admin receipt-key`: the receipt-key-v1 certificate needed to sign verifiable receipts and the tenant-authority-signed immutable control record published for offline verification. The generated private seed is written only to the configured mode-restricted file; a public certificate sidecar is written beside it. The private seed and filesystem paths appear in neither public value.",
+  "type": "object",
+  "x-archivist": {
+    "namespace": "archivist.cli-result/v1",
+    "namespaceField": "schema",
+    "floats": false,
+    "closedShape": true,
+    "unknownFields": "reject",
+    "compatibility": "member additions are additive within v1 per plan Section 7.1; redefining or removing a member is a v2 event"
+  },
+  "additionalProperties": false,
+  "required": ["schema", "certificate", "record"],
+  "properties": {
+    "schema": {
+      "const": "archivist.cli-result/v1",
+      "description": "The versioned CLI result namespace.",
+      "x-archivist": {"bearing": "security", "compat": "required-v1", "failClosed": true}
+    },
+    "certificate": {
+      "$ref": "urn:agent-archivist:schema:v1:ingest-receipt#/$defs/receipt-key-certificate",
+      "description": "The independently signed public certificate embedded by value in receipts."
+    },
+    "record": {
+      "$ref": "urn:agent-archivist:schema:v1:control-receipt-key",
+      "description": "The immutable public control record published under the receipt key ID."
+    }
+  }
+}

@@ -152,9 +152,12 @@ keys = [
   "server.rate_burst_count",
   "server.shutdown_drain_seconds",
   "server.authority_key",
+  "server.receipt_certificate_path",
+  "server.receipt_signing_key_ref",
   "storage.endpoint_url",
   "storage.region",
   "storage.path_style",
+  "storage.tls",
   "storage.encryption",
   "storage.raw_bucket",
   "storage.control_bucket",
@@ -216,10 +219,12 @@ keys = [
   "admin.endpoint_url",
   "admin.region",
   "admin.path_style",
+  "admin.tls",
   "admin.control_bucket",
   "admin.tenant",
   "admin.credentials_ref",
   "admin.authority_seed_ref",
+  "storage.tls",
 ]
 # The emitted document is the linked-client record the command signs and
 # publishes (CLI-015): the tenant-authority-signed current pointer
@@ -238,10 +243,12 @@ keys = [
   "admin.endpoint_url",
   "admin.region",
   "admin.path_style",
+  "admin.tls",
   "admin.control_bucket",
   "admin.tenant",
   "admin.credentials_ref",
   "admin.authority_seed_ref",
+  "storage.tls",
 ]
 # The emitted document is the revocation record the command signs and
 # publishes (CLI-015): the tenant-authority-signed epoch boundary
@@ -276,7 +283,21 @@ state_lock = "none"
 stdout = "document"
 operand = "none"
 stdin = "none"
-keys = []
+keys = [
+  "admin.endpoint_url",
+  "admin.region",
+  "admin.path_style",
+  "admin.tls",
+  "admin.control_bucket",
+  "admin.tenant",
+  "admin.credentials_ref",
+  "admin.authority_seed_ref",
+  "admin.receipt_signing_key_path",
+  "storage.tls",
+]
+# The public result carries the receipt certificate and immutable control
+# record; the generated seed remains only at the configured protected path.
+result_schema = "schemas/v1/cli-receipt-key.json"
 
 # ---------------------------------------------------------------------------
 # Derived catalog (plan Section 7.10, Phase 10) — owner archivist-storage.
@@ -307,6 +328,7 @@ keys = [
   "storage.endpoint_url",
   "storage.region",
   "storage.path_style",
+  "storage.tls",
   "storage.encryption",
   "storage.raw_bucket",
   "storage.control_bucket",

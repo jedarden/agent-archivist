@@ -382,6 +382,7 @@ def validate_registry(registry: dict) -> list[str]:
                 name.split(".")[0] == "admin"
             replica_only = name in (
                 "server.authority_key",
+                "server.receipt_certificate_path",
                 "storage.tenant",
                 "storage.tenant_bucket",
             )

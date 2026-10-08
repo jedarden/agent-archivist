@@ -81,7 +81,7 @@ use archivist_protocol::vocabulary::{
     ClientId, Ed25519PublicKey, EnvelopeDigest, HarnessId, KeyId, PayloadCanonicalDigest,
     PayloadTransportDigest, RequestContentDigest, TenantId, Timestamp,
 };
-use archivist_storage::control::{AuthorizationEpoch, ControlReadStore};
+use archivist_storage::control::{AuthorizationEpoch, ControlReadStore, ControlRecord};
 use axum::http::HeaderMap;
 
 use crate::error::AuthRejection;
@@ -124,6 +124,11 @@ pub struct UploaderEvidence {
     /// The verified relay grant when the attempt names a distinct
     /// origin; `None` for a direct attempt.
     pub delegation: Option<DelegationRecord>,
+    /// The exact signed linked-client record returned by the control
+    /// store and verified while building `uploader`. Readiness records
+    /// this same value so the production authorization path, rather than
+    /// a separate probe, is its source of trust evidence.
+    pub control_record: ControlRecord,
 }
 
 /// The digests the pipeline computed over the bytes the request
@@ -424,7 +429,9 @@ where
         // stand for it.
         return Err(EvidenceRejection::Forbidden);
     };
-    let Some(uploader) = client_evidence(control, root, record, uploader, fetch).await? else {
+    let Some((uploader, control_record)) =
+        client_evidence(control, root, record, uploader, fetch).await?
+    else {
         // Not linked where the request declares: probe the other
         // configured tenants to tell "unlinked" from "linked
         // elsewhere". The probe reads the pointer only — the history
@@ -450,6 +457,7 @@ where
     Ok(UploaderEvidence {
         uploader,
         delegation,
+        control_record,
     })
 }
 
@@ -463,7 +471,7 @@ async fn client_evidence<C, F>(
     record: &AttemptAuthorization,
     client: &ClientId,
     fetch: F,
-) -> Result<Option<LinkedUploader>, EvidenceRejection>
+) -> Result<Option<(LinkedUploader, ControlRecord)>, EvidenceRejection>
 where
     C: ControlReadStore,
     F: Fn(&KeyId) -> Option<Vec<u8>>,
@@ -515,7 +523,7 @@ where
     let public_key = member_public_key(&object)?;
     let scopes = member_scopes(&object)?;
     LinkedUploader::new(&pinned, view, public_key, scopes)
-        .map(Some)
+        .map(|uploader| Some((uploader, served)))
         .ok_or(EvidenceRejection::RegistryUnavailable)
 }
 

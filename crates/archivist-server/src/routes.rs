@@ -390,6 +390,7 @@ where
                 }
             };
 
+            let fetch_authority_rotation = |_: &KeyId| -> Option<Vec<u8>> { None };
             let evidence = authorize::load_uploader_evidence(
                 state.storage().control(),
                 state.trust(),
@@ -397,7 +398,7 @@ where
                 &envelope.tenant_id,
                 &envelope.uploader_client_id,
                 &envelope.origin_client_id,
-                |_| None,
+                fetch_authority_rotation,
             )
             .await;
 
@@ -410,15 +411,35 @@ where
                 // the plan's "completes only after all sizes, digests,
                 // and the request signature verify" (Section 7.7).
                 Ok(evidence) => {
-                    attempt_commit(
-                        Arc::clone(state),
-                        envelope,
-                        stream,
-                        request_hasher,
-                        record,
-                        evidence,
-                    )
-                    .await
+                    // A linked-client read is readiness evidence only after
+                    // both the authorization fold above and the replica's
+                    // own bounded trust-cache verifier accept the exact
+                    // bytes the store returned. This no-rotation resolver
+                    // is the same one used by the upload authorization read.
+                    if state
+                        .record_verified_control_read(
+                            &envelope.tenant_id,
+                            &evidence.control_record,
+                            fetch_authority_rotation,
+                        )
+                        .is_err()
+                    {
+                        refused(
+                            state.metrics(),
+                            ServerFailure::RegistryUnavailable,
+                            Some(envelope.request_id),
+                        )
+                    } else {
+                        attempt_commit(
+                            Arc::clone(state),
+                            envelope,
+                            stream,
+                            request_hasher,
+                            record,
+                            evidence,
+                        )
+                        .await
+                    }
                 }
                 Err(EvidenceRejection::Unlinked) => authorization_refusal(
                     state.metrics(),
@@ -1698,7 +1719,7 @@ mod tests {
     /// the real signature verification against the test authority; only
     /// the store behind it is a double.
     struct LinkedControlStore {
-        envelope: Vec<u8>,
+        envelope: Option<Vec<u8>>,
         observed_at: Timestamp,
         tenant: TenantId,
         client: ClientId,
@@ -1709,8 +1730,29 @@ mod tests {
         /// record names the envelope's own tenant, client, and harness
         /// scope, signed by the test authority the state trusts.
         fn for_envelope(envelope: &Envelope) -> Self {
+            Self::with_record(envelope, Some(linked_client_record(envelope)))
+        }
+
+        /// The addressed client has a well-shaped record with an invalid
+        /// authority signature.
+        fn tampered_for_envelope(envelope: &Envelope) -> Self {
+            let bytes = linked_client_record(envelope);
+            let mut value = json::parse(&bytes).expect("linked-client fixture parses");
+            let json::Value::Object(object) = &mut value else {
+                panic!("linked-client fixture is an object");
+            };
+            object.set("authority_signature", json::Value::Text("00".repeat(64)));
+            Self::with_record(envelope, Some(value.canonical_bytes()))
+        }
+
+        /// The addressed client has no linked-client record.
+        fn missing_for_envelope(envelope: &Envelope) -> Self {
+            Self::with_record(envelope, None)
+        }
+
+        fn with_record(envelope: &Envelope, record: Option<Vec<u8>>) -> Self {
             Self {
-                envelope: linked_client_record(envelope),
+                envelope: record,
                 observed_at: Timestamp::parse("2026-09-01T00:00:00Z")
                     .expect("the fixture observation instant parses"),
                 tenant: envelope.tenant_id.clone(),
@@ -1726,10 +1768,12 @@ mod tests {
             client: &ClientId,
         ) -> Result<Option<ControlRecord>, StorageError> {
             if tenant == &self.tenant && client == &self.client {
-                Ok(Some(ControlRecord::new(
-                    self.envelope.clone(),
-                    Observation::new(None, None, self.observed_at.clone()),
-                )))
+                Ok(self.envelope.as_ref().map(|envelope| {
+                    ControlRecord::new(
+                        envelope.clone(),
+                        Observation::new(None, None, self.observed_at.clone()),
+                    )
+                }))
             } else {
                 // Any other address is simply a client linked nowhere.
                 Ok(None)
@@ -2123,6 +2167,20 @@ mod tests {
         Arc<ServerState<RecordingRawStore, LinkedControlStore>>,
         Observed,
     ) {
+        commit_state_with_control_store(store, config, LinkedControlStore::for_envelope(envelope))
+    }
+
+    /// The route's state over an explicitly scripted linked-client
+    /// response, used to prove absent and invalid records do not refresh
+    /// readiness.
+    fn commit_state_with_control_store(
+        store: RecordingRawStore,
+        config: crate::config::ServerConfig,
+        control: LinkedControlStore,
+    ) -> (
+        Arc<ServerState<RecordingRawStore, LinkedControlStore>>,
+        Observed,
+    ) {
         let observed = Observed {
             recordings: store.recordings(),
         };
@@ -2139,7 +2197,7 @@ mod tests {
             Arc::new(ServerState::new(
                 config,
                 trust,
-                IngestStorage::compose(store, LinkedControlStore::for_envelope(envelope)),
+                IngestStorage::compose(store, control),
                 crate::receipts::ReceiptSigners::new(),
             )),
             observed,
@@ -2606,6 +2664,110 @@ mod tests {
         assert_eq!(
             String::from_utf8(after.body).expect("readiness body is text"),
             "{\"ready\":true,\"tenants_configured\":1,\"tenants_ready\":1}"
+        );
+    }
+
+    #[tokio::test]
+    async fn verified_linked_client_read_on_upload_path_refreshes_readiness() {
+        let id = "valid-direct-baseline";
+        let envelope =
+            Envelope::parse(&corpus_file(id, "envelope")).expect("the fixture envelope parses");
+        let (state, _) =
+            commit_state_with_evidence(RecordingRawStore::default(), test_config(), &envelope);
+        let address = serve(Arc::clone(&state)).await;
+
+        let before = exchange(address, &get_request("/health/ready")).await;
+        assert_eq!(before.status, 503);
+
+        // This is the actual signed ingest route: it reads and verifies the
+        // linked-client record before streaming the request into storage.
+        // The fixture state has no receipt signer, so the honest tail answer
+        // is partial commit; the independently verified control read still
+        // establishes readiness.
+        let upload = post_signed_attempt(address, id).await;
+        assert_exchange_contract(
+            &upload,
+            503,
+            "server.partial_commit",
+            true,
+            Some(&corpus_request_id(id)),
+        );
+
+        let after = exchange(address, &get_request("/health/ready")).await;
+        assert_eq!(after.status, 200);
+        assert_eq!(
+            String::from_utf8(after.body).expect("readiness body is text"),
+            "{\"ready\":true,\"tenants_configured\":1,\"tenants_ready\":1}"
+        );
+    }
+
+    #[tokio::test]
+    async fn tampered_linked_client_read_on_upload_path_does_not_refresh_readiness() {
+        let id = "valid-direct-baseline";
+        let envelope =
+            Envelope::parse(&corpus_file(id, "envelope")).expect("the fixture envelope parses");
+        let (state, store) = commit_state_with_control_store(
+            RecordingRawStore::default(),
+            test_config(),
+            LinkedControlStore::tampered_for_envelope(&envelope),
+        );
+        let address = serve(Arc::clone(&state)).await;
+
+        assert_eq!(
+            exchange(address, &get_request("/health/ready"))
+                .await
+                .status,
+            503
+        );
+        let upload = post_signed_attempt(address, id).await;
+        assert_exchange_contract(
+            &upload,
+            503,
+            "server.unavailable",
+            true,
+            Some(&corpus_request_id(id)),
+        );
+        assert_eq!(store.begun(), 0);
+        assert_eq!(
+            exchange(address, &get_request("/health/ready"))
+                .await
+                .status,
+            503
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_linked_client_read_on_upload_path_does_not_refresh_readiness() {
+        let id = "valid-direct-baseline";
+        let envelope =
+            Envelope::parse(&corpus_file(id, "envelope")).expect("the fixture envelope parses");
+        let (state, store) = commit_state_with_control_store(
+            RecordingRawStore::default(),
+            test_config(),
+            LinkedControlStore::missing_for_envelope(&envelope),
+        );
+        let address = serve(Arc::clone(&state)).await;
+
+        assert_eq!(
+            exchange(address, &get_request("/health/ready"))
+                .await
+                .status,
+            503
+        );
+        let upload = post_signed_attempt(address, id).await;
+        assert_exchange_contract(
+            &upload,
+            401,
+            "auth.unlinked",
+            false,
+            Some(&corpus_request_id(id)),
+        );
+        assert_eq!(store.begun(), 0);
+        assert_eq!(
+            exchange(address, &get_request("/health/ready"))
+                .await
+                .status,
+            503
         );
     }
 

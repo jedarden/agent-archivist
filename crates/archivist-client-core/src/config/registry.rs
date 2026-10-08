@@ -539,16 +539,7 @@ fn parse_key_entry(name: &str, table: &TomlTable) -> Result<KeyDefinition, &'sta
     if secret && flag_tier {
         return Err("a secret key never exposes a flag tier");
     }
-    // Optionality permits omitted credential/admin/replica-only keys and
-    // link-request-only client settings; the latter include pinned trust
-    // material consumed only by serve, so other commands do not demand it
-    // (CFG-019).
-    let administration_surface = name.starts_with("admin.");
-    let replica_only = name == "server.authority_key"
-        || name == "storage.tenant"
-        || name == "storage.tenant_bucket";
-    let link_request_only = name == "client.tenant" || name == "client.harness";
-    if optional && !(secret || administration_surface || replica_only || link_request_only) {
+    if optional && !optional_key_supported(name, secret) {
         return Err("only a secret reference, an offline-administration key, a \
              replica-only composition key, or a link-request-only client key \
              may be optional");
@@ -587,6 +578,22 @@ fn parse_key_entry(name: &str, table: &TomlTable) -> Result<KeyDefinition, &'sta
         description: text_attribute(table, "description")?.into(),
         deprecated,
     })
+}
+
+/// CFG-019 optional keys are secret/admin material, replica-only settings,
+/// or link-request settings not demanded by other commands.
+fn optional_key_supported(name: &str, secret: bool) -> bool {
+    secret
+        || name.starts_with("admin.")
+        || matches!(
+            name,
+            "server.authority_key"
+                | "server.receipt_certificate_path"
+                | "storage.tenant"
+                | "storage.tenant_bucket"
+                | "client.tenant"
+                | "client.harness"
+        )
 }
 
 /// Parse the error-code registry, validating the closed shape the exit
@@ -795,7 +802,11 @@ mod tests {
     #[test]
     fn the_replica_composition_keys_are_never_demanded_of_a_plain_load() {
         let registry = config_registry();
-        for name in ["server.authority_key", "storage.tenant"] {
+        for name in [
+            "server.authority_key",
+            "server.receipt_certificate_path",
+            "storage.tenant",
+        ] {
             let key = registry
                 .key(name)
                 .unwrap_or_else(|| panic!("{name} must be registered"));

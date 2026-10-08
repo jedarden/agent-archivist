@@ -38,7 +38,15 @@ creates its protected installation identity and emits the public request that
 `admin approve` signs into the first `linked-client` record. The root itself is
 configuration material rather than a control object, so an empty control
 bucket is expected at this point; the first object written below the tenant
-prefix is the approved client record.
+prefix is the approved client record. Before serving uploads, run
+`archivist admin receipt-key` with `admin.receipt_signing_key_path` set. It
+writes the receipt-signing seed under mode `0600` in a mode `0700` parent,
+exports the public certificate beside it, and publishes the immutable signed
+receipt-key record. Configure the replica with the root's public key, that
+certificate path, and a protected reference to the receipt seed. At startup,
+the replica verifies the certificate and stored record against the pinned root
+and refuses to bind when any piece is missing or disagrees. Readiness becomes
+ready only after an upload authorization verifies the linked-client record.
 
 1. **Link.** The linked-client record is one installation's identity in
    one tenant: its Ed25519 public key, base scopes, and the current

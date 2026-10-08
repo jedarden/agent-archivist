@@ -164,6 +164,19 @@ impl fmt::Debug for ReceiptSigningKey {
 }
 
 impl ReceiptSigningKey {
+    /// Generate a fresh tenant-scoped receipt key from the operating
+    /// system's cryptographic entropy source.
+    ///
+    /// # Errors
+    /// [`IdentityError::Entropy`] when the operating system entropy source
+    /// is unavailable; there is no weaker fallback.
+    pub fn generate(tenant_id: TenantId) -> Result<Self, IdentityError> {
+        Ok(Self {
+            tenant_id,
+            signing_key: SigningKey::generate()?,
+        })
+    }
+
     /// Load a tenant-scoped receipt key from a `file:` or `env:` protected
     /// reference.  The reference resolver enforces the configured secret
     /// channel and, for files, restrictive permissions.
@@ -187,6 +200,63 @@ impl ReceiptSigningKey {
         })
     }
 
+    /// Persist the private seed as lowercase hex in a new mode-restricted
+    /// file. Existing targets are never overwritten.
+    ///
+    /// The parent directory must be exactly mode `0700`; if it does not
+    /// exist, it is created with that mode. The file is created with mode
+    /// `0600`, and the seed is never included in an error.
+    ///
+    /// # Errors
+    /// [`IdentityError::IdentityExists`] when `path` already exists;
+    /// [`IdentityError::ReferenceUnsafe`] when the parent or resulting file
+    /// is not mode restricted; [`IdentityError::ReferenceUnreadable`] for
+    /// other filesystem failures; and
+    /// [`IdentityError::ReferenceUnsupportedPlatform`] where POSIX file
+    /// permissions are unavailable.
+    #[cfg(unix)]
+    pub fn write_new(&self, path: &std::path::Path) -> Result<(), IdentityError> {
+        use std::fs::OpenOptions;
+        use std::io::Write as _;
+        use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+
+        if !path.is_absolute() {
+            return Err(IdentityError::ReferenceUnsafe);
+        }
+        prepare_seed_parent_directory(path)?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|error| match error.kind() {
+                std::io::ErrorKind::AlreadyExists => IdentityError::IdentityExists,
+                std::io::ErrorKind::NotFound => IdentityError::ReferenceMissing,
+                _ => IdentityError::ReferenceUnreadable,
+            })?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|_io_error| IdentityError::ReferenceUnreadable)?;
+        file.write_all(encode_seed(self.signing_key.seed()).as_bytes())
+            .and_then(|()| file.sync_all())
+            .map_err(|_io_error| IdentityError::ReferenceUnreadable)?;
+        let metadata = file
+            .metadata()
+            .map_err(|_io_error| IdentityError::ReferenceUnreadable)?;
+        if metadata.permissions().mode() & 0o777 != 0o600 {
+            return Err(IdentityError::ReferenceUnsafe);
+        }
+        Ok(())
+    }
+
+    /// Persist the private seed only where POSIX mode checks are available.
+    ///
+    /// # Errors
+    /// Always returns [`IdentityError::ReferenceUnsupportedPlatform`].
+    #[cfg(not(unix))]
+    pub fn write_new(&self, _path: &std::path::Path) -> Result<(), IdentityError> {
+        Err(IdentityError::ReferenceUnsupportedPlatform)
+    }
+
     /// The tenant this private key is scoped to.
     #[must_use]
     pub const fn tenant_id(&self) -> &TenantId {
@@ -208,6 +278,49 @@ impl ReceiptSigningKey {
     fn sign(&self, message: &[u8]) -> Ed25519Signature {
         Ed25519Signature::from_raw(*self.signing_key.sign(message).as_bytes())
     }
+}
+
+/// Ensure a generated receipt seed's immediate parent is exactly mode
+/// `0700`, creating it when absent. Filesystem failures never include the
+/// supplied path in their diagnostic.
+#[cfg(unix)]
+fn prepare_seed_parent_directory(path: &std::path::Path) -> Result<(), IdentityError> {
+    use std::fs::DirBuilder;
+    use std::os::unix::fs::PermissionsExt;
+
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or(IdentityError::ReferenceUnsafe)?;
+    if !parent.is_dir() {
+        DirBuilder::new()
+            .recursive(true)
+            .create(parent)
+            .map_err(|_io_error| IdentityError::ReferenceUnsafe)?;
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+            .map_err(|_io_error| IdentityError::ReferenceUnsafe)?;
+    }
+    let mode = parent
+        .metadata()
+        .map_err(|_io_error| IdentityError::ReferenceUnsafe)?
+        .permissions()
+        .mode()
+        & 0o777;
+    if mode != 0o700 {
+        return Err(IdentityError::ReferenceUnsafe);
+    }
+    Ok(())
+}
+
+/// Lowercase hex representation used only for the protected local seed file.
+fn encode_seed(seed: &[u8; 32]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(64);
+    for byte in seed {
+        out.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        out.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    out
 }
 
 /// A tenant authority private signer loaded through a protected reference.
@@ -631,6 +744,60 @@ impl fmt::Debug for CertifiedReceiptKey {
 }
 
 impl CertifiedReceiptKey {
+    /// Load a server signing key from its public certificate, immutable
+    /// control record, protected private-key reference, and pinned tenant
+    /// authority. Both public signatures and every shared identity/window
+    /// member are verified before the private key is resolved; the private
+    /// half must then derive the certified public key exactly.
+    ///
+    /// The fetch closure supplies retained authority-rotation records by
+    /// predecessor key ID. It is used for both signed public objects so the
+    /// authority chain is checked from the same pinned root.
+    ///
+    /// # Errors
+    /// Returns [`ReceiptKeyError::TenantMismatch`] for material outside the
+    /// pinned tenant, [`ReceiptKeyError::ConflictingRecord`] when the
+    /// certificate, control record, and private key do not describe the
+    /// same key, [`ReceiptKeyError::Signature`] or an authority-chain error
+    /// when either signature is not trusted, and
+    /// [`ReceiptKeyError::SecretReference`] when protected private material
+    /// cannot be loaded safely.
+    pub fn from_public_material(
+        certificate: ReceiptKeyCertificate,
+        record: ReceiptKeyRecord,
+        receipt_reference: &ProtectedReference,
+        root: &PinnedAuthorityRoot,
+        fetch: impl FnMut(&KeyId) -> Option<Vec<u8>>,
+    ) -> Result<Self, ReceiptKeyError> {
+        if certificate.tenant_id != record.tenant_id || record.tenant_id != *root.tenant_id() {
+            return Err(ReceiptKeyError::TenantMismatch);
+        }
+        if certificate.key_id != record.key_id
+            || certificate.public_key != record.public_key
+            || certificate.valid_from != record.valid_from
+            || certificate.valid_until != record.valid_until
+            || certificate.authority_key_id != record.authority_key_id
+        {
+            return Err(ReceiptKeyError::ConflictingRecord);
+        }
+
+        let mut fetch = fetch;
+        record.verify(root, &mut fetch)?;
+        certificate.verify(root, &mut fetch)?;
+
+        let signing_key =
+            ReceiptSigningKey::from_secret_reference(record.tenant_id.clone(), receipt_reference)?;
+        if signing_key.key_id() != record.key_id || signing_key.public_key() != record.public_key {
+            return Err(ReceiptKeyError::ConflictingRecord);
+        }
+
+        Ok(Self {
+            signing_key,
+            certificate,
+            record,
+        })
+    }
+
     /// Load a receipt private key through a protected reference and certify
     /// its public half with the tenant authority.
     ///
@@ -1237,6 +1404,24 @@ mod tests {
         certified_by(seed, 1, signed_at, valid_from)
     }
 
+    #[cfg(unix)]
+    fn protected_key_reference(seed: u8, label: &str) -> (std::path::PathBuf, ProtectedReference) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let directory = std::env::temp_dir().join(format!(
+            "archivist-receipt-loader-{label}-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed),
+        ));
+        let path = directory.join("receipt-seed");
+        receipt_key(seed)
+            .write_new(&path)
+            .expect("write protected receipt seed");
+        let reference = ProtectedReference::parse(&format!("file:{}", path.display()))
+            .expect("protected reference");
+        (directory, reference)
+    }
+
     fn receipt_object(commit_time: &str) -> Object {
         let mut object = Object::new();
         object.set("tenant_id", text(TENANT));
@@ -1346,6 +1531,82 @@ mod tests {
             *verified.certificate().authority_key_id(),
             successor.key_id()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verified_public_material_loads_the_matching_protected_receipt_key() {
+        let certified = certified(2, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z");
+        let (directory, reference) = protected_key_reference(2, "success");
+        let root = PinnedAuthorityRoot::new(
+            tenant(),
+            Ed25519PublicKey::from_raw(authority(1).signing_key.public_key()),
+        );
+
+        let loaded = CertifiedReceiptKey::from_public_material(
+            certified.certificate.clone(),
+            certified.record.clone(),
+            &reference,
+            &root,
+            |_| None,
+        )
+        .expect("verify and load receipt key");
+        assert_eq!(loaded.key_id(), certified.key_id());
+        let receipt = loaded
+            .sign_receipt(receipt_object("2026-01-02T00:00:00Z"))
+            .expect("sign with loaded key");
+        receipt
+            .verify(&root, |_| None)
+            .expect("loaded key receipt verifies offline");
+
+        std::fs::remove_dir_all(directory).expect("remove seed fixture");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verified_public_material_rejects_disagreement_and_untrusted_authority() {
+        let good = certified(2, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z");
+        let other_key = certified(3, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z");
+        let (directory, reference) = protected_key_reference(3, "mismatch");
+        let root = PinnedAuthorityRoot::new(
+            tenant(),
+            Ed25519PublicKey::from_raw(authority(1).signing_key.public_key()),
+        );
+
+        assert!(matches!(
+            CertifiedReceiptKey::from_public_material(
+                other_key.certificate.clone(),
+                good.record.clone(),
+                &reference,
+                &root,
+                |_| None,
+            ),
+            Err(ReceiptKeyError::ConflictingRecord)
+        ));
+        assert!(matches!(
+            CertifiedReceiptKey::from_public_material(
+                good.certificate.clone(),
+                good.record.clone(),
+                &reference,
+                &root,
+                |_| None,
+            ),
+            Err(ReceiptKeyError::ConflictingRecord)
+        ));
+
+        let untrusted = certified_by(2, 9, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z");
+        assert!(matches!(
+            CertifiedReceiptKey::from_public_material(
+                untrusted.certificate.clone(),
+                untrusted.record.clone(),
+                &reference,
+                &root,
+                |_| None,
+            ),
+            Err(ReceiptKeyError::Authority(_))
+        ));
+
+        std::fs::remove_dir_all(directory).expect("remove seed fixture");
     }
 
     #[test]
